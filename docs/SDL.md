@@ -39,3 +39,11 @@ injected keyboard and pointer input, non-silent PCM, synchronized persistent
 state across a second process launch, clean exit, and resource census from
 Ring 3. It retains the guest serial log, screenshot, video, data volume, and
 WAV capture when QEMU exposes its WAV backend.
+
+The Sapote event pump treats the ABI's empty-queue `-EAGAIN` as normal after it
+has drained all pending events. The proof moves the deterministic initial PS/2
+cursor into the SDL client before clicking, so both keyboard and pointer paths
+are observed rather than relying on an ambient host cursor position. Its WAV
+profile authenticates the persisted prefix of each of the four 1,024-frame SDL
+chunks in both process launches against the complete 4,096-frame fixture hash
+`5f69c57a2899917978544f1c8ed66b6f826c7e67b8302d281ea206f40852ef56`.

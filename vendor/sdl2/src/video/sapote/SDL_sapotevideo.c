@@ -197,7 +197,7 @@ static void SAPOTE_PumpEvents(_THIS)
         while ((result = sapote_event_read(data->events, &event)) > 0) {
             SAPOTE_DispatchEvent(window, &event);
         }
-        if (result < 0) {
+        if (result < 0 && result != -SAPOTE_EAGAIN) {
             SDL_LogError(SDL_LOG_CATEGORY_INPUT,
                 "Sapote event read failed: %ld", result);
         }

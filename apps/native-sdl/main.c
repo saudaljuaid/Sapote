@@ -136,7 +136,9 @@ static int await_input(void)
             return -1;
         }
     }
-    return key && pointer ? 0 : -1;
+    return key && pointer ? 0 :
+        SDL_SetError("input deadline expired: key=%d pointer=%d",
+            (int)key, (int)pointer);
 }
 
 static int wait_for_audio(SDL_AudioDeviceID device)
@@ -147,7 +149,8 @@ static int wait_for_audio(SDL_AudioDeviceID device)
            SDL_GetTicks64() < deadline) {
         SDL_Delay(10U);
     }
-    return SDL_GetQueuedAudioSize(device) == 0U ? 0 : -1;
+    return SDL_GetQueuedAudioSize(device) == 0U ? 0 :
+        SDL_SetError("audio queue did not drain before its deadline");
 }
 
 int main(int argc, char **argv, char **environment)

@@ -2331,7 +2331,8 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		monitor_argument="-monitor unix:$$monitor_socket,server=on,wait=off"; \
 		$(PYTHON) tools/qemu-send-keys.py --monitor "$$monitor_socket" \
 			--serial "$$log" --marker 'SAPOTE SDL READY run=1' \
-			--text s --hmp 'mouse_move 28 -16' --hmp 'mouse_button 1' \
+			--text s --hmp 'mouse_move -240 -30' \
+			--hmp 'mouse_move -240 -30' --hmp 'mouse_button 1' \
 			--hmp 'mouse_button 0' \
 			--capture-dir '$(abspath $(TEST_BUILD_DIR)/$*/sdl-frames)' \
 			--screenshot '$(abspath $(TEST_BUILD_DIR)/$*/sdl.png)' \
@@ -2739,7 +2740,8 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fxq 'SAPOTE SDL PASS run=2 present=partial input=prior-run audio=non-silent persistent=yes' "$$log" && \
 			grep -Fxq 'Sapote: SDL 2 window, input, partial damage, PCM and persistence passed' "$$log" || diagnostics_ok=false; \
 			if test "$$audio_capture" = true; then \
-				$(PYTHON) -S tools/audio-wav-host-test.py "$$audio_wav" || diagnostics_ok=false; \
+				$(PYTHON) -S tools/audio-wav-host-test.py --profile sdl \
+					"$$audio_wav" || diagnostics_ok=false; \
 			else echo 'SAPOTE SDL WAV SKIP qemu wav backend unavailable'; fi ;; \
 		native-dynamic) \
 			grep -Eq '^Sapote: dynamic immutable RX shared pages [1-9][0-9]*$$' "$$log" && \
