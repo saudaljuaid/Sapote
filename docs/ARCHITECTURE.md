@@ -33,14 +33,20 @@ types, and installed W^X checks. Kernel mappings remain supervisor-only.
 `native_process.c` admits manifest-described applications through the Rust
 `native_image` validator, creates a private address space, installs immutable
 RX/R ELF loads, RW/NX state, TLS and guarded stacks, and owns the typed mapping
-and handle census. Teardown restores the kernel CR3 and FS base before releasing
-any process resource. See [`APPLICATION_LOADER.md`](APPLICATION_LOADER.md).
+and handle census. Authenticated DSO RX pages may reference a bounded global
+physical-page cache; every writable, TLS, root-executable, and anonymous page
+remains process-private. Teardown restores the kernel CR3 and FS base before
+releasing any process resource. See
+[`APPLICATION_LOADER.md`](APPLICATION_LOADER.md) and
+[`DYNAMIC_LINKING.md`](DYNAMIC_LINKING.md).
 
 `paging.c` holds `PAGING_PROCESS_SPACE_SLOTS` such hierarchies at once rather
-than one. Every private operation resolves the caller's token to a slot, a
-space and its identity-alias narrowings share an index, and a narrowing may
-only be undone while it is the newest one owned - which is what stops one
-process's teardown from freeing a split page table another still has a leaf in.
+than one. Every private operation resolves the caller's token to a slot. Each
+space narrows its own executable identity aliases, while a global
+physical-frame registry reference-counts the live supervisor alias used by
+shared DSO code. A process narrowing may only be undone while it is the newest
+one owned, which stops one process's teardown from freeing a split page table
+another still has a leaf in.
 
 ## Interrupts, clocks, and scheduling
 
@@ -159,14 +165,15 @@ what is left. RF is the processor's own note about the trap rather than
 something the program chose, and a kernel that authenticates it as user state
 refuses legal returns on any processor that sets it.
 
-The native ABI v1 loads approved path-based static ELF64 applications from the
-read-only System volume. A fixed binary manifest selects capabilities and
-limits, binds the executable SHA-256, names immutable resources and a private
-Data namespace, and is validated with the ELF by freestanding Rust before the
-kernel maps a byte. Native syscalls use a separate register convention and
-number space. Process-local generation-protected handles cover files,
-directories, windows, events, network objects, timers, and threads. The public
-C SDK and Rust `no_std` crate both target this same ABI. See
+The native ABI v1 loads approved path-based static ELF64 applications and
+bounded PIE roots with authenticated DSO catalogs from the read-only System
+volume. A fixed binary manifest selects capabilities and limits, binds the
+executable SHA-256, names immutable resources and a private Data namespace,
+and is validated with the ELF by freestanding Rust before the kernel maps a
+byte. Native syscalls use a separate register convention and number space.
+Process-local generation-protected handles cover files, directories, windows,
+events, network objects, timers, and threads. The public C SDK and Rust
+`no_std` crate both target this same ABI. See
 [`NATIVE_ABI.md`](NATIVE_ABI.md),
 [`APPLICATION_PACKAGES.md`](APPLICATION_PACKAGES.md), and
 [`NATIVE_HANDLES.md`](NATIVE_HANDLES.md).

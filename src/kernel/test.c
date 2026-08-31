@@ -5286,19 +5286,28 @@ _Noreturn void kernel_test_complete_native_sdl(void)
 _Noreturn void kernel_test_complete_native_dynamic(void)
 {
     struct native_process_result proof = { 0 };
+    uint64_t first_generation;
+    uint64_t second_generation;
 
     if (active_scenario != KERNEL_TEST_NATIVE_DYNAMIC) {
         kernel_test_fail("native dynamic completion used outside its scenario");
     }
-    if (native_process_launch("DYNROOT.MAN", &proof) != NATIVE_PROCESS_OK ||
+    if (native_process_spawn("DYNROOT.MAN", &first_generation) !=
+            NATIVE_PROCESS_OK ||
+        native_process_spawn("DYNROOT.MAN", &second_generation) !=
+            NATIVE_PROCESS_OK ||
+        first_generation == 0U || second_generation <= first_generation ||
+        native_process_run(&proof) != NATIVE_PROCESS_OK ||
         !proof.exited || proof.faulted || proof.exit_status != 0 ||
+        proof.generation != second_generation ||
         !proof.resources_released || proof.peak_handles != 0U ||
         proof.syscall_count < 7U || proof.thread_switches == 0U ||
         !native_process_resources_released()) {
-        kernel_test_fail("dynamic ELF proof did not leave a clean census");
+        kernel_test_fail(
+            "concurrent dynamic ELF proofs did not leave a clean census");
     }
     console_write(
-        "Sapote: dynamic ELF shared library, TLS and lifecycle passed\n");
+        "Sapote: dynamic ELF shared RX, private TLS and lifecycle passed\n");
     kernel_test_pass();
 }
 

@@ -60,8 +60,9 @@ the allocation-backed `compress*` convenience API are deliberately excluded.
 `vendor/zlib/SAPOTE-PORT.md` defines the freestanding build and allocator
 contract. The reproducible SDK installs this profile as the static `libz.a`.
 Sapote's bounded native shared-object loader is separate; zlib itself is not
-shipped as a Sapote DSO, and library RX frames are not yet physically shared
-across processes.
+shipped as a Sapote DSO. Authenticated Sapote DSOs can share immutable RX
+physical pages across processes, but the current zlib SDK artifact remains the
+reproducible static `libz.a` described above.
 
 ## SDL 2
 

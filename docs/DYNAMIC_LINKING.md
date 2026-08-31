@@ -13,7 +13,10 @@ format-v2 package contains `DYNROOT.APP`, `DYN/DYNROOT.CAT`, and
 `DYN/DYNLIB.SO`. The root manifest authenticates the executable and catalog;
 the catalog binds the exact `DYNLIB.SO` SONAME to the library SHA-256. Package
 inspection independently checks those relationships before building the System
-image. The scenario then requires this exact order:
+image. It starts two process instances before entering the scheduler. Each
+instance must produce the lifecycle order below, the Ring 3 pass marker must
+appear exactly twice, and the kernel must report a positive count of immutable
+RX pages reused by the second process:
 
 ```text
 SAPOTE DYNAMIC LIB INIT
@@ -21,7 +24,7 @@ SAPOTE DYNAMIC ROOT INIT
 SAPOTE DYNAMIC RING3 PASS
 SAPOTE DYNAMIC ROOT FINI
 SAPOTE DYNAMIC LIB FINI
-Sapote: dynamic ELF shared library, TLS and lifecycle passed
+Sapote: dynamic ELF shared RX, private TLS and lifecycle passed
 ```
 
 The kernel also requires a zero exit status, at least seven real Ring 3
@@ -100,11 +103,20 @@ and a root local-exec variable. The resulting combined template is copied into
 the process's writable/NX native-TLS mapping; all ELF template pages remain
 read-only.
 
-Relocations are applied only in kernel-private heap buffers. The process mapper
-then allocates fresh frames and installs R, RX, RW, and RELRO page permissions.
-Writable aliases to executable frames are removed before Ring 3 entry. Partial
-admission, allocation, mapping, lifecycle, fault, and exit paths flow through
-the ordinary native-process teardown census.
+Relocations are applied only in kernel-private heap buffers. Root-executable,
+R, RW, RELRO, TLS-template, trampoline, stack, and anonymous pages remain
+private. Immutable executable pages belonging to authenticated DSOs enter a
+bounded global cache keyed by the catalog SHA-256 and page offset. A cache hit
+must also match all 4 KiB of prepared page content before the same physical
+frame is mapped into another process.
+
+Each process still installs its own user mapping and narrows its private
+identity alias. `paging.c` reference-counts the corresponding supervisor alias,
+so the live identity mapping stays read-only/NX until the last process releases
+the executable frame. Shared frames are returned to the frame allocator only
+after the cache reference count reaches zero. Partial admission, allocation,
+mapping, lifecycle, fault, and exit paths flow through the ordinary
+native-process teardown census.
 
 ## Verification
 
@@ -117,17 +129,21 @@ agreement and changed-library/catalog refusal.
 
 `make native-dynamic-proof` builds and inspects the real PIE/DSO, creates the
 package and FAT32 images, and runs the host parser controls. The Ubuntu native
-workflow runs `qemu-test-native-dynamic` and retains the root, library, catalog,
+workflow runs `qemu-test-native-dynamic`; its serial assertions require two
+Ring 3 passes, a positive shared-page count, per-instance TLS/lifecycle success,
+and a clean final cache/resource census. It retains the root, library, catalog,
 `readelf` reports, serial log, and Data image from the same commit.
 
 ## Deliberate limits
 
 - There is no `PT_INTERP`, `ld.so`, `dlopen`, `dlsym`, lazy binding, symbol
   versioning, unload API, or environment-controlled search path.
-- Library RX frames are currently private process frames; Sapote does not yet
-  claim a global physical-page cache or shared-frame accounting.
-- The QEMU proof has one direct library and one initial thread. Transitive graph
-  and hostile scope cases are host-tested, but a multi-library QEMU fixture and
+- Only authenticated DSO RX pages use the global cache. Read-only data is not
+  shared, and there is no page deduplication for root executables or anonymous
+  process memory.
+- The QEMU proof has two concurrent process instances, one direct library per
+  instance, and one initial thread per process. Transitive graph and hostile
+  scope cases are host-tested, but a multi-library QEMU fixture and
   second-thread copied-TLS proof remain future coverage.
 - This does not add a hosted libc ABI or make arbitrary Linux shared objects
   compatible with Sapote's native ABI.

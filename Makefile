@@ -2725,13 +2725,15 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 				$(PYTHON) -S tools/audio-wav-host-test.py "$$audio_wav" || diagnostics_ok=false; \
 			else echo 'SAPOTE SDL WAV SKIP qemu wav backend unavailable'; fi ;; \
 		native-dynamic) \
+			grep -Eq '^Sapote: dynamic immutable RX shared pages [1-9][0-9]*$$' "$$log" && \
+			test "$$(grep -Fxc 'SAPOTE DYNAMIC RING3 PASS' "$$log")" -eq 2 && \
 			$(PYTHON) -S tools/serial-marker-order.py "$$log" \
 				'SAPOTE DYNAMIC LIB INIT' \
 				'SAPOTE DYNAMIC ROOT INIT' \
 				'SAPOTE DYNAMIC RING3 PASS' \
 				'SAPOTE DYNAMIC ROOT FINI' \
 				'SAPOTE DYNAMIC LIB FINI' \
-				'Sapote: dynamic ELF shared library, TLS and lifecycle passed' || \
+				'Sapote: dynamic ELF shared RX, private TLS and lifecycle passed' || \
 				diagnostics_ok=false ;; \
 	esac; \
 	if test "$$diagnostics_ok" != true; then \

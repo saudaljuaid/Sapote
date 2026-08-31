@@ -36,9 +36,11 @@ backend, checks synchronized preference state on the second launch, and then
 requires clean process, window, audio, and handle censuses.
 
 The `native-dynamic` scenario installs one package containing a PIE root,
-an authenticated dependency catalog, and `DYNLIB.SO`. It requires library
-then root constructors, the Ring 3 TLS proof, root then library destructors,
-and the kernel's clean resource census in that exact serial order.
+an authenticated dependency catalog, and `DYNLIB.SO`, then starts two process
+instances before scheduling either. It requires a positive immutable DSO RX
+reuse count, exactly two Ring 3 TLS passes, dependency-before-root constructors,
+reverse destructors, private TLS behavior, and a clean shared-cache/resource
+census.
 
 The `native-https` scenario uses a deterministic offline Ethernet/DHCP/DNS/
 TCP/TLS peer. Ring 3 validates the pinned chain, hostname, wall-clock validity,

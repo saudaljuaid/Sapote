@@ -56,6 +56,21 @@
 #define NATIVE_DYNAMIC_GUARD_BYTES PAGING_PAGE_SIZE
 #define NATIVE_DYNAMIC_TRAMPOLINE_PAGES 3U
 #define NATIVE_DYNAMIC_START_PAGES 2U
+#define NATIVE_SHARED_CODE_CACHE_CAPACITY 32768U
+#define NATIVE_SHARED_CODE_EMPTY UINT8_C(0)
+#define NATIVE_SHARED_CODE_LIVE UINT8_C(1)
+#define NATIVE_SHARED_CODE_TOMBSTONE UINT8_C(2)
+
+_Static_assert(
+    (NATIVE_SHARED_CODE_CACHE_CAPACITY &
+        (NATIVE_SHARED_CODE_CACHE_CAPACITY - 1U)) == 0U,
+    "shared-code cache must remain a power of two"
+);
+_Static_assert(
+    NATIVE_SHARED_CODE_CACHE_CAPACITY >=
+        NATIVE_PROCESS_LIMIT * NATIVE_PROCESS_PAGE_LIMIT,
+    "shared-code cache must hold the maximum live process-page census"
+);
 
 _Static_assert(SAPOTE_AUDIO_SAMPLE_RATE == AUDIO_PCM_SAMPLE_RATE,
     "kernel and public audio sample rates differ");
@@ -86,9 +101,11 @@ enum native_thread_state {
 struct native_page {
     uint64_t virtual_address;
     uintptr_t physical_address;
+    size_t shared_code_slot;
     uint32_t permissions;
     enum paging_process_mapping_kind kind;
     bool mapped;
+    bool shared_code;
 };
 
 struct native_thread {
@@ -160,6 +177,7 @@ struct native_process {
     size_t peak_handles;
     uint32_t syscall_count;
     uint32_t thread_switches;
+    uint32_t shared_code_reuses;
     uint64_t context_cycles_without_fpu;
     uint64_t context_cycles_with_fpu;
     uint64_t dynamic_fini_entry;
@@ -183,6 +201,7 @@ struct native_dynamic_load {
     size_t memory_lengths[ELF64_DYNAMIC_MAX_OBJECTS];
     size_t source_indices[ELF64_DYNAMIC_MAX_OBJECTS];
     int64_t tls_offsets[ELF64_DYNAMIC_MAX_OBJECTS];
+    uint8_t digests[ELF64_DYNAMIC_MAX_OBJECTS][32];
     size_t object_count;
     size_t library_count;
     size_t working_bytes;
@@ -191,7 +210,18 @@ struct native_dynamic_load {
     uint64_t next_virtual;
 };
 
+struct native_shared_code_page {
+    uint8_t digest[32];
+    uint64_t page_offset;
+    uintptr_t physical_address;
+    uint32_t references;
+    uint8_t state;
+};
+
 static struct native_process processes[NATIVE_PROCESS_LIMIT];
+static struct native_shared_code_page
+    shared_code_cache[NATIVE_SHARED_CODE_CACHE_CAPACITY];
+static size_t shared_code_live_pages;
 static struct paging_process_expected_page
     validation_pages[NATIVE_PROCESS_PAGE_LIMIT];
 static size_t current_process = SIZE_MAX;
@@ -351,6 +381,181 @@ static bool record_page(
     ++process->page_count;
     if (process->page_count > process->peak_pages) {
         process->peak_pages = process->page_count;
+    }
+    return true;
+}
+
+static bool bytes_equal(const uint8_t *left, const uint8_t *right,
+    size_t count)
+{
+    uint8_t difference = 0U;
+
+    for (size_t index = 0U; index < count; ++index) {
+        difference |= left[index] ^ right[index];
+    }
+    return difference == 0U;
+}
+
+static size_t shared_code_hash(const uint8_t digest[32], uint64_t page_offset)
+{
+    uint64_t hash = UINT64_C(1469598103934665603);
+
+    for (size_t index = 0U; index < 32U; ++index) {
+        hash ^= digest[index];
+        hash *= UINT64_C(1099511628211);
+    }
+    for (size_t index = 0U; index < sizeof(page_offset); ++index) {
+        hash ^= (uint8_t)(page_offset >> (index * 8U));
+        hash *= UINT64_C(1099511628211);
+    }
+    return (size_t)(hash & (NATIVE_SHARED_CODE_CACHE_CAPACITY - 1U));
+}
+
+static size_t shared_code_find(const uint8_t digest[32],
+    uint64_t page_offset, bool *found)
+{
+    const size_t start = shared_code_hash(digest, page_offset);
+    size_t tombstone = SIZE_MAX;
+
+    *found = false;
+    for (size_t probe = 0U; probe < NATIVE_SHARED_CODE_CACHE_CAPACITY;
+         ++probe) {
+        const size_t index = (start + probe) &
+            (NATIVE_SHARED_CODE_CACHE_CAPACITY - 1U);
+        const struct native_shared_code_page *entry =
+            &shared_code_cache[index];
+
+        if (entry->state == NATIVE_SHARED_CODE_LIVE) {
+            if (entry->page_offset == page_offset &&
+                bytes_equal(entry->digest, digest, 32U)) {
+                *found = true;
+                return index;
+            }
+        } else if (entry->state == NATIVE_SHARED_CODE_TOMBSTONE) {
+            if (tombstone == SIZE_MAX) {
+                tombstone = index;
+            }
+        } else {
+            return tombstone == SIZE_MAX ? index : tombstone;
+        }
+    }
+    return tombstone;
+}
+
+static void reset_shared_code_cache(void)
+{
+    for (size_t index = 0U; index < NATIVE_SHARED_CODE_CACHE_CAPACITY;
+         ++index) {
+        shared_code_cache[index].state = NATIVE_SHARED_CODE_EMPTY;
+    }
+    shared_code_live_pages = 0U;
+}
+
+static bool acquire_shared_code_page(
+    struct native_process *process,
+    uint64_t virtual_address,
+    const uint8_t digest[32],
+    uint64_t page_offset,
+    const uint8_t *source,
+    uintptr_t *physical_address
+)
+{
+    struct native_page page;
+    struct native_shared_code_page *entry;
+    bool found;
+    size_t slot;
+
+    if (process == NULL || digest == NULL || source == NULL ||
+        physical_address == NULL ||
+        ((process->page_count + 1U) * PAGING_PAGE_SIZE) >
+            process->manifest.memory_limit) {
+        return false;
+    }
+    slot = shared_code_find(digest, page_offset, &found);
+    if (slot == SIZE_MAX) {
+        return false;
+    }
+    entry = &shared_code_cache[slot];
+    if (found) {
+        if (entry->references == UINT32_MAX ||
+            !bytes_equal((const uint8_t *)(const void *)
+                    entry->physical_address, source,
+                (size_t)PAGING_PAGE_SIZE)) {
+            return false;
+        }
+        *physical_address = entry->physical_address;
+    } else {
+        if (shared_code_live_pages == NATIVE_SHARED_CODE_CACHE_CAPACITY ||
+            frame_allocate(physical_address) != FRAME_STATUS_OK) {
+            return false;
+        }
+        copy_bytes((void *)*physical_address, source,
+            (size_t)PAGING_PAGE_SIZE);
+    }
+    zero_bytes(&page, sizeof(page));
+    page.virtual_address = virtual_address;
+    page.physical_address = *physical_address;
+    page.shared_code_slot = slot;
+    page.permissions = PAGING_EXECUTE;
+    page.kind = PAGING_PROCESS_MAPPING_NATIVE_IMAGE;
+    page.shared_code = true;
+    if (!record_page(process, &page)) {
+        if (!found) {
+            (void)frame_release(*physical_address);
+        }
+        *physical_address = 0U;
+        return false;
+    }
+    if (found) {
+        ++entry->references;
+        if (process->shared_code_reuses != UINT32_MAX) {
+            ++process->shared_code_reuses;
+        }
+    } else {
+        copy_bytes(entry->digest, digest, 32U);
+        entry->page_offset = page_offset;
+        entry->physical_address = *physical_address;
+        entry->references = 1U;
+        entry->state = NATIVE_SHARED_CODE_LIVE;
+        ++shared_code_live_pages;
+    }
+    return true;
+}
+
+static bool release_page_frame(const struct native_page *page)
+{
+    if (page == NULL) {
+        return false;
+    }
+    if (!page->shared_code) {
+        return frame_release(page->physical_address) == FRAME_STATUS_OK;
+    }
+    if (page->shared_code_slot >= NATIVE_SHARED_CODE_CACHE_CAPACITY) {
+        return false;
+    }
+    {
+        struct native_shared_code_page *entry =
+            &shared_code_cache[page->shared_code_slot];
+
+        if (entry->state != NATIVE_SHARED_CODE_LIVE ||
+            entry->physical_address != page->physical_address ||
+            entry->references == 0U) {
+            return false;
+        }
+        --entry->references;
+        if (entry->references != 0U) {
+            return true;
+        }
+        if (frame_release(entry->physical_address) != FRAME_STATUS_OK) {
+            ++entry->references;
+            return false;
+        }
+        zero_bytes(entry, sizeof(*entry));
+        entry->state = NATIVE_SHARED_CODE_TOMBSTONE;
+        --shared_code_live_pages;
+        if (shared_code_live_pages == 0U) {
+            reset_shared_code_cache();
+        }
     }
     return true;
 }
@@ -644,7 +849,7 @@ static bool window_release_surface(struct native_process *process)
             continue;
         }
         if (!remove_page_record(process, address, &removed) ||
-            frame_release(removed.physical_address) != FRAME_STATUS_OK) {
+            !release_page_frame(&removed)) {
             success = false;
         }
     }
@@ -890,9 +1095,11 @@ static bool allocate_page(
     zero_bytes((void *)*physical_address, PAGING_PAGE_SIZE);
     page.virtual_address = virtual_address;
     page.physical_address = *physical_address;
+    page.shared_code_slot = SIZE_MAX;
     page.permissions = permissions;
     page.kind = kind;
     page.mapped = false;
+    page.shared_code = false;
     if (!record_page(process, &page)) {
         (void)frame_release(*physical_address);
         *physical_address = 0U;
@@ -1226,6 +1433,8 @@ static enum native_process_status dynamic_load_library(
         load->file_lengths[index] = 0U;
         return NATIVE_PROCESS_IMAGE_REFUSED;
     }
+    copy_bytes(load->digests[index], catalog->sha256,
+        sizeof(load->digests[index]));
     load->library_count = index;
     return NATIVE_PROCESS_OK;
 }
@@ -1483,7 +1692,8 @@ static bool prepare_dynamic_frames(
     const struct elf64_dynamic_image *image,
     const uint8_t *prepared,
     size_t prepared_bytes,
-    uint64_t load_bias
+    uint64_t load_bias,
+    const uint8_t shared_digest[32]
 )
 {
     for (size_t segment_index = 0U;
@@ -1509,13 +1719,27 @@ static bool prepare_dynamic_frames(
             uint64_t virtual_address;
             uintptr_t physical_address;
 
-            if (!add_u64(load_bias, link_page, &virtual_address) ||
-                !allocate_page(process, virtual_address, permissions,
+            if (!add_u64(load_bias, link_page, &virtual_address)) {
+                return false;
+            }
+            if ((permissions & PAGING_EXECUTE) != 0U &&
+                shared_digest != NULL) {
+                const uint64_t source_offset = link_page -
+                    image->mapping_start;
+
+                if (source_offset > prepared_bytes ||
+                    PAGING_PAGE_SIZE > prepared_bytes -
+                        (size_t)source_offset ||
+                    !acquire_shared_code_page(process, virtual_address,
+                        shared_digest, source_offset,
+                        prepared + source_offset, &physical_address)) {
+                    return false;
+                }
+            } else if (!allocate_page(process, virtual_address, permissions,
                     PAGING_PROCESS_MAPPING_NATIVE_IMAGE,
                     &physical_address)) {
                 return false;
-            }
-            if (copy_start < copy_end) {
+            } else if (copy_start < copy_end) {
                 const uint64_t source_offset = copy_start -
                     image->mapping_start;
                 const size_t count = (size_t)(copy_end - copy_start);
@@ -1757,7 +1981,9 @@ static enum native_process_status prepare_dynamic_image_pages(
     for (size_t index = 0U; index < load->object_count; ++index) {
         if (!prepare_dynamic_frames(process, load->prepared[index].image,
                 load->memories[index], load->memory_lengths[index],
-                load->prepared[index].load_bias)) {
+                load->prepared[index].load_bias,
+                index == 0U ? NULL :
+                    load->digests[load->source_indices[index]])) {
             return NATIVE_PROCESS_FRAME_ALLOCATION;
         }
     }
@@ -2188,8 +2414,7 @@ static bool process_cleanup(struct native_process *process)
         success = false;
     }
     for (size_t remaining = process->page_count; remaining > 0U; --remaining) {
-        if (frame_release(process->pages[remaining - 1U].physical_address) !=
-                FRAME_STATUS_OK) {
+        if (!release_page_frame(&process->pages[remaining - 1U])) {
             success = false;
         }
     }
@@ -2352,6 +2577,11 @@ static enum native_process_status load_process(
         goto finish_disabled;
     }
     process->active = true;
+    if (dynamic && process->shared_code_reuses != 0U) {
+        console_write("Sapote: dynamic immutable RX shared pages ");
+        console_write_u64(process->shared_code_reuses);
+        console_putc('\n');
+    }
 finish_disabled:
     cpu_interrupt_enable();
 finish:
@@ -2645,7 +2875,7 @@ static int64_t syscall_memory_map(
                         rollback_address);
                 }
                 if (remove_page_record(process, rollback_address, &removed)) {
-                    (void)frame_release(removed.physical_address);
+                    (void)release_page_frame(&removed);
                 }
             }
             return -SAPOTE_ENOMEM;
@@ -2693,7 +2923,7 @@ static int64_t syscall_memory_unmap(
                 PAGING_PROCESS_MAPPING_NATIVE_ANON, page_address) !=
                 PAGING_STATUS_OK ||
             !remove_page_record(process, page_address, &removed) ||
-            frame_release(removed.physical_address) != FRAME_STATUS_OK) {
+            !release_page_frame(&removed)) {
             process->faulted = true;
             process->exiting = true;
             return -SAPOTE_EIO;
@@ -4458,7 +4688,7 @@ static bool release_runtime_pages(
             continue;
         }
         if (!remove_page_record(process, address, &removed) ||
-            frame_release(removed.physical_address) != FRAME_STATUS_OK) {
+            !release_page_frame(&removed)) {
             success = false;
         }
     }
@@ -4537,7 +4767,7 @@ static int64_t syscall_thread_create(
                         rollback_address);
                 }
                 if (remove_page_record(process, rollback_address, &removed)) {
-                    (void)frame_release(removed.physical_address);
+                    (void)release_page_frame(&removed);
                 }
             }
             return -SAPOTE_ENOMEM;
@@ -5693,6 +5923,7 @@ bool native_process_resources_released(void)
     const struct paging_state paging = paging_get_state();
 
     return !scheduler_active && !any_active_process() &&
+        shared_code_live_pages == 0U &&
         !native_syscall_is_active() && !process_user_boundary_active() &&
         audio_native_resources_released() &&
         interrupt_process_gate_resources_released() &&
