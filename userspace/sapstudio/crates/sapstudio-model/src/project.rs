@@ -66,21 +66,13 @@ impl Project {
 
     /// Add a media asset to the library, or find the one already there.
     ///
-    /// **One asset per digest.** Media is content-addressed, so the same bytes
-    /// are the same asset however many times somebody opens the file — adding
-    /// it again gives back the identifier it already has rather than a second
-    /// one naming the same content.
-    ///
-    /// That is not a convenience. Two identifiers for one digest quietly
-    /// falsified the conform round trip: an export writes the digest, an
-    /// import looks it up, and with two candidates it finds the first — so a
-    /// sequence cutting the same footage under two identifiers came back
-    /// pointing at one of them, with nothing reported as lost. The theorem was
-    /// stated three milestones before the case that breaks it was tried.
+    /// Media is content-addressed, so each digest maps to one asset identifier.
+    /// Adding the same content again returns the existing identifier. This keeps
+    /// conform imports unambiguous.
     ///
     /// The location hint is deliberately *not* part of the comparison, and the
     /// existing one is kept. The same content found in a second place is the
-    /// same content; moving the hint is [`Edit::SetMediaLocation`]'s job, and
+    /// same content; moving the hint is [`Project::set_media_location`]'s job, and
     /// doing it here would rewrite a project's records as a side effect of
     /// opening a file.
     ///
@@ -110,20 +102,10 @@ impl Project {
             .map(|(id, _)| id)
     }
 
-    /// Say where an asset's bytes were last seen, giving back the old hint.
+    /// Update an asset's location hint and return the previous hint.
     ///
-    /// **Relinking is this and nothing else.** A hint moves; identity does
-    /// not. Pointing a clip at *different* bytes is different media, and the
-    /// digest says so rather than a flag — so there is no operation here that
-    /// swaps one piece of content for another while keeping its name, because
-    /// that is the operation that silently changes what a programme is.
-    ///
-    /// This is **not in the undo journal**, and that is a limitation rather
-    /// than a decision. The journal applies edits to a *sequence*, and the
-    /// media library belongs to the project; making a media change undoable
-    /// means the journal becoming project-level, which is a larger change than
-    /// the hint is worth. The previous hint is returned so a caller can put it
-    /// back, which is the whole of what undo would do.
+    /// Content identity remains the digest. Location changes are project-level
+    /// metadata and are not stored in the sequence edit journal.
     ///
     /// # Errors
     ///
@@ -237,13 +219,9 @@ impl Project {
     /// changes. Removals, splits, joins, and track edits cannot introduce a
     /// reference or widen a range, so they have nothing to check.
     ///
-    /// Retiming was missing for a milestone, and the shape of the omission is
-    /// worth keeping: `check_source` took a start and a *length on the
-    /// timeline*, which was the same thing as what a clip read right up until
-    /// a clip could be retimed. A clip at double speed reads twice its length
-    /// and nothing noticed. So the question it asks is now the clip's own —
-    /// [`crate::Clip::source_span`] — which cannot fall behind the mapping,
-    /// because it *is* the mapping.
+    /// Validation uses [`crate::Clip::source_span`], so retimed clips are checked
+    /// against the source range they actually read rather than their timeline
+    /// duration.
     fn validate(&self, id: SequenceId, edit: &Edit) -> Result<()> {
         let sequence = self.sequences.get(id)?;
         let held = |track: &usize, index: &usize| -> Result<Option<crate::Clip>> {

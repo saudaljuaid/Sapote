@@ -570,13 +570,8 @@ fn the_span_is_the_two_ticks_a_clip_reads_whichever_way_it_runs() {
 
 #[test]
 fn a_speed_that_would_read_past_the_end_of_the_media_is_refused() {
-    // The other half of the guard `with_speed` carries. A clip can only answer
-    // where its media *begins* -- nought, for everybody -- so the far end is
-    // the library's question, asked where the asset is at hand.
-    //
-    // It was missing for a milestone. `check_source` took a start and a length
-    // on the timeline, which is what a clip read right up until a clip could
-    // be retimed, and a clip at double speed reads twice its length.
+    // The media library validates the far end of the retimed source span. A
+    // double-speed clip reads twice its timeline duration.
     let (mut project, sequence) = against(100, 60);
     assert_eq!(
         project.apply(

@@ -1725,14 +1725,8 @@ static void pm_timer_scenario(void)
 }
 
 /*
- * Retire the 8254 and prove the machine keeps its clocks.
- *
- * This is the mirror of the `retired` scenario, which proved the machine keeps
- * its timer after the 8259 pair is latched shut. Here the timer itself goes: the
- * PIT is proved working, retired, and then refuses every further mutation, and
- * both derived clocks are calibrated and cross-checked with it dead. Calibration
- * used to spin the PIT, so a retirement that broke that path would show up here
- * as a clock that will not calibrate at all rather than as one running slow.
+ * Retire the 8254, reject further PIT changes, then calibrate and cross-check
+ * both derived clocks without it.
  */
 static void pit_retired_scenario(void)
 {
@@ -4079,13 +4073,8 @@ static void write_combining_scenario(
 }
 
 /*
- * The address-space slot bound, proved directly rather than through the
- * scheduler. Sapote used to hold exactly one private hierarchy, so "another
- * one" was not a state the kernel could be in; this builds every slot at once,
- * checks that they are genuinely separate, that one more is refused, and that
- * a narrowing may only be undone while it is the newest - which is what stops
- * one process's teardown from freeing a page table another still has a leaf
- * in.
+ * Fill every address-space slot, verify isolation and overflow refusal, then
+ * check that narrowed aliases can only be released newest-first.
  */
 static void multiprocess_slots_scenario(void)
 {
@@ -8533,11 +8522,7 @@ _Noreturn void kernel_test_complete_nvidia(void)
             !probe.teardown_complete || !probe.resource_census_equal) {
             kernel_test_fail("the NVIDIA probe is inconsistent");
         }
-        /*
-         * Absence is the answer this machine gives, and it has to be given
-         * honestly: no function present means no register was read, no claim
-         * was taken, and no identity was invented.
-         */
+        /* With no NVIDIA function present, no register or resource is touched. */
         if (!probe.any_function_present) {
             /*
              * Absence has to be a refusal rather than an empty machine. This

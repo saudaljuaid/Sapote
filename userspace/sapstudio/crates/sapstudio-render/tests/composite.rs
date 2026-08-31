@@ -621,11 +621,7 @@ fn a_mask_scales_the_coverage_with_the_colour() {
     //   blue   50 decodes to 0.03190; x 0.50196 = 0.01601; encodes to  34
     //   alpha 255 x 128 / 255 = 128, exactly
     //
-    // This test asserted [100, 50, 25, 128] until M8.17 -- the code values
-    // halved -- and that was the bug rather than the convention. The module's
-    // own header has said since its first version that a premultiplied sample
-    // is "the encoding of light x coverage, not the encoded value scaled by
-    // coverage", and `masked` was doing the second thing.
+    // The expected values scale linear light before encoding.
     assert_eq!(masked.to_packed().expect("samples"), vec![147, 72, 34, 128]);
     assert!(checked_premultiplied(&masked).is_ok());
 }
@@ -696,13 +692,7 @@ fn a_wipe_needs_no_operator_of_its_own() {
     // 192. Thirteen code values apart, and the linear answer is the *brighter*
     // one here.
     //
-    // This assertion read 154 until M8.17, and the comment beside it said the
-    // linear answer was the darker one -- which was not a fact about light, it
-    // was the consequence of `masked` scaling the incoming's colour in code
-    // values. A test written to pin the difference between light and code
-    // values was pinning the wrong number and drawing the wrong moral from it.
-    // The lesson survives in a better form: assert the number, never the
-    // direction, because the direction was wrong.
+    // Pin the calculated value rather than relying on a brighter/darker rule.
     assert_eq!(samples[8], 205);
     assert_eq!(samples[9], 205);
     assert_eq!(samples[10], 205);

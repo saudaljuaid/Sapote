@@ -366,15 +366,8 @@ fn one_changed_sample_changes_the_digest() {
 
 #[test]
 fn a_blank_frame_is_black_rather_than_full_of_zeroes() {
-    // Zero is not black, and this test exists because it used to be treated as
-    // though it were. In a limited-range luma plane zero sits *below* the legal
-    // floor of sixteen; in a chroma plane zero is not neutral but the most
-    // negative value the byte can hold, which is a saturated blue-green. A
-    // blank frame filled with zeroes therefore showed up on a vectorscope in
-    // the corner of the graticule instead of at the origin — which is how it
-    // was found.
-    //
-    // A blank frame is an opaque black slug, legal in its own range.
+    // A blank frame is opaque black in its declared range. Limited-range luma
+    // uses 16 for black, and limited-range chroma uses its neutral code.
     let full = Frame::blank(rgb_description(8, 8)).expect("a frame");
     for pixel in full.to_packed().expect("bytes").chunks_exact(4) {
         assert_eq!(pixel, &[0, 0, 0, 255], "full-range black, opaque");

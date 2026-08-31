@@ -33,10 +33,8 @@ pub struct MediaAsset {
 /// project does to media — cutting, trimming, dissolving, grading, masking,
 /// moving — does not care and must not have to.
 ///
-/// The *planner* acts on this, not the graph, and that is the same decision
-/// M8.7 made about offline media for the same reason: a node that chose for
-/// itself whether to fetch or to draw would be a node whose cache key did not
-/// record which it had done.
+/// The planner resolves the source before building a graph so the cache key
+/// always describes the rendered content.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MediaSource {
     /// Bytes somewhere, named by the digest of their content.

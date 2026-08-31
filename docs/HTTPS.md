@@ -2,7 +2,7 @@
 
 # Bounded native HTTPS profile
 
-`sapote_https_get()` is a deliberately small HTTP/1.1 download operation over
+`sapote_https_get()` is a bounded HTTP/1.1 download operation over
 Sapote's BearSSL TLS 1.2 client. It is a Ring 3 SDK facility; it reaches the
 network only through `sapote_dns_resolve()` and the Sapote stream API.
 
@@ -42,7 +42,7 @@ and close failure. `sapote_https_response` retains the BearSSL and raw Sapote
 transport values for diagnostics.
 
 Every failure after stream creation cancels, shuts down, and closes the stream
-before returning. A reset after TLS record bytes is deliberately reported as
+before returning. A reset after TLS record bytes is reported as
 TLS truncation; Sapote ABI v1 otherwise exposes orderly TCP closure and reset
 through overlapping stream errors. Cancellation is also available directly
 through `sapote_tls_client_cancel()` on the lower-level client. The synchronous
@@ -97,9 +97,9 @@ packet audit reconstructs the Ethernet/IP/TCP path, requires TLS 1.2 records on
 port 443, and refuses captures containing the request, HTTP status line, or
 body in plaintext.
 
-This is a real in-guest TLS 1.2/HTTPS download over Sapote DNS and TCP. It is
-not yet a package-manager download: the client writes an inert bounded body to
-its Data namespace and does not install or execute it. There is no general
+This is an in-guest TLS 1.2/HTTPS download over Sapote DNS and TCP. The client
+writes an inert bounded body to its Data namespace without installing or
+executing it. There is no general
 Internet, redirect, chunked/compressed response, HTTP/2, mutable system trust
 store, OCSP/CRL, certificate pin update, or persistent clock anti-rollback
 claim.

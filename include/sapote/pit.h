@@ -59,7 +59,7 @@ enum pit_status pit_stop(void);
  * Take the 8254 off the machine for good. Nothing measures time against it any
  * more - the ACPI power management timer does that, and both derived clocks are
  * calibrated from it - so the counter is stopped, its redirection entry masked,
- * and the subsystem latched shut. Every later mutation is refused rather than
+ * and the subsystem latched shut. Subsequent mutations are refused rather than
  * quietly re-arming a timer the kernel no longer reasons about.
  */
 enum pit_status pit_retire(void);

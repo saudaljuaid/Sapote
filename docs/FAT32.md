@@ -56,7 +56,7 @@ rather than interpreted ambiguously.
 
 ## Names, paths, and resources
 
-v2.0.0 deliberately accepts a case-insensitive ASCII 8.3 subset. Names are
+v2.0.0 accepts a case-insensitive ASCII 8.3 subset. Names are
 uppercased on disk; supported punctuation includes dollar, percent, apostrophe,
 hyphen, underscore, at, tilde, backtick, exclamation, parentheses, braces,
 caret, hash, and ampersand. Long-filename entries are validated enough to
@@ -102,13 +102,11 @@ invalidate the mount generation and its cache and handles.
 
 The persistence boundary is a successful `sync`, clean unmount, or clean
 `reboot` command. Every completed operation uses synchronous NVMe writes, and
-the clean boundary persists its final metadata hints. FAT32 is not journaled:
-Sapote does not claim atomic multi-sector transactions or arbitrary power-loss
-recovery. An interruption may leave secondary/primary FAT disagreement,
-unreachable allocation, or a size/chain mismatch. The next mount detects and
-refuses those states. Use `tools/fat32_image.py inspect` to diagnose the image;
-v2.1.0 supplies inspection and deterministic reconstruction, not an in-kernel
-repair service.
+the clean boundary persists its final metadata hints. FAT32 is not journaled;
+an interrupted update may leave FAT copies inconsistent, leak an allocation,
+or leave a size/chain mismatch. The next mount detects and rejects those
+states. Use `tools/fat32_image.py inspect` to diagnose and reconstruct an
+image.
 
 HTTP streaming in v2.1.0 uses the same bounded handle/cache/NVMe path. A
 download is written to a temporary 8.3 entry, synchronized, verified, and then
@@ -135,9 +133,9 @@ All production evidence uses the normal NVMe submission/completion path and
 Sapote Redwood commands. Host inspection is verification tooling, not a substitute
 for guest filesystem execution.
 
-## Retained limits
+## Supported scope
 
-There is no journal, fsck repair mode, POSIX metadata, permissions model,
-timestamps, hard links, symbolic links, sparse files, multi-user security,
-arbitrary FAT32 geometry, VFAT long-name support, hotplug, concurrent writers,
-or stable userspace ABI. These are explicit v2.1.0 boundaries.
+The implementation uses fixed FAT32 geometry, ASCII 8.3 names, one writer,
+kernel-owned metadata, and explicit sync points. It excludes journaling,
+in-kernel repair, POSIX metadata, links, sparse files, hotplug, and a stable
+userspace ABI.

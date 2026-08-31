@@ -25,20 +25,9 @@
 //! 96      N     the frames, tightly packed, in order
 //! ```
 //!
-//! The digest covers the header as well as the samples. It has to: a flipped
-//! bit in the transfer function tag would otherwise turn every frame in the
-//! file into a different picture, silently, and a digest that only covers the
-//! samples would report the file as sound. The single-byte sweep in the tests
-//! is what found that, which is what a sweep is for.
-//!
-//! No entropy coding at all. That is the point: the whole pipeline — read,
-//! describe, cache, present, render, write — can be proved correct before a
-//! single codec exists, and when one does exist it is measured against this
-//! rather than against itself.
-//!
-//! Every frame in one file shares one description. A file whose frames change
-//! shape halfway through is a sequence of files, and pretending otherwise is
-//! how a decoder ends up guessing.
+//! The digest covers both the header and samples, including every colour and
+//! alpha tag. The format uses no entropy coding. All frames in a file share one
+//! description; a description change starts a new file.
 
 use alloc::vec::Vec;
 
@@ -57,12 +46,7 @@ pub const MAGIC: [u8; 4] = *b"SPRW";
 
 /// The format this build writes.
 ///
-/// Two, because version one had no field for the alpha association, and a
-/// frame that does not say whether its colour has been multiplied by its alpha
-/// is exactly the untagged frame this project refuses elsewhere. Nothing was
-/// ever released that wrote version one, so nothing is being broken — but the
-/// number moves anyway, because changing what a version means is the one thing
-/// a versioned format may never do (R-1.2).
+/// Version two adds the alpha-association field. Version one was never released.
 pub const FORMAT_VERSION: u16 = 2;
 
 /// How long the fixed header is.

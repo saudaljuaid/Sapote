@@ -30,8 +30,7 @@ use crate::status::{ModelStatus, Result};
 /// this constant, which is the difference between "you have edited enough"
 /// and "there is no room", and the two deserve different words.
 ///
-/// `tests/size.rs` keeps the arithmetic honest, so the day the platform grows
-/// the ordering is re-checked rather than assumed.
+/// `tests/size.rs` verifies this bound against the platform memory limit.
 pub const MAX_HISTORY: usize = 4096;
 
 /// One applied edit and the edit that undoes it.

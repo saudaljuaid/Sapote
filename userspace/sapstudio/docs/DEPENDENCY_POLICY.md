@@ -2,24 +2,19 @@
 
 # Dependency policy
 
-[`DEPENDENCIES.md`](DEPENDENCIES.md) says what SapStudio might use. This says
-how something actually gets in, what it costs to keep, and how it leaves.
-
-A dependency is a permanent liability with a temporary benefit. The gate below
-is deliberately expensive so that the benefit has to be real.
+[`DEPENDENCIES.md`](DEPENDENCIES.md) records evaluated components. This policy
+covers importing, maintaining, upgrading, and removing one.
 
 ## The import gate
 
-A dependency enters only through a pull request that does all nine of these, in
-one reviewable change.
+A dependency enters through one reviewable pull request that completes all nine
+steps.
 
-**1. State the need.** One paragraph: what SapStudio cannot do without it, why
-the need is real now rather than anticipated, and what the code looks like
-without it. "It would be convenient" fails here.
+**1. State the need.** Explain the required capability and the local
+alternative. Convenience alone is not enough.
 
-**2. State the alternative.** Name the shortest path to writing it here, with
-an estimate. If that estimate is under a week and the component is core
-semantics, R-12.7 refuses the import.
+**2. State the alternative.** Estimate the shortest in-tree implementation. If
+core semantics take less than a week to implement locally, R-12.7 applies.
 
 **3. Verify the licence from the source.** Read the licence file in the
 vendored tree. Check every subdirectory: media libraries routinely carry a
@@ -80,16 +75,13 @@ imported      = "<date>"
 reviewed      = "<date>"
 ```
 
-Every field is required. `exit_plan` is not decoration: a dependency without a
-credible answer to "it was abandoned this morning" is a dependency that owns
-this project rather than the other way round.
+Every field is required. `exit_plan` must describe a practical replacement or
+removal path.
 
 ## Keeping it
 
-**Review annually.** Each dependency's `reviewed` date is checked in CI. A
-record older than a year fails the build until someone re-reads the licence,
-re-counts the `unsafe`, and confirms the component is still maintained and
-still needed.
+**Review annually.** CI checks each dependency's `reviewed` date. Renew the
+record by checking the license, `unsafe` count, maintenance status, and need.
 
 **Upgrades are deliberate.** One dependency per commit, with the upstream
 changelog summarised, the `unsafe` count re-taken, the licence re-verified, and
@@ -99,12 +91,11 @@ the full evidence run. Automated dependency updates are forbidden (R-12.6).
 --offline` in every build. A build that can resolve a different version than
 the last one is not reproducible and therefore not acceptable (R-13.2).
 
-**Duplicates are refused.** Two crates that do the same job is a decision that
-was never made. `cargo-deny`'s duplicate check runs with `deny`.
+**Avoid duplicates.** `cargo-deny` runs duplicate checks with `deny`.
 
 ## Extra rules for C and C++ dependencies
 
-A native dependency costs more than a Rust one and must earn the difference.
+Native dependencies follow these additional rules:
 
 - It is wrapped in `sapstudio-abi` and never appears elsewhere (R-3.2.1).
 - Its build is reproduced by SapStudio's own build rules. Its upstream build
@@ -121,10 +112,8 @@ A native dependency costs more than a Rust one and must earn the difference.
 
 ## Removal
 
-Removing a dependency is a normal, welcome change. It requires: the code that
-replaces it, the manifest entry deleted, the vendored tree deleted, the
-`DEPENDENCIES.md` row moved to a verdict of `Reject` with the reason, and
-evidence that nothing regressed.
+Removal includes replacement code when needed, deletion of the manifest and
+vendored source, an updated `DEPENDENCIES.md` verdict, and regression evidence.
 
 A dependency is removed on sight when it: changes to an incompatible licence,
 gains a network or telemetry path, gains an unbounded allocation in a path
@@ -143,5 +132,4 @@ to duplicate something the application must own.
 | Every file carries an SPDX identifier | `reuse` |
 | Two clean builds are byte-identical | the build itself |
 
-The tools named here are written when a feature first needs them, and
-are listed now so that no dependency arrives before the gate that judges it.
+An import cannot proceed until every required check has an implementation.

@@ -1,33 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! The sound half of rendering a sequence.
+//! Mix sequence audio over a time span.
 //!
-//! [`crate::timeline`] answers what a sequence looks like at an instant. This
-//! answers what it *sounds* like over a span, and the difference in shape is
-//! the whole of the difference between picture and sound: a frame is a moment,
-//! a sound is a stretch.
-//!
-//! The interesting part is where the two meet. A frame at 24 into 48 kHz is
-//! 2000 samples exactly, and at 30000/1001 — the commonest rate in television
-//! — it is 1601.6, which is not a number of samples. No frame at 29.97 holds a
-//! whole number of samples and none ever will.
-//!
-//! So a frame's samples are not counted, they are *bounded*: the samples of
-//! frame `n` are those from [`sapstudio_core::Instant::floor_into`] of `n` up
-//! to the same of `n + 1`. Each frame therefore holds 1601 samples or 1602,
-//! each frame's end is the next frame's beginning, and over any span the
-//! counts sum to exactly the samples in that span. Nothing drifts, nothing is
-//! dropped, and nothing is played twice — which is what the alternative,
-//! rounding to nearest, cannot promise at every boundary.
-//!
-//! Each track mixes at its own fader. The fader is a property of the *project*
-//! — it is set by an edit, it has an inverse, it undoes, and it is saved — so
-//! this function reads it rather than taking it as a parameter. A mix level
-//! that lived only in a function call would be a mix nobody could save.
-//!
-//! The model stores decibels and the mixer wants a factor, and the conversion
-//! happens here because this is the only place that sees both. A muted track
-//! contributes nothing at all, which is not the same as a track turned all the
-//! way down: the logarithm of zero is not a point on the scale.
+//! Sample boundaries use [`sapstudio_core::Instant::floor_into`] at both ends,
+//! so fractional samples per video frame alternate without drift, overlap, or
+//! gaps. Each track uses its saved fader and automation. Decibel values are
+//! converted to gain here; muted tracks contribute no source.
 
 use alloc::vec::Vec;
 
@@ -40,8 +17,7 @@ use crate::SlateStatus;
 
 /// Where samples of media come from.
 ///
-/// The sound counterpart of [`crate::timeline::FrameSource`], and the same
-/// bargain: one method, and everything harder lives behind it.
+/// The sound counterpart of [`sapstudio_render::Library`].
 pub trait SampleSource {
     /// `count` samples of `media`, beginning at sample `start` of it.
     ///

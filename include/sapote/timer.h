@@ -6,24 +6,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/*
- * Deadlines, on top of the monotonic clock. Everything before this could measure
- * an interval that had already happened or count periodic ticks; nothing could
- * ask to be woken at a point in time. A scheduler needs that before it needs
- * anything else.
- */
+/* Deadline timers backed by the monotonic clock. */
 
 /*
- * How many pending deadlines timer_start asks the kernel heap for. This is no
- * longer an array bound: the table is one heap allocation made once at start and
- * released at stop, and the capacity lives in a variable. It stays a compile-time
- * default only because nothing yet has an opinion about how many deadlines it
- * needs; timer_capacity reports what was actually obtained.
+ * Default number of pending deadlines requested by timer_start. The table is a
+ * single heap allocation made at startup and released at shutdown;
+ * timer_capacity reports the allocated size.
  *
- * The table cannot be grown on demand, and that is deliberate rather than
- * unfinished. timer_arm is reachable from inside the timer interrupt, because a
- * callback is allowed to arm a fresh deadline, and the heap is not reentrant.
- * Allocating per arm would put a heap transaction inside an interrupt handler.
+ * The table cannot grow on demand because callbacks may call timer_arm from the
+ * timer interrupt, where the non-reentrant heap cannot be used.
  */
 #define TIMER_MAX_PENDING 32U
 

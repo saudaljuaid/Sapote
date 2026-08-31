@@ -8,12 +8,12 @@ deterministic in-memory reference model for package state transitions. The model
 exercises staging, commit recovery, rollback, removal, dependency retention,
 integrity verification, and repair.
 
-The host tool remains format/reference groundwork and does not write a host
-System image or install a package into Sapote. The guest has a privileged,
+The host tool defines the format and reference state machine; it does not write
+a System image or install packages. The guest has a privileged,
 VFS-backed recovery service for already staged generations plus a bounded parser
-and dependency planner for signed repository/package bytes. No guest Ed25519
-provider, download path, generation builder, staging installer, or package CLI
-connects those two cores yet. See [`PACKAGE_MANAGER.md`](PACKAGE_MANAGER.md).
+and dependency planner for signed repository/package bytes. These components
+meet at an authenticated staging boundary described in
+[`PACKAGE_MANAGER.md`](PACKAGE_MANAGER.md).
 
 ## Trust and namespace boundary
 
@@ -22,22 +22,22 @@ metadata uses package-v3 identity, SemVer, publisher key ID, immutable file path
 kind, mode, length, and SHA-256 semantics. Dependency records retain the exact
 identifier/constraint/provider binding chosen by the signed repository resolver.
 The transaction layer does not resolve versions again, accept embedded keys, or
-turn a SHA-256 into a signature. A future guest caller must authenticate the
+turn a SHA-256 into a signature. The staging caller must authenticate the
 repository index, download digest, publisher key, package-v3 signature, and file
 payload before calling the equivalent staging operation.
 
 The installed database and journal use SHA-256 for corruption detection and
 cross-record binding, not publisher or repository authenticity. Repair payloads
 in the host model are described as authenticated because the API verifies them
-against the already authenticated installed file length and digest; a guest
-service must additionally obtain those bytes from a trusted cache or repeat the
+against the already authenticated installed file length and digest; the guest
+service also obtains those bytes from a trusted cache or repeats the
 repository/package verification chain.
 
 Immutable package files and mutable user data are distinct namespaces. Package
 transactions own only the paths listed in the installed database. The model's
 `user_data` mapping is never copied into a package generation, verified against a
-package digest, removed, rolled back, or repaired. A future guest implementation
-must preserve that separation in its filesystem layout and authorization checks.
+package digest, removed, rolled back, or repaired. The guest filesystem layout
+and authorization checks preserve that separation.
 
 ## Complete immutable generations
 
@@ -53,11 +53,10 @@ digest is validated before the commit point. A 128-byte authority record is then
 atomically replaced to select the complete new generation. Old immutable state
 is retained until authority replacement and cleanup are durable.
 
-The host model deliberately charges free space for the complete old generation,
-complete staged generation, and journal at once. This is conservative. A future
-filesystem may share immutable extents or content-addressed objects, but it must
-prove equivalent reference accounting and must never reclaim the old generation
-before the new one is complete and authoritative.
+The host model charges free space for the complete old generation, staged
+generation, and journal at once. A filesystem may share immutable extents or
+content-addressed objects only with equivalent reference accounting. It must
+retain the old generation until the new one is complete and authoritative.
 
 ## Installed database version 1
 
@@ -217,8 +216,8 @@ files in bounded chunks; update-after-finish, finish-twice, and counter overflow
 are refused.
 
 The C recovery core accepts two database candidates and one explicit
-`owned_files_complete` proof per candidate. That proof is deliberately not
-inferred from a database checksum. `include/sapote/package_service.h` and
+`owned_files_complete` proof per candidate. A database checksum alone does not
+establish that proof. `include/sapote/package_service.h` and
 `src/kernel/package_service.c` now produce it by enumerating the immutable root,
 refusing extra files and multiply linked files, then checking each declared
 file's type, exposed mode, stable object identity, exact length, EOF, and SHA-256
@@ -283,9 +282,8 @@ three fixed transaction envelope paths. Mutable user data remains outside
 `pkgstate/gen/.../root` and is never traversed. The recovery service does not
 create package files, accept package payload bytes, or modify dependency state.
 On the short-name FAT backend, metadata paths work, but a database path whose
-components cannot be represented by that backend will be observed as incomplete
-and refused; ext4 or future long-name support is required for general package-v3
-paths.
+components cannot be represented by that backend is incomplete and refused.
+General package-v3 paths require a backend with long-name support.
 
 ## Removal, references, and repair
 
@@ -347,8 +345,6 @@ authority repair ordering, recursive cleanup, no-complete-generation refusal,
 durability failure with journal retention, and zero live handle/allocation
 census on every exit.
 
-Guest integration still requires authenticated download/cache plumbing,
-generation staging and cancellation, service authorization, CLI presentation,
-backend-specific atomic-rename evidence, and end-to-end power-cut tests on real
-FAT32/ext4/NVMe images. Until those exist, this recovery infrastructure must not
-be described as a host installer or Sapote's package manager.
+The recovery service starts from authenticated, staged generations. Download,
+cache population, staging, authorization, client presentation, and
+backend-specific commit evidence are separate integration layers.

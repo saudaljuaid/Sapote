@@ -67,7 +67,7 @@ The QEMU suite covers:
   validation.
 
 Each scenario has an expected exit status and required serial output. Writable
-storage tests receive private image copies except for tests that deliberately
+storage tests receive private image copies except for tests that explicitly
 reboot with the same synchronized image.
 
 ## Focused checks

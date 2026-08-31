@@ -125,17 +125,8 @@ impl Gain {
             return Ok(Fixed::ZERO);
         }
         if self.decibels.is_zero() {
-            // A fast path, and only a fast path — said plainly because the
-            // comment here used to claim it was load-bearing and a negative
-            // control proved otherwise. `pow` computes `exp2(y · log2(x))`,
-            // and at `y = 0` the product is exactly zero and `exp2(0)` is
-            // exactly one, so the general path already lands on unity to the
-            // last bit. Removing this shortcut fails no test.
-            //
-            // It stays because unity is where a fader spends most of its life
-            // and a logarithm is not cheap, and `the_general_path_reaches_
-            // unity_too` checks that the two agree — so this can never become
-            // the only reason the commonest gain in a session is correct.
+            // Unity is common and does not need the logarithmic general path.
+            // The general path is tested separately to return the same value.
             return Ok(Fixed::ONE);
         }
         let exponent = Fixed::from_rational(self.decibels.checked_div(Rational::new(20, 1)?)?)?;

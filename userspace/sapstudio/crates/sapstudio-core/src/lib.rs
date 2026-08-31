@@ -4,11 +4,9 @@
     clippy::doc_markdown,
     reason = "SapStudio and Sapote are product names, not identifiers"
 )]
-//! Exact time, identity, and typed refusal for SapStudio.
+//! Exact time, identity, and typed errors for SapStudio.
 //!
-//! This crate is the floor everything else stands on, and it deliberately
-//! knows nothing about editing, media, or operating systems. It holds the
-//! types whose correctness the rest of the application assumes:
+//! This crate contains the dependency-free primitives used by higher layers:
 //!
 //! - [`Rational`], exact ratios of integers;
 //! - [`Fixed`], fixed-point arithmetic with an integer `pow`, `log` and
@@ -20,11 +18,10 @@
 //! - [`Timecode`], the label a frame wears, including drop-frame counting;
 //! - [`Id`], a generational identifier that goes stale rather than dangling;
 //! - [`Digest`], content identity by SHA-256;
-//! - [`CoreStatus`], every way this crate refuses.
+//! - [`CoreStatus`], typed operation failures.
 //!
-//! There is no floating point anywhere in this crate, no allocation, no
-//! `unsafe`, and no panic on any public path. Every fallible operation returns
-//! a named refusal.
+//! The crate uses no floating point, allocation, or `unsafe`, and public
+//! fallible operations return [`CoreStatus`].
 //!
 //! The crate is `no_std` when it is built for Sapote and links `std` only when
 //! the host test harness needs it, which changes no behaviour (R-2.2).

@@ -1105,11 +1105,8 @@ fn a_label_that_cannot_count_at_the_told_rate_is_refused() {
 
 #[test]
 fn a_rate_past_thirty_writes_a_list_this_parser_cannot_read_back() {
-    // Fifty frames a second writes frames fields up to forty-nine, and a CMX
-    // parser has no rate to check them against, so it counts at thirty and
-    // refuses. Exporting still works, because the file is a correct one -- it
-    // is this reader that cannot be told. The limit is checked rather than
-    // claimed, so the day the parser learns to be told, this test says so.
+    // CMX omits the rate, so the parser's 30 fps label cannot represent frame
+    // fields 30 through 49 from a 50 fps export.
     let (project, sequence) = one_cut(Timebase::PAL_50);
     let origin = Timecode::new(1, 0, 0, 0, 50, false).expect("a label");
     let conformed = conform::export(&project, sequence, origin).expect("a list");

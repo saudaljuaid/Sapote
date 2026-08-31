@@ -1310,13 +1310,9 @@ static enum network_status network_service_pump(void)
 }
 
 /*
- * One receive buffer and one transmit buffer serve the whole stack, so the
- * pump must run alone. A handler that answers the frame it is reading -- an
- * ICMP echo, a TCP acknowledgement, a refusal -- reaches a send, and a send
- * that waits for anything used to wait by pumping again, from inside the very
- * loop that owns the buffer being parsed. This is the guard: recursive entry
- * is refused rather than served, and arp_resolve turns its wait into a single
- * request while it holds.
+ * One receive buffer and one transmit buffer serve the stack, so the pump
+ * cannot re-enter while handling a reply. Recursive service returns WOULD_BLOCK;
+ * arp_resolve sends one request while the service loop owns the buffers.
  */
 enum network_status network_service(void)
 {

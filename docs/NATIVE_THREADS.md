@@ -15,8 +15,8 @@ TLS auxiliary records, allocates and initializes a separate TLS block for each
 variant II: static TLS occupies negative offsets from FS, and the TCB word at
 `FS:0` contains the thread pointer itself. Raw thread entries begin with the
 x86-64 SysV post-`CALL` stack alignment. The Rust crate exposes the raw FS-base
-contract and raw-entry thread creation; it does not claim Rust language
-`#[thread_local]` support.
+contract and raw-entry thread creation. Rust language `#[thread_local]` support
+is outside that ABI.
 
 Futex wait compares one aligned, writable process-local `u32`. A mismatch
 returns `-EAGAIN`; a match parks until wake, an absolute deadline, or process

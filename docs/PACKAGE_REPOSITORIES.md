@@ -8,11 +8,11 @@ it against an external immutable Ed25519 root, checks freshness and
 repository-version floors, verifies downloaded package bytes, and emits an exact
 dependency-first install plan and lock representation.
 
-The guest parser/planner in `package_manager.c` now consumes the same canonical
+The guest parser/planner in `package_manager.c` consumes the same canonical
 index and package-v3 metadata behind caller-supplied immutable-key and Ed25519
-callbacks. It is not yet connected to guest crypto, HTTPS fetch, staging,
-transaction commits, a package CLI, or Store. See
-[`PACKAGE_MANAGER.md`](PACKAGE_MANAGER.md) for that exact boundary.
+callbacks. Crypto, HTTPS fetch, staging, transaction commits, client commands,
+and Store presentation sit outside this format layer. See
+[`PACKAGE_MANAGER.md`](PACKAGE_MANAGER.md) for the integration boundary.
 
 ## Repository index version 1
 
@@ -49,7 +49,7 @@ only by zero tail bytes. The whole index is at most 32 MiB.
 | 300 | 212 | reserved zero bytes |
 
 The signature covers the complete index with bytes 232–295 zeroed. The root
-public key is deliberately absent from the index: callers supply an immutable
+public key is absent from the index: callers supply an immutable
 trusted root, and its SHA-256 key ID must match the signed header. An embedded
 key, an unknown key, an altered signature, or a missing real Ed25519 backend is
 never accepted as trust.

@@ -971,22 +971,11 @@ impl Track {
         Ok(())
     }
 
-    /// Move a cut, taking from one side and giving to the other.
+    /// Roll a cut by taking duration from one side and giving it to the other.
     ///
-    /// The roll every editor has. `boundary` names the cut between items
-    /// `boundary - 1` and `boundary`, and a positive `by` moves it later: the
-    /// outgoing item gets longer and the incoming one gets shorter *and starts
-    /// further into its source*, so the material either side of the cut is
-    /// unbroken and the programme is exactly as long as it was.
-    ///
-    /// That last clause is what makes this a different operation from
-    /// trimming twice. Two trims change the length of the programme in between
-    /// and every position after the cut moves and moves back; a roll never
-    /// leaves the track in a state anything downstream could observe.
-    ///
-    /// **It is its own inverse.** Rolling by `-by` restores exactly what was
-    /// there, which is what makes the edit's inverse a value rather than a
-    /// saved copy of two items.
+    /// `boundary` lies between `boundary - 1` and `boundary`. A positive `by`
+    /// lengthens the outgoing item and advances the incoming source start while
+    /// keeping programme duration fixed. Rolling by `-by` is the inverse.
     ///
     /// # Errors
     ///

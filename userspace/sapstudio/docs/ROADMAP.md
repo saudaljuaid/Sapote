@@ -2,8 +2,8 @@
 
 # Roadmap
 
-This roadmap describes the remaining product work. Completed implementation
-details belong in the architecture and changelog, not in a running diary.
+This file tracks product priorities. Implemented details belong in
+[`ARCHITECTURE.md`](ARCHITECTURE.md) and the changelog.
 
 ## Current baseline
 
@@ -15,18 +15,7 @@ retiming, keyframes, interchange, and a freestanding Sapote image.
 Redwood exposes a smaller integrated surface: BMP import, clip selection and
 trim, project save, and BMP export.
 
-## Near-term priorities
-
-### Native application services
-
-- Define a versioned Sapote application ABI.
-- Load an application image without pinning it as a special kernel fixture.
-- Add growable userspace mappings and explicit process lifetime services.
-- Expose framebuffer surfaces, input events, time, and writable paths to an
-  application.
-
-This work is complete when SapStudio launches as a userspace program and can
-open, edit, save, close, and reopen a project without kernel-owned UI code.
+## Active priorities
 
 ### Interactive editor
 
@@ -36,8 +25,8 @@ open, edit, save, close, and reopen a project without kernel-owned UI code.
   damage tracking.
 - Route edits through the existing undo journal.
 
-This work is complete when the visible timeline and the saved model remain in
-sync through editing and recovery.
+Completion means the visible timeline and saved model remain synchronized
+through editing and recovery.
 
 ### Media pipeline
 
@@ -46,8 +35,8 @@ sync through editing and recovery.
 - Add compressed codecs only through reviewed, vendored dependencies.
 - Preserve explicit colour metadata from input through output.
 
-This work is complete when a project can render a reproducible image sequence
-and reopen it with matching frame descriptions.
+Completion means a project renders a reproducible image sequence that reopens
+with matching frame descriptions.
 
 ### Audio
 
@@ -55,8 +44,8 @@ and reopen it with matching frame descriptions.
 - Add Sapote audio submission, clocking, and underrun reporting.
 - Keep allocation and locks outside the real-time path.
 
-This work is complete when synchronized picture and sound play through Sapote
-and an offline export matches the same timeline.
+Completion means synchronized picture and sound play through Sapote and offline
+export matches the same timeline.
 
 ### Performance and hardware
 
@@ -77,7 +66,7 @@ The first full SapStudio release needs:
 - parser fuzzing and reference renders for supported formats;
 - documented resource limits and unsupported formats.
 
-## Deferred
+## Outside the current release
 
 Live collaboration, cloud services, plugin hosting, scripting, broad codec
 coverage, GPU effects, and distributed rendering are outside the first

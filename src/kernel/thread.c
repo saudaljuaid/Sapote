@@ -13,19 +13,11 @@
 #include <sapote/timer.h>
 
 /*
- * More than one thread of control, on one core. Scheduling is cooperative until
- * thread_enable_preemption arms the first quantum, and preemptive after that.
+ * Single-core thread scheduler. Scheduling begins cooperatively and becomes
+ * preemptive after thread_enable_preemption arms the first quantum.
  *
- * The whole layer rests on one observation: a call to thread_switch_context
- * leaves its return address on the stack it was called on, so changing the
- * stack pointer changes which return address the final ret uses. Every thread
- * that is not running is sitting inside that one function, and resuming it is
- * letting it finish.
- *
- * What is deliberately not here: priorities, blocking, and any notion of a
- * second processor. The run queue is a linear scan over a fixed table because
- * that is predictable enough for a self-test to pin exact rotations, exactly
- * as heap.c's first fit is.
+ * Suspended threads remain inside thread_switch_context with their return
+ * addresses on private stacks. The fixed run queue is scanned linearly.
  */
 
 /*
@@ -56,16 +48,8 @@
  * reads as one, and bit 9 is the interrupt enable. The direction flag stays
  * clear, as the ABI requires of any function entry.
  *
- * Interrupts start *enabled*, and that is load-bearing rather than incidental.
- * A thread that begins with them disabled and never yields can never be
- * preempted, because the quantum that would take the processor back is an
- * interrupt it is refusing to take - so the first such thread scheduled locks
- * the machine. This layer shipped with them disabled, which was invisible for
- * exactly as long as every thread yielded voluntarily; the preemption proof
- * hung on its first run. A schedulable thread is an interruptible one.
- *
- * The consequence is worth stating: a thread cannot assume it holds a critical
- * section on entry. Anything that needs one takes it itself.
+ * Threads start with interrupts enabled so timer preemption can run. Code that
+ * needs a critical section acquires it explicitly.
  */
 #define RFLAGS_RESERVED UINT64_C(0x0000000000000002)
 #define RFLAGS_INTERRUPT_ENABLE UINT64_C(0x0000000000000200)

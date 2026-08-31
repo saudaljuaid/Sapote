@@ -1,33 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! A shape that decides which part of a clip is used.
+//! Convex clip masks in frame-relative coordinates.
 //!
-//! A mask is to *where* what a grade is to *colour*: a property of the clip
-//! rather than of the track, carried by the layer stack, and applied by the
-//! renderer. It is the same primitive a wipe is made of — an exact-area
-//! coverage plane — pointed at a clip instead of at a transition.
-//!
-//! ## In fractions of the frame, not in pixels
-//!
-//! Every corner is a fraction of the frame's width and height, so a mask drawn
-//! on a proxy is the same mask on the finish, and a project conformed to
-//! another size keeps the shape somebody drew rather than a pixel count that
-//! no longer means anything. Nought is the left or top edge and one is the
-//! right or bottom; a corner outside that is not refused, because a mask whose
-//! points sit off the frame is how an editor says "all the way to the edge and
-//! past it" rather than a mistake.
-//!
-//! ## Convex, and what that costs
-//!
-//! The corners must describe a convex polygon, because that is what the
-//! rasteriser computes an exact area for: a convex region is an intersection
-//! of half-planes and the pixel square can be clipped against each in turn.
-//!
-//! A concave mask is a **union of convex ones** rather than a different kind
-//! of shape, and the union is not built here. That is a real limitation and it
-//! is named rather than hidden: an editor who draws a concave outline gets a
-//! refusal that says so, not a mask quietly repaired into its convex hull —
-//! which would be a different shape, drawn by nobody, and impossible to notice
-//! until something went to air.
+//! Corners are fractions of frame width and height, so masks are independent
+//! of output resolution. Coordinates may extend beyond the frame. Convexity is
+//! required by the exact-area rasteriser; concave shapes can be represented as
+//! multiple convex masks at a higher layer.
 
 use alloc::vec::Vec;
 
@@ -55,9 +32,7 @@ pub struct Mask {
 impl Mask {
     /// A mask from its corners, in order around the shape.
     ///
-    /// Either direction round is accepted — an editor drags points in whatever
-    /// order the shape came out, and insisting on one winding would refuse
-    /// half of the shapes somebody actually draws.
+    /// Clockwise and counter-clockwise winding are both accepted.
     ///
     /// # Errors
     ///
@@ -172,48 +147,16 @@ impl Mask {
         Ok((across.checked_div(scale)?, down.checked_div(scale)?))
     }
 
-    /// This mask scaled and turned about its own centroid, and moved.
+    /// Scale and rotate this mask about its centroid, then translate it.
     ///
-    /// About its **own** centroid rather than the frame's centre, which is
-    /// what makes "open the iris" open in place instead of sliding toward the
-    /// middle of the picture while it grows. The frame's centre is right for a
-    /// transform, because a transform moves the whole picture and the picture's
-    /// middle is the frame's; a mask is a shape somebody put somewhere.
-    ///
-    /// A positive scale, a rotation and a translation are a similarity, so the
-    /// result is convex if this was and wound the same way — which is why this
-    /// returns a mask rather than a `Result<Mask>` that could refuse
-    /// mid-render. The turn carries no refusal of its own: its determinant is
-    /// one, so it cannot collapse a shape the scale did not already collapse.
-    ///
-    /// The scale and the turn are both about the centroid, so their order does
-    /// not matter — a scalar commutes with a rotation — and the move comes
-    /// after both, which is the only ordering that does matter here.
-    ///
-    /// ## In the frame's own coordinates, which is not the screen's
-    ///
-    /// A mask's corners are fractions of the frame, so this turns the shape in
-    /// **that** space rather than in pixels. On a frame that is not square the
-    /// two are different: a quarter turn of a shape twice as wide as it is
-    /// tall gives a shape twice as tall as it is wide *in fractions*, which on
-    /// a 16:9 delivery is not the same picture as rotating the drawn shape on
-    /// screen.
-    ///
-    /// That is not a compromise, it is the only rotation this type can mean. A
-    /// mask is already anisotropic by construction — the square from `(1/4,
-    /// 1/4)` to `(3/4, 3/4)` has never been square on screen — so the space
-    /// somebody dragged the corners in is the space the shape turns in. The
-    /// alternative would need the delivery aspect, which lives in
-    /// `sapstudio-media`, a crate this one is a sibling of and may not reach.
+    /// Positive scale and rotation preserve convexity and winding. Operations
+    /// use the mask's frame-relative coordinate space; pixel-space rotation
+    /// would require the delivery aspect ratio, which the model does not own.
     ///
     /// # Errors
     ///
-    /// [`ModelStatus::ScaleNotPositive`] for a scale at or below nought: at
-    /// nought the shape collapses to a point with no area, and below it the
-    /// shape turns inside out through its own middle, which is a mirror and
-    /// belongs in the corners somebody drew rather than in a move that would
-    /// pass through nothing on the way there. [`ModelStatus::Time`] wrapping
-    /// an overflow.
+    /// [`ModelStatus::ScaleNotPositive`] for a non-positive scale, and
+    /// [`ModelStatus::Time`] for arithmetic overflow.
     pub fn moved_by(
         &self,
         scale: Rational,

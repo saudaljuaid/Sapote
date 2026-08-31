@@ -267,18 +267,7 @@ fn a_format_a_png_cannot_hold_is_refused() {
 
 #[test]
 fn every_row_is_its_own_row_and_the_checksum_wraps() {
-    // Two controls failed nothing before this test looked like this, and both
-    // for the same reason: a fixture that does not vary along the axis being
-    // tested cannot see a change to that axis.
-    //
-    // Writing every scanline as the first one broke nothing, because the
-    // fixture was a horizontal ramp — whose rows are all identical. And taking
-    // Adler-32 modulo 65,536 instead of 65,521 broke nothing, because the
-    // fixture was small enough that neither accumulator ever reached a
-    // modulus at all.
-    //
-    // So: each row is a different value, and there is enough of it that the
-    // sums wrap several times over.
+    // Vary every row and use enough data to wrap both Adler-32 accumulators.
     let width = 64_usize;
     let height = 40_usize;
     let description = FrameDescription::square(

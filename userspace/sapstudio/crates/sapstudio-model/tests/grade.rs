@@ -183,10 +183,7 @@ fn a_grade_survives_a_slip() {
 
 #[test]
 fn a_split_gives_both_halves_the_look() {
-    // The first version gave the head one and the tail none, because
-    // `with_duration` carries the fields across and `Clip::new` starts from
-    // nothing. Half a graded shot silently ungraded is exactly the fault the
-    // digest was supposed to make impossible, arriving by a different door.
+    // Both halves must retain the same grade after a split.
     let (mut project, sequence) = project();
     project
         .apply(

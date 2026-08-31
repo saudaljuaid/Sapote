@@ -1,62 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! A face, and text drawn as exact coverage.
+//! Built-in monospaced vector text with exact pixel coverage.
 //!
-//! Text arrived last for a reason recorded three milestones ago: "offline
-//! media renders a slate but cannot say which media is missing — that is text
-//! on a frame, and text needs a font". A font could not be taken from
-//! anywhere. Every outline format worth reading is a parser and a hinting
-//! engine, and every free face worth shipping is somebody else's licence to
-//! reconcile with GPL-3.0-only on a platform that cannot mount a file system
-//! to load one. So SapStudio writes its own, and what it writes is decided by
-//! what it already has.
-//!
-//! ## A glyph is disjoint convex pieces, because that is what is exact
-//!
-//! The shape rasteriser computes the **exact area** of a pixel lying inside a
-//! convex region. A letter is not convex. But a letter *is* a small number of
-//! convex pieces, and the area of a union of pieces whose interiors do not
-//! overlap is the sum of their areas — exactly, with no reasoning about
-//! antialiasing at all.
-//!
-//! So every glyph here is authored as pieces that **touch but never overlap**,
-//! and coverage is their sum. That is not a convention the drawing hopes for:
-//! [`shape::quantise`] refuses a coverage above full, so a face whose pieces
-//! overlapped enough to fill a pixel past one would be *refused* rather than
-//! drawn wrong. And the tests go further and measure every pair's intersection
-//! area exactly, which catches an overlap far too small to fill a pixel.
-//!
-//! The consequence worth having is that this face is exact at every size. There
-//! is no bitmap, no hinting, no grid fitting and no size at which it stops
-//! being the same letter — a title at 4K and the same title on a proxy are the
-//! same shape, measured the same way.
-//!
-//! ## What it does not do, and why
-//!
-//! **No curves.** Every piece is a straight-edged quadrilateral or triangle.
-//! A curve would be a polygonal approximation of a curve, which is a decision
-//! about how many segments — a number that would have to be defended, would
-//! change with size, and would make "the same shape at every size" false.
-//!
-//! **Three heights, not one.** Capitals were the whole face to begin with, and
-//! a capital runs from the cap line to the baseline and does nothing else —
-//! one measurement. Lowercase needed three more: an x-height the bodies sit
-//! on, ascenders that reach the cap line, and descenders that hang below the
-//! baseline. That is why it was deferred as "a second set of metrics" rather
-//! than as more of the same drawing, and the deferral was right about the
-//! work. The metrics are named here and a test measures the glyphs against
-//! them, so they describe the face rather than decorating it.
-//!
-//! **Monospaced.** Every glyph advances by the same amount. The first things
-//! drawn are a timecode and a digest, and a proportional face makes a counting
-//! number dance in place while it counts.
-//!
-//! ## The design grid
-//!
-//! Half-units, sixteen to the em vertically. A glyph is drawn in a box ten
-//! half-units wide and sixteen tall — five by eight whole units — with a
-//! stroke two half-units thick, and the pen advances twelve. Every design
-//! coordinate below is an integer in that grid, so the face is exact rational
-//! data rather than a table of decimals somebody rounded.
+//! Glyphs are disjoint convex polygons, so their coverage can be summed by the
+//! shape rasteriser without hinting or bitmap scaling. Tests reject overlapping
+//! pieces. Coordinates use a half-unit grid: 10 by 16 per glyph, a 2-unit
+//! stroke, and a 12-unit advance. The face uses straight edges and separate
+//! cap, x-height, ascender, and descender metrics.
 
 use alloc::vec::Vec;
 
@@ -223,15 +172,9 @@ enum Extra {
 
 /// One character's shape: pieces that touch but never overlap.
 ///
-/// A **view onto static data**, not a copy of it. The face is a table of
-/// strokes in a design grid of small integers, which lives in the image's
-/// read-only data; a glyph turns its own strokes into exact rational corners
-/// when somebody draws it, and only the characters in a run ever pay for that.
-///
-/// The face used to build every glyph's corners up front, and the measurement
-/// that changed it is in the platform contract: `Face::stencil` was the
-/// largest single function in the whole program at 23,807 bytes, because every
-/// coordinate of every glyph was an *instruction* that stored it.
+/// A view over static stroke data. Corners are converted to exact rational
+/// coordinates only for glyphs used in a run, keeping the face in read-only
+/// data instead of generating every outline at startup.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Glyph {
     bands: &'static [Band],

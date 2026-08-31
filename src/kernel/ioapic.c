@@ -713,11 +713,9 @@ enum ioapic_status ioapic_send_eoi(uint8_t vector)
     }
 
     /*
-     * The entry is deliberately not read back afterwards. A line that is still
-     * asserted is re-serviced inside this write, and that re-service latches
-     * remote IRR again, so a set bit here means the next delivery has already
-     * happened rather than that this acknowledgement failed. There is no state
-     * a read could distinguish, so the check is not written.
+     * Do not read the entry back here. A still-asserted line may already have
+     * latched remote IRR for its next delivery, which is indistinguishable from
+     * a failed acknowledgement.
      */
     return IOAPIC_STATUS_OK;
 }

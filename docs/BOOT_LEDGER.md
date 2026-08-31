@@ -11,7 +11,7 @@ function.
 validates and orders them. `src/kernel/kernel.c` executes the resulting plan and
 checks the installed receipts before publishing it read-only.
 
-## Why it exists
+## Purpose
 
 Boot code combines discovery, irreversible machine transitions, optional
 hardware, and tests. A visually plausible call order does not prove that:

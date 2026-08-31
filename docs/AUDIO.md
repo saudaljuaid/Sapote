@@ -2,7 +2,7 @@
 
 # High Definition Audio
 
-Sapote has a deliberately narrow PCM path for the QEMU ICH9 controller and
+Sapote has a bounded PCM path for the QEMU ICH9 controller and
 `hda-duplex` codec. The boot proof remains a one-shot kernel-owned stream. The
 native ABI now reuses the same controller route through a persistent bounded
 owner; applications never see its DMA pages or registers.
@@ -177,7 +177,7 @@ does not prove loudness, speaker selection, or an audible host artifact.
 
 `apps/native-audio` is the Ring 3 proof for the public surface. Its admitted
 manifest requests only `console`, `time`, and `audio`; a second manifest for
-the same executable deliberately omits `audio` and must observe `EACCES`
+the same executable omits `audio` and must observe `EACCES`
 without changing the PCI or DMA census. The admitted process uses only SDK
 headers and wrappers to prove the two-handle limit, immediate and completion
 readiness, malformed-length refusal, per-channel volume, deterministic

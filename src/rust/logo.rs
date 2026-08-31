@@ -341,11 +341,7 @@ pub fn self_test() -> bool {
         return false;
     }
 
-    // A run that alone exceeds the whole image.
-    //
-    // Five rather than four: a run of exactly the remaining pixels is legal,
-    // and using it here meant this case fell through to the trailing-bytes
-    // check instead - which is what the first run of this test found.
+    // Five exceeds the four-pixel output; a run of exactly four is valid.
     broken = good;
     broken[8] = 5;
 

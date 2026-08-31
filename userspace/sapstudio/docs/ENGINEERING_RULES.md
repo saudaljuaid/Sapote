@@ -2,17 +2,13 @@
 
 # SapStudio engineering rules
 
-This document is normative. Where any other document, comment, commit message,
-or convenience disagrees with it, this document wins.
-
-**MUST** and **MUST NOT** are absolute. **SHOULD** means a deviation has to be
-argued in the pull request that makes it. Every rule has an identifier so a
-review can cite it in four characters instead of a paragraph.
+These are the normative project rules. **MUST** and **MUST NOT** are absolute;
+**SHOULD** requires an explanation in the pull request. Rule identifiers are
+stable review references.
 
 A rule may be waived only by a waiver committed as `docs/waivers/<id>.md`
 naming the rule, the exact scope, the owner, the expiry date, and the test that
-proves the waived condition stays contained. An expired waiver is a build
-failure, not a habit.
+proves the waived condition stays contained. An expired waiver fails the build.
 
 ---
 
@@ -44,23 +40,20 @@ test is worth. A screenshot shows presentation, not correctness.
 
 **R-1.7** Every invariant has a negative control: an isolated, temporary
 mutation that violates it and makes the narrowest relevant gate fail by name.
-An invariant no test can break is not an invariant, it is a hope.
 
 **R-1.8** No hidden runtime. No garbage collector, no unwinder, no dynamic
 loader, no implicit thread pool, no global constructor, no lazy singleton, no
 work performed before `main` that the source does not show.
 
-**R-1.9** Determinism is a feature of this product, not a property of a build.
-The same project and the same inputs produce the same output bytes on any
-machine, at any core count, in any run order. See section 4.
+**R-1.9** The same project and inputs produce the same output bytes on any
+machine, core count, or run order. See section 4.
 
-**R-1.10** The user's work is sacred. No code path may lose, silently alter, or
-render unopenable a project the user has saved. When in doubt, refuse the
-operation and keep the last good state.
+**R-1.10** No code path may lose, silently alter, or make a saved project
+unopenable. On failure, keep the last good state.
 
 ---
 
-## 2. The Sapote-only rule
+## 2. Sapote target
 
 **R-2.1** SapStudio targets Sapote. Shipping code MUST NOT contain a
 conditional, abstraction, or dependency whose purpose is another operating
@@ -85,17 +78,14 @@ library that assumes one, in any shipping artefact.
 
 ---
 
-## 3. Language law
-
-The split is fixed. It is not a preference and it is not revisited per module.
+## 3. Languages
 
 ### 3.1 Rust owns the application
 
 **R-3.1.1** Rust is the default language. The project model, the timeline, the
 media library, file management, undo/redo, media pipeline coordination, the
 render graph, the colour pipeline, the mixer's control plane, and all UI state
-MUST be Rust. A proposal to write any of these in another language is refused
-without discussion.
+MUST be Rust.
 
 **R-3.1.2** All shipping crates are `#![no_std]`. `alloc` is permitted where
 section 5 allows it. `std` MUST NOT appear in a shipping dependency graph.
@@ -224,21 +214,16 @@ boundary, and a negative control.
 
 ### 3.4 C++ is for sealed performance leaves
 
-C++ is admitted because some inner loops are genuinely faster when written
-against a mature vectorising C++ toolchain, and because most external codec
-libraries are C++. It is admitted on terms strict enough that it can never
-become the language the application is written in.
+C++ is limited to measured inner loops and admitted codec libraries.
 
-**R-3.4.1 (Rust first, always.)** No C++ may be written for a computation until
+**R-3.4.1 (Rust first.)** No C++ may be written for a computation until
 a correct, tested, pure-Rust implementation of that computation exists in the
-tree. C++ is an optimisation of something that already works. It is never a
-first draft, and never the place a behaviour is defined.
+tree. The Rust version defines the behavior.
 
 **R-3.4.2 (Bit-exactness.)** A C++ leaf MUST produce output bit-identical to
 its Rust reference for every input in a committed corpus plus a fuzz campaign.
-The Rust reference is retained forever, runs in CI, and is the definition of
-correct. If they ever disagree, the C++ leaf is disabled, not debugged in
-production.
+The Rust reference remains in CI and defines the correct output. A mismatch
+disables the C++ leaf.
 
 **R-3.4.3 (Measurement or deletion.)** A C++ leaf MUST come with a committed
 benchmark showing at least a 1.3× improvement over the Rust reference on the
@@ -288,10 +273,7 @@ data, never a program. See R-11.4.
 
 ---
 
-## 4. Determinism law
-
-An editor whose render differs between runs cannot be trusted with a finished
-programme.
+## 4. Determinism
 
 **R-4.1** A render is a pure function of (project bytes, media bytes, render
 settings). The same triple produces byte-identical output, on any machine, at
@@ -333,7 +315,7 @@ perceptual metric. Perceptual metrics are diagnostics.
 
 ---
 
-## 5. Memory law
+## 5. Memory
 
 **R-5.1** Every allocation is bounded by a named policy constant, in Sapote's
 style: a `const` with a comment saying why that number and what happens at it.
@@ -370,10 +352,9 @@ unrepresentable in safe Rust and forbidden across the boundary.
 
 ---
 
-## 6. Concurrency law
+## 6. Concurrency
 
-Sapote is single-core today. These rules exist so that the day it is not,
-nothing in the model changes.
+Concurrency must not change model or render results.
 
 **R-6.1** The unit of parallelism is a pure task in a job graph: typed inputs,
 typed outputs, no shared mutable state, no ambient access to the model.
@@ -397,7 +378,7 @@ defect, not a performance issue.
 
 ---
 
-## 7. Failure law
+## 7. Errors
 
 **R-7.1** Failure is a value. A subsystem returns its typed status; it does not
 panic, abort, log-and-continue, or return a default.
@@ -422,7 +403,7 @@ This is Sapote's rule and SapStudio keeps it.
 
 ---
 
-## 8. Media pipeline law
+## 8. Media pipeline
 
 **R-8.1** A frame is immutable once produced. Effects produce new frames.
 
@@ -439,8 +420,7 @@ MUST NOT conceal errors, invent frames, repeat the previous frame, or silently
 resynchronise.
 
 **R-8.5** Every cache entry is keyed by a hash over (input content hash, full
-parameter set, code version). A cache that can return a stale or mismatched
-result is deleted, not fixed.
+parameter set, code version). Cache hits must match all three.
 
 **R-8.6** Every pipeline stage declares its latency in frames or samples.
 Playback alignment is computed from declarations, never measured and guessed.
@@ -452,7 +432,7 @@ reproducible in a test. Silent dropping is forbidden.
 
 ---
 
-## 9. Project data law
+## 9. Project data
 
 **R-9.1** The project model is the single source of truth. Everything else —
 UI state, caches, rendered frames, waveform overviews — is derived and
@@ -473,15 +453,14 @@ leaves the previous file intact. This is proven by a test that interrupts it.
 **R-9.5** Media is referenced by content identity — a digest — plus a location
 hint, never by location alone. Moved media is re-linked by identity.
 
-**R-9.6** The application never modifies source media. Ever. There is no
-in-place operation on a user's footage.
+**R-9.6** The application never modifies source media in place.
 
 **R-9.7** Autosave is a separate, additive journal. It never overwrites the
 user's file.
 
 ---
 
-## 10. Interface law
+## 10. Interface
 
 **R-10.1** UI state is derived state. A widget may hold focus, scroll position,
 and transient input, and nothing else. Anything a user would be upset to lose
@@ -505,11 +484,9 @@ Sapote Redwood already refuses them.
 
 ---
 
-## 11. Hostile input law
+## 11. Hostile input
 
-Every byte of media is hostile. Media files are the most attacked surface in
-any editor, and SapStudio has no IOMMU, no process isolation, and no signal
-handling to fall back on.
+Treat every byte of media as hostile input.
 
 **R-11.1** Every parser — container, codec bitstream, subtitle, project file,
 font, image — MUST be written in safe Rust with `#![forbid(unsafe_code)]`, or
@@ -529,12 +506,12 @@ format.
 **R-11.5** Metadata is displayed as text, never interpreted. No markup, no
 escape sequences, no format strings.
 
-**R-11.6** Where Sapote gains process isolation (`SAP-09`), untrusted decoders
-move behind it. Until then, R-11.1 is the whole defence and is not negotiable.
+**R-11.6** Run untrusted decoders behind Sapote process isolation where the
+platform seam supports it. R-11.1 still applies inside that boundary.
 
 ---
 
-## 12. Dependency law
+## 12. Dependencies
 
 The detail lives in [`DEPENDENCY_POLICY.md`](DEPENDENCY_POLICY.md); these are
 the rules it implements.
@@ -550,8 +527,8 @@ a registry field.
 build-time code generator that is not committed, or a transitive tree larger
 than its value is refused.
 
-**R-12.4** Every dependency has a named owner in this project, a recorded
-reason, and a recorded exit plan: what SapStudio does the day it is abandoned.
+**R-12.4** Every dependency has a named owner, recorded reason, and practical
+exit plan.
 
 **R-12.5** `unsafe` in a dependency is budgeted. The budget is recorded per
 dependency and reviewed at every upgrade.
@@ -565,7 +542,7 @@ the time model, the project format, the timeline — is refused. See
 
 ---
 
-## 13. Build law
+## 13. Build
 
 **R-13.1** One command builds everything from a clean tree, offline, with no
 host state beyond the pinned toolchain.
@@ -617,7 +594,7 @@ editor state are never committed.
 
 ---
 
-## 14. Verification law
+## 14. Verification
 
 The detail lives in [`VERIFICATION.md`](VERIFICATION.md).
 
@@ -639,7 +616,7 @@ cover. "None" is not an acceptable risk statement.
 
 ---
 
-## 15. Style and review law
+## 15. Style and review
 
 **R-15.1** Formatting is mechanical: `rustfmt` and `clang-format` with
 committed configurations. Formatting is never discussed in review.
@@ -671,9 +648,7 @@ red check.
 
 ---
 
-## 16. Prohibitions
-
-A single list, so nothing is missed by reading only one section.
+## 16. Prohibited features
 
 Forbidden anywhere in shipping code: `std`; libc; dynamic linking; PIE;
 exceptions; RTTI; garbage collection; global constructors; hidden threads;
@@ -687,7 +662,7 @@ dependency whose licence is incompatible with GPL-3.0-only.
 
 ---
 
-## 17. Amendment
+## 17. Updating these rules
 
 **R-17.1** This document changes by pull request, with the reason stated and
 the affected code updated in the same change or in a linked follow-up that is

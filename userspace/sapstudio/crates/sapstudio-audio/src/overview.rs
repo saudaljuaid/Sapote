@@ -1,49 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! What a timeline draws sound from.
+//! Multiresolution waveform summaries for the timeline.
 //!
-//! A waveform on screen is not the samples. A minute of sound at 48 kHz is
-//! nearly three million numbers and the strip it is drawn into is perhaps two
-//! thousand pixels wide, so every pixel stands for more than a thousand
-//! samples and something has to decide what it stands for. Reading the samples
-//! afresh on every scroll would make scrolling cost the file; deciding badly
-//! would make the drawing lie.
-//!
-//! So a *summary* is built once and kept: for each block of samples, the
-//! lowest sample in it, the highest, and the mean of their squares. Editors
-//! call the result a peak file, and it is what makes a waveform appear the
-//! moment a clip lands rather than a second later.
-//!
-//! # Why the lowest and the highest, and not the loudest
-//!
-//! It would be smaller to store one magnitude a block and draw it mirrored
-//! about the centre line. Almost nothing sounds like that. Brass, speech, a
-//! kick drum, anything with even harmonics or a trace of offset is genuinely
-//! asymmetric: it goes further one way than the other, and that asymmetry is
-//! visible and is information. A mirrored drawing is a picture of a signal
-//! that was not recorded — and worse, it hides a one-sided approach to the
-//! rails, which is the exact thing an editor is looking at the waveform to
-//! see.
-//!
-//! # Why a pyramid, and why it is exact going up
-//!
-//! Level zero summarises [`Overview::base`] samples a block. Each level above
-//! it summarises two blocks of the level below, so bucket sizes double and the
-//! whole structure costs one pass over the samples plus a geometric tail — a
-//! little over one more level-zero array in total, never mind the zoom range
-//! it covers.
-//!
-//! The highest of two highests is the highest, exactly, so a peak survives
-//! every doubling. That is the property the whole thing rests on: **a sample
-//! that reached the rails is visible at every zoom level**, because it is the
-//! maximum of its block, of the pair of blocks that contains it, and of every
-//! pair above. Zooming out cannot hide a click, and cannot invent one either.
-//!
-//! The mean square is the one number here that is not exact, because a mean is
-//! a division. The sums are folded upward in [`i128`], so every level's stored
-//! value is one floor of an exact sum rather than a floor of floors — the
-//! error does not compound with zoom, and is under one part in the units the
-//! samples are counted in. [`Overview::window`] combines stored means and so
-//! is within two. Both bounds are asserted rather than described.
+//! Each bucket stores the lowest sample, highest sample, and mean square. Each
+//! higher level combines two lower-level buckets, preserving peaks at every
+//! zoom level. Mean-square sums use [`i128`] so rounding does not compound as
+//! the pyramid is built.
 
 use alloc::vec::Vec;
 

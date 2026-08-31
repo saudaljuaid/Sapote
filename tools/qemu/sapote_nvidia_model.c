@@ -1,30 +1,13 @@
 /*
- * A model of the NVIDIA graphics register interface, for driver testing.
- *
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
- * THIS IS NOT AN NVIDIA GPU AND IT DOES NOT EMULATE ONE. It presents the
- * handful of registers a bind-and-identify driver reads -- the master control
- * pair, the configuration-space mirror, the timer and its rate pair, the ROM
- * shadow bit and the PROM window -- plus the standard PCI capabilities such a
- * driver cross-checks them against, so that such a driver can be executed end
- * to end without the silicon. There is no graphics engine, no channel, no
- * display, no interrupt and no memory management here, and nothing in this
- * file should be taken as a description of how real hardware behaves beyond
- * those few registers.
+ * QEMU model for the NVIDIA register probes. It implements the master-control
+ * registers, configuration mirror, timer, PROM window, ROM shadow bit, and PCI
+ * capabilities used by Sapote. It has no graphics, display, interrupt, or
+ * memory-management engine.
  *
- * The values it answers with are deliberately NOT invented here: the boot
- * register comes from a command-line property and the ROM image is read from a
- * file the caller supplies, so a driver tested against this model is checked
- * against values pinned outside both the driver and this model. The timer is
- * driven by QEMU's own clock, so a driver's "the count advances" check is a
- * real one.
- *
- * The register offsets are the ones the envytools project documents and the
- * Nouveau driver uses. Those offsets are the one thing this model and the
- * driver under test share, and a mistake in reading that documentation would
- * appear identically in both. That limit is inherent to a model and is why it
- * is not a substitute for hardware.
+ * Command-line properties supply identity values, a caller-supplied file
+ * supplies the ROM, and QEMU's clock drives the timer.
  */
 
 #include "qemu/osdep.h"

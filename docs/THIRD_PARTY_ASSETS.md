@@ -55,7 +55,7 @@ The zlib license is retained verbatim.
 
 Sapote carries the byte-exact public headers and nine-source `Z_SOLO` core for
 bounded in-memory deflate/inflate and checksums. Hosted gzip-file adapters and
-the allocation-backed `compress*` convenience API are deliberately excluded.
+the allocation-backed `compress*` convenience API are excluded.
 `vendor/zlib/SOURCE-MANIFEST.sha256` pins each retained upstream file, while
 `vendor/zlib/SAPOTE-PORT.md` defines the freestanding build and allocator
 contract. The reproducible SDK installs this profile as the static `libz.a`.

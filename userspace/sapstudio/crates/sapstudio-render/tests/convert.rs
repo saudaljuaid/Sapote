@@ -68,14 +68,9 @@ fn converting_to_the_same_description_changes_nothing() {
 
 #[test]
 fn dropping_and_regaining_alpha_is_not_a_conversion() {
-    // This test used to assert that alpha survived a trip through a format
-    // without it. It passed, because the bars it converted were opaque and the
-    // conversion invented 255 on the way back — so every keyed frame came out
-    // of a colour conversion as a solid rectangle, and no test noticed.
-    //
-    // Dropping coverage means compositing against a background, and regaining
-    // it means deciding what is transparent. Both are operations with names
-    // and neither belongs to a colour conversion (R-1.3).
+    // Dropping coverage requires compositing against a background; restoring
+    // it requires choosing transparent pixels. Neither is a colour conversion
+    // (R-1.3).
     let with_alpha = srgb(8, 4, PixelFormat::Rgba8);
     let without = srgb(8, 4, PixelFormat::Rgb8);
     let frame = TestPattern::Bars.render(with_alpha).expect("a frame");

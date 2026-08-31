@@ -76,14 +76,10 @@ uint64_t pm_timer_nanoseconds_to_ticks(uint64_t nanoseconds);
  * same source are held to. It fails a rate wrong by a factor of two, which
  * shows up as a 50% disagreement, with twice the margin needed.
  *
- * Comparisons against the time-stamp counter are held to a half instead. Under
- * emulation the PIT and the local APIC timer are both driven from the host's
- * monotonic clock, so a scheduling stall delays them together and their ratio
- * survives it; the TSC is derived from the host's own counter, a different
- * clock, so a stall landing inside its calibration window is absorbed into the
- * rate it calibrates to and skews every later duration. One such stall was
- * observed in fifteen runs, at 23%. The existing `tsc` scenario already allows
- * a factor of two for the same reason.
+ * Comparisons against the time-stamp counter use a half. Under emulation the
+ * PIT and local APIC timer share the host's monotonic clock, while the TSC uses
+ * a separate host counter. A scheduling stall during calibration can therefore
+ * skew the measured TSC rate.
  *
  * A half therefore fails only errors beyond a factor of two. That is deliberate
  * and costs nothing: the factor-of-two case is caught by the local APIC timer

@@ -6,7 +6,7 @@ Sapote's first transport-TLS profile uses the pinned BearSSL 0.6 archive in the
 SDK. `sapote/tls.h` is a native userspace client API; it uses only public Sapote
 DNS, stream, entropy, realtime, monotonic-deadline, and handle services.
 
-The profile is deliberately narrow:
+The profile is bounded:
 
 - TLS 1.2 only;
 - `ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256`, followed by

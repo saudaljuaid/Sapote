@@ -266,15 +266,9 @@ struct supervisor_mapping_intent {
 };
 
 /*
- * Sapote used to hold exactly one private hierarchy, so ownership was a single
- * boolean and every operation could reach the runtime directly. A scheduler
- * that runs several processes needs their hierarchies to exist at the same
- * time, so ownership became a bounded set of slots and every operation now
- * resolves the caller's token to one of them. The token already carried the
- * root address, generation and state, so nothing new crosses the boundary:
- * what changed is that a token now identifies a slot instead of confirming the
- * only one. A space and its narrowings share an index, which is what makes a
- * process's aliases that process's rather than the kernel's.
+ * Bounded process-space slots allow private hierarchies to coexist. A token's
+ * root address, generation, and state resolve to one slot. A space and all of
+ * its narrowed aliases share that slot.
  */
 static struct process_space_runtime process_spaces[PAGING_PROCESS_SPACE_SLOTS];
 static struct process_alias_runtime process_aliases[PAGING_PROCESS_SPACE_SLOTS];
@@ -4273,11 +4267,7 @@ static bool test_table_reclamation(void)
         return false;
     }
 
-    /*
-     * And the slot is genuinely free again: a 2 MiB leaf now installs where a
-     * page table used to be. Before tables were reclaimed the directory entry
-     * stayed present forever and this was refused for the life of the kernel.
-     */
+    /* The reclaimed slot must accept a 2 MiB leaf in place of the old table. */
     if (map_range(&hierarchy, first, PAGING_HUGE_PAGE_SIZE,
             PAGING_HUGE_PAGE_SIZE, PAGING_WRITE, 2U) != PAGING_STATUS_OK ||
         translate_address(&hierarchy, first, &translation, PAGING_TEST_PAT) !=

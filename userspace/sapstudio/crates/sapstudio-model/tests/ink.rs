@@ -29,8 +29,7 @@ fn card() -> Title {
 
 #[test]
 fn a_title_is_white_until_somebody_colours_it() {
-    // Which is what it was for two milestones, and what every card written
-    // before an ink existed still means.
+    // White is the default for titles without an explicit ink.
     assert_eq!(card().ink(), Ink::WHITE);
     assert!(card().ink().is_white());
     assert_eq!(Ink::WHITE.channels(), [Rational::ONE; 3]);
@@ -158,9 +157,7 @@ fn a_coloured_card_is_still_an_asset_named_by_what_it_says() {
 
 #[test]
 fn an_ink_travels_with_every_other_field_a_card_carries() {
-    // `with_ink` rebuilds the card, and a rebuild that forgot a field would
-    // silently re-align or re-size somebody's block. Alignment is the one to
-    // ask about, because it is the field most recently added before this.
+    // `with_ink` must preserve every layout field while rebuilding the card.
     let block = Title::new(
         std::vec!["ONE".into(), "TWO".into()],
         r(1, 8),

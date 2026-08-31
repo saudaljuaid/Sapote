@@ -14,23 +14,10 @@
 #include <sapote/pm_timer.h>
 
 /*
- * Hardware proof operations reached by typed Boot Ledger stages.
- *
- * This header keeps hardware proof operations out of kernel.c so that file owns
- * plan execution rather than every subsystem's bring-up details.
- *
- * Nothing declared here is a general-purpose interface. Every migrated call is
- * private to src/kernel/boot_plan.c, where a typed descriptor owns its
- * requirements, result capabilities, phase and irreversible class. Makefile's
- * source assertion rejects calls from anywhere else.
- *
- * The division is by what a function is allowed to do:
- *
- *   src/kernel/boot_report.c   describes what was found and never decides
- *   src/kernel/boot_proofs.c   decides, and panics when the answer is wrong
- *
- * A function that panics does not belong in the first group, and a function
- * that only writes to the console does not belong in the second.
+ * Boot Ledger operations used only by src/kernel/boot_plan.c. Typed stage
+ * descriptors carry requirements, capabilities, phase, and irreversible class.
+ * src/kernel/boot_report.c prints discovered state; src/kernel/boot_proofs.c
+ * validates required state and panics on failure.
  */
 
 /*

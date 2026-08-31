@@ -1,11 +1,10 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
 
-# Guest package-manager admission and planning core
+# Package admission and planning
 
 `src/kernel/package_manager.c` is the bounded guest-side parser and planner for
 signed repository-index v1, signed package v3, and installed-database v1 bytes.
-It is a privileged service building block, not yet the `sap` command or the
-Redwood Store backend.
+It is the parser and resolver used by privileged package services.
 
 ## Trust boundary
 
@@ -23,11 +22,9 @@ binds exact downloaded bytes to the signed repository size and SHA-256 before
 checking the package's publisher signature, identity, version, ABI, dependency
 and conflict records, file layout, per-file digest, mode, kind, and SONAME.
 
-No in-kernel Ed25519 provider or immutable guest key store is connected yet.
-Consequently no guest path currently returns an admitted repository or package.
-The host verification first authenticates test fixtures with Python
-`cryptography`; the C harness then tests the callback selection and zero-range
-contract. That is parser/planner evidence, not an in-guest signature claim.
+The caller owns the Ed25519 provider and immutable key store. Host verification
+authenticates fixtures with Python `cryptography`, then uses the C harness to
+check callback selection and the zeroed-signature range.
 
 ## Bounds and resolver behavior
 
@@ -61,7 +58,7 @@ array, and topological ordering is iterative. The input byte buffers must remain
 immutable and live while returned views or plans are used because text and
 digest fields are slices into those authenticated buffers.
 
-## Verification and current integration limit
+## Verification and integration
 
 `make package-manager-tests` builds real deterministic Ed25519 packages and
 indexes with the canonical host tools, verifies them with the real host crypto
@@ -72,8 +69,6 @@ signature rejection, digest changes, freshness, rollback, ABI mismatch,
 unsatisfied dependencies, conflicts, ambiguous providers, cycles, backtracking,
 and the dependency-depth bound.
 
-Still missing are the privileged fetch/staging service, guest Ed25519 and trust
-store, package extraction and owned-file generation builder, public client ABI,
-`sap` commands, Store catalog wiring, ext4 writable commit path, cancellation,
-and QEMU install/update/recovery evidence. `package_service.c` currently recovers
-already-staged FAT32 generations; it does not perform these missing operations.
+`package_service.c` recovers already-staged FAT32 generations. Fetching,
+signature-provider setup, extraction, generation building, client commands, and
+Store presentation are outside this parser and planner.

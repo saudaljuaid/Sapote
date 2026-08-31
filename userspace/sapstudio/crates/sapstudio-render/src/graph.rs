@@ -1,22 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! The render graph.
+//! Typed render tasks with content-addressed identities.
 //!
-//! A render is a pure function of a project and an instant (R-4.1), and this
-//! is the shape that makes it one: a graph of tasks with typed inputs, no
-//! ambient state, and no way to observe when anything ran.
-//!
-//! Two invariants are structural rather than checked. A node may only refer to
-//! nodes added before it, so **a cycle is unrepresentable** — there is no
-//! `add_edge` to get wrong and no validation pass to forget. And every node's
-//! identity is a digest over its kind, its parameters and its inputs'
-//! identities, so two nodes that would compute the same picture *are* the same
-//! node as far as the cache is concerned (R-8.5).
-//!
-//! Sapote is single-core, so this evaluates serially today. It is written as
-//! though it did not: nothing here depends on evaluation order, and the tests
-//! prove that by evaluating the same graph in every order a scheduler could
-//! choose and comparing the results (R-6.2). The day cores arrive, nothing in
-//! this model changes.
+//! Nodes may refer only to earlier nodes, which prevents cycles. Each identity
+//! includes the node kind, parameters, and input identities (R-8.5). Evaluation
+//! order does not affect the result (R-6.2).
 
 use alloc::vec::Vec;
 
@@ -85,7 +72,7 @@ pub enum Node {
     /// project-local index would cache it twice and could never tell that the
     /// file had been swapped underneath.
     ///
-    /// Where the frame comes from is a [`Media`], because a graph knows how to
+    /// Where the frame comes from is a [`Library`], because a graph knows how to
     /// combine frames and nothing about where they live.
     Source {
         /// Which media.
@@ -361,34 +348,16 @@ pub trait Library {
     /// Whatever the source cannot do.
     fn frame(&mut self, media: Digest, tick: i64, description: FrameDescription) -> Result<Frame>;
 
-    /// Whether this media can be read at all.
+    /// Whether the media is available while planning the graph.
     ///
-    /// Asked *before* a graph is built rather than discovered while evaluating
-    /// one, and that is the whole reason it exists as a separate question.
-    ///
-    /// A source node's identity is a digest over the media, the tick and the
-    /// description — and **not** over whether the bytes happened to be
-    /// reachable. So a node that quietly fell back to a slate when a file was
-    /// missing would put that slate in the cache under the key of the real
-    /// picture, and hand it back after the drive was plugged in again. That is
-    /// exactly the staleness a content-addressed cache exists to prevent, and
-    /// it is why the decision belongs to whatever plans the graph.
-    ///
-    /// The default is `true`: a library that cannot tell is a library that
-    /// should try, and failing at `frame` is a worse answer than refusing to
-    /// plan.
+    /// The default attempts the read. Implementations may return `false` to
+    /// avoid caching fallback output under the source-media identity.
     fn available(&mut self, media: Digest) -> bool {
         let _ = media;
         true
     }
 
-    /// The look with this digest.
-    ///
-    /// A cube is 35,937 triples and a graph is rebuilt for every instant, so a
-    /// node names a look by what it *is* and fetches it from here — the same
-    /// bargain as media, for the same reasons. A default is deliberately not
-    /// provided: an implementor that renders graded material and forgot to
-    /// write this should fail to compile rather than refuse at run time.
+    /// Load the look identified by `look`.
     ///
     /// # Errors
     ///
@@ -438,9 +407,8 @@ impl Graph {
     ///
     /// # Errors
     ///
-    /// [`RenderStatus::UnknownNode`] if the node refers to one that does not
-    /// exist yet — which is the only way a cycle could be written, and it is
-    /// refused here rather than found by a validation pass later.
+    /// [`RenderStatus::UnknownNode`] if an input does not refer to an earlier
+    /// node.
     /// [`RenderStatus::GraphTooLarge`] past the policy bound.
     pub fn add(&mut self, node: Node) -> Result<NodeId> {
         for input in node.inputs() {

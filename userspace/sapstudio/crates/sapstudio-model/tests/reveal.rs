@@ -1,21 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! A clip that animates its own opacity.
+//! Clip-local opacity animation.
 //!
-//! [`Edit::SetClipFades`] is the quick answer: two lengths and a straight
-//! ramp, which is what somebody means nine times out of ten by "fade it up".
-//! This is the general one — a curve with whatever shape somebody drew, a
-//! hold, a linear run, an ease — and the two **multiply**, like everything
-//! else here that decides what is on screen.
-//!
-//! It goes **on the clip**, measured from the clip's own start, for the reason
-//! M8.10 put a motion there: there is no keyframe name to survive a
-//! renumbering, so a ripple that moves every item after this one moves its
-//! animation with it and renames nothing.
-//!
-//! Which also means it animates a **title** exactly as it animates a shot,
-//! because a title is media and a clip cuts from it like any other. A card
-//! that fades up and pushes in is a clip with an opacity curve and a motion,
-//! and neither had to be told what a title is.
+//! Opacity curves combine with simple clip fades and apply equally to recorded
+//! media and titles.
 
 use sapstudio_core::{Digest, Duration, Instant, Rational, Timebase};
 use sapstudio_model::{

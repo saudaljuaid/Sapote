@@ -36,7 +36,7 @@ byte-identical results. It rejects changed inputs, configurations, output
 hashes, unexpected ELF shape, runtime relocations, dynamic dependencies, W+X,
 and exercised MMX/SSE/AVX instructions.
 
-The images are deliberately static non-PIE `ET_EXEC` files at fixed high user
+The images are static non-PIE `ET_EXEC` files at fixed high user
 addresses. The build selects musl's `crt1.o`, disables linker relaxation, uses
 the large code model, and omits unused constructor bookends. The uname build
 adds a build-only scalar target attribute to musl `vfprintf`; the published

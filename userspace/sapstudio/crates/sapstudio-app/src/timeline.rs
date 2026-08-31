@@ -1,48 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Turning a stack of layers into a picture.
+//! Render a sequence's layer stack.
 //!
-//! [`sapstudio_model::Sequence::stack_at`] answers what is on each track at an
-//! instant. This answers what that *looks* like, and the two are deliberately
-//! separate: the first is a fact about the project, the second is a policy
-//! about rendering, and the policy lives here because the application is the
-//! part that owns decisions.
-//!
-//! Two of those decisions are worth naming.
-//!
-//! **The programme is opaque.** A sequence with nothing at an instant shows
-//! black, not a hole — a viewer displays black leader, an export writes black
-//! frames, and neither shows whatever was behind the window. So the stack is
-//! composited onto an opaque black base, and the result is opaque whatever the
-//! layers were.
-//!
-//! **Layers composite bottom first**, in the order the stack comes back, each
-//! one `over` what is beneath it. That is [`sapstudio_render::over`], which
-//! means it happens in linear light and only on premultiplied values — so a
-//! title with a soft edge on V2 lands on V1 without a fringe, and it lands
-//! there identically on every machine.
-//!
-//! A dissolve needs no second operator. The model reports both sides of the
-//! cut, the outgoing one at full opacity and the incoming one at the fraction
-//! of the way through — so `over` computes `in x t + out x (1 - t)`, which is
-//! what a cross-fade is. Opacity scales a layer's coverage, and scaling a
-//! premultiplied frame's coverage means scaling its colour by the same amount,
-//! because that is what premultiplied means.
-//!
-//! Where the frames come from is a [`sapstudio_render::Media`], because on
-//! Sapote today there is nowhere to read media from (`SAP-08`). A test
-//! provides one that draws flat colours; a real session will provide one that
-//! decodes, and neither this module nor the model changes when it does.
-//!
-//! The render is expressed as a **graph** rather than performed directly, and
-//! that is not ceremony. A node's cache key is a digest over its kind, its
-//! parameters and its inputs' identities, so the pool answers for anything the
-//! render already has — most usefully a `Source`, where the cost is a decode.
-//! Scrub back over a cut and nothing is decoded twice; a dissolve that reaches
-//! the same frame from both sides fetches it once.
-//!
-//! The graph also names media by **what it is** rather than by this project's
-//! index for it, so the same footage in two sequences shares one cached frame,
-//! and a file swapped underneath is a different key rather than a stale hit.
+//! Layers composite bottom-up over opaque black using premultiplied linear-light
+//! `over`. Dissolves use the same operator with animated opacity. Media access is
+//! provided through [`sapstudio_render::Library`]. Rendering builds a graph whose
+//! digest-based keys allow decoded frames and shared media to be cached safely.
 
 use alloc::vec::Vec;
 
@@ -193,14 +155,8 @@ pub fn plan(
                 pattern: TestPattern::Offline,
                 description: fetched,
             })?;
-            // And it says *which* media. "Offline media renders a slate but
-            // cannot say which media is missing" stood in the risk section for
-            // three milestones, and it is the whole reason the face exists.
-            //
-            // The digest rather than a file name, because the digest is what
-            // the clip actually refers to: a name is a hint that may have
-            // moved, and two clips pointing at one digest are pointing at one
-            // thing whatever they were called when they were imported.
+            // Name missing media by digest because clips refer to content;
+            // filenames are only location hints.
             let (text, brief) = missing(asset.digest())?;
             graph.add(Node::Legend {
                 input: slate,

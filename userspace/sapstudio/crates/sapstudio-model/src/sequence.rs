@@ -51,13 +51,8 @@ impl TrackSet {
 
     /// How many tracks this names.
     ///
-    /// A `usize` rather than the `u32` the bit count comes back as, so that
-    /// callers reserving room for one entry per named track do not each write
-    /// a cast (R-3.1.6). The conversion cannot lose anything — a `u128` has a
-    /// hundred and twenty-eight bits and every platform this builds for counts
-    /// at least that far — and the fallback is written out rather than
-    /// unwrapped so the day that stops being true the answer is the bound
-    /// rather than a panic.
+    /// Returns `usize` for direct use in capacity calculations. The fallback
+    /// preserves the policy bound on an unsupported narrow platform.
     #[must_use]
     pub fn len(self) -> usize {
         usize::try_from(self.0.count_ones()).unwrap_or(MAX_TRACKS_PER_SEQUENCE)

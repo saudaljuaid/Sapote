@@ -1,22 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /*
- * Thirteen bounded drivers for thirteen real devices, and the matrix that
- * binds them.
- *
- * Each driver is written from its own vendor's specification and states, in
- * code, what that specification promises: which register carries the identity,
- * which bit starts a reset and clears itself when the reset finishes, which
- * field is a manufacturer number that can only have one value. A driver that
- * reads something the specification does not allow refuses the device rather
- * than reporting whatever it found.
- *
- * The shape is deliberately the same for all ten. Configuration-space drivers
- * read the enumerated function's registers through the same mechanism PCI
- * discovery used and write nothing at all. Memory drivers claim the function
- * through the typed substrate, map exactly one BAR uncached, do their bounded
- * work, unmap and release. None of them enables bus mastering, so none of them
- * can reach memory: without an IOMMU that is the difference between a driver
- * that cannot corrupt the kernel and one that is merely not expected to.
+ * Bounded PCI drivers and their match table. Configuration-only drivers are
+ * read-only. MMIO drivers claim a function, map one BAR uncached, perform a
+ * bounded operation, then unmap and release it. These drivers do not enable
+ * bus mastering.
  */
 #include <stdbool.h>
 #include <stddef.h>

@@ -5,12 +5,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/*
- * One place that answers "how long since boot". Every clock before this one
- * handed callers a raw counter sample and left them to remember which counter it
- * came from, how wide it was, and what its rate meant. Nothing that sleeps or
- * schedules can be written against that.
- */
+/* Monotonic time since boot, independent of the underlying counter. */
 
 enum clock_source {
     CLOCK_SOURCE_NONE = 0,

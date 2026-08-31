@@ -9,27 +9,10 @@
 #include <sapote/ui.h>
 
 /*
- * The window a dock item opens does not appear; it arrives.
- *
- * A window is a picture that has already been drawn, so the opening is a
- * warp of that picture rather than a second way to draw it. The panel is
- * rendered once, at its final size, and copied out of the canvas. Every
- * frame after that resamples the copy: each destination row is given its
- * own width and its own centre, interpolated towards the dock icon by how
- * far down the shape the row sits. Rows near the dock reach the icon's
- * width first and the pinch travels upwards, which is the neck. The top
- * and bottom edges are eased on different curves - the bottom hurries to
- * the dock while the top hangs back - and that lag is what makes the shape
- * flow instead of merely shrink.
- *
- * Every number here is a 16.16 fixed-point integer. The kernel is built
- * with -mno-sse -msoft-float: there is no floating point to spend, and an
- * animation is the last place that should be the reason to introduce a
- * soft-float library. Intermediates widen to 64 bits before they multiply.
- *
- * Progress comes from the monotonic clock, never from a frame counter, so
- * the opening takes the same time on a machine that renders it in eight
- * frames as on one that renders it in forty.
+ * Warp a rendered panel between its final frame and a dock icon. Each row has
+ * an eased width and centre, producing the opening and closing pinch.
+ * Geometry uses 16.16 fixed point with 64-bit multiplication. Progress comes
+ * from the monotonic clock, so duration is independent of frame rate.
  */
 
 #define UI_ANIM_ONE UINT32_C(65536)

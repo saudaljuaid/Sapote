@@ -69,7 +69,7 @@ not a style preference; it is the reason colourists work in grey rooms.
 | Red accent | `#A55050` | Refusal and record. Sapote's red. |
 | Violet accent | `#705984` | Markers. Sapote's violet. |
 
-Accents are borrowed from Sapote's Sapote Redwood palette deliberately: the two
+Accents come from Sapote Redwood's palette: the two
 programs are one project and should look like it. Accents belong to controls,
 never to the viewer, and never inside the picture area. No gradient, no glow,
 no translucency over a frame, no coloured overlay a user could mistake for

@@ -346,14 +346,8 @@ fn the_weighting_prefers_the_frequencies_the_ear_does() {
 
 #[test]
 fn a_momentary_window_shorter_than_the_window_is_refused_by_name() {
-    // Four hundred milliseconds is the shortest thing a momentary reading is
-    // defined over, and less than that is not a quiet window — it is no window
-    // at all. That is a different answer from `None`, which means "measured,
-    // and there was nothing there", and the two must not be confused.
-    //
-    // This test exists because the first version of that path returned
-    // `BufferTooLong` for a buffer that was too *short*: a status whose name
-    // said the opposite of the condition it reported.
+    // A momentary reading requires a full 400 ms window. A shorter buffer is
+    // invalid, while None means a valid window with no measurable programme.
     let brief = AudioBuffer::silence(SampleRate::Hz48000, 2, BLOCK_SAMPLES - 1).expect("silence");
     assert_eq!(
         loudness::momentary(&brief),

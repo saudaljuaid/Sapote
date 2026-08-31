@@ -1,22 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! The reference capture: a picture, kept beside its hash so it can be looked
-//! at.
+//! Compare a 320×180 reference render against its committed PNG.
 //!
-//! [`docs/VERIFICATION.md`] has said since its first version that a reference
-//! frame is stored beside its hash *so that a failure can be looked at, not
-//! just counted*. The writer for it landed some time ago and no reference was
-//! committed, deliberately: the only frame the freestanding image composites
-//! is sixteen pixels wide, and 16×9 is not a picture.
-//!
-//! The host has no such bound. This renders a real one — three hundred and
-//! twenty by a hundred and eighty, two test patterns, a soft wipe partway
-//! across, and a mask on the upper layer — and compares it against the PNG
-//! committed beside it, byte for byte.
-//!
-//! **On a mismatch it writes what it actually rendered**, next to the
-//! reference, and says where. That is the whole point of keeping a picture
-//! rather than a hash: a digest tells you something changed, and two files
-//! side by side tell you *what*.
+//! The frame includes two test patterns, a soft wipe, and an upper-layer mask.
+//! On mismatch the test writes the actual render beside the reference for
+//! visual inspection.
 
 use std::path::PathBuf;
 
@@ -51,15 +38,10 @@ fn described() -> FrameDescription {
     .expect("a description")
 }
 
-/// Three sources, keyed by media digest, premultiplied by construction.
+/// Three premultiplied sources keyed by media digest.
 ///
-/// Three rather than two, and that is not decoration. The wipe in this capture
-/// is between the *upper* track's two clips, so if both of them rendered the
-/// same picture the wipe's feathered edge would be perfectly invisible and the
-/// capture would claim to show something it does not. The first version of
-/// this file did exactly that. So the second clip is a flat colour that
-/// nothing else in the frame is, and there is an assertion below requiring the
-/// two sides to differ.
+/// The upper track uses distinct images on each side of the wipe so its
+/// feathered edge remains visible in the reference.
 struct Patterns {
     bars: Digest,
     ramp: Digest,

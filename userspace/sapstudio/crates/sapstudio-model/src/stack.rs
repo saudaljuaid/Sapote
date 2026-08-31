@@ -1,34 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! What a sequence shows at one instant.
+//! Resolve a sequence into layers at one instant.
 //!
-//! This is the question the whole timeline exists to answer, and it is a
-//! question about the *model* rather than about pictures: given an instant,
-//! which piece of which media is on each track, and in what order do they go
-//! on top of one another. Turning those into a frame is somebody else's job.
-//!
-//! Three decisions are made here, and each is the kind that is normally left
-//! implicit until it is a bug report.
-//!
-//! **Higher tracks are on top.** V1 is the bottom of the stack and V2 covers
-//! it, which is what every editing application in this industry does and what
-//! every editor expects. The list comes back bottom first, in the order it is
-//! to be composited, so the order is data rather than a convention a caller
-//! has to remember.
-//!
-//! **A gap is transparent, not black.** A gap on V2 shows V1 through it. This
-//! is the difference between an insert edit and a hole punched in the
-//! programme, and getting it wrong makes an upper track with sparse material
-//! blank out everything beneath it — a bug that looks like the compositor's
-//! fault and is not.
-//!
-//! **A track that does not reach contributes nothing**, in the same way a gap
-//! does. A short track is not a track full of black past its end; it is a
-//! track that has stopped.
-//!
-//! What is *not* decided here is what happens when the stack is empty. A
-//! sequence with nothing at an instant shows nothing, and whether "nothing" is
-//! black or transparent is a rendering policy — so this returns an empty list
-//! and lets the caller say.
+//! Layers are returned bottom-first, with higher tracks on top. Gaps and tracks
+//! that have ended contribute no layer. An empty stack remains empty; the
+//! renderer decides whether that means black or transparency.
 
 use alloc::vec::Vec;
 

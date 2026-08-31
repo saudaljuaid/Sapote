@@ -1,45 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! A parameter that changes over time.
+//! Time-varying parameters represented by keyframes.
 //!
-//! Opacity that fades, a scale that pushes in, a volume that ducks under
-//! dialogue. Each is one number with a different value at different instants,
-//! and a *curve* is the shape it takes between the moments somebody actually
-//! set it.
-//!
-//! # Held, not extrapolated
-//!
-//! Before the first keyframe a curve holds the first value; after the last it
-//! holds the last. It does not continue the slope. That is not conservatism:
-//! extrapolating an animation past its last key is how a parameter set to
-//! reach 100% at the end of a shot arrives at 340% two shots later, and the
-//! editor who set two keyframes did not describe anything outside them.
-//!
-//! # Hold, linear, and ease
-//!
-//! [`Interpolation::Hold`] keeps the outgoing value until the next keyframe
-//! and then jumps. [`Interpolation::Linear`] runs straight between them. Both
-//! are exact: the value at any instant is a rational function of rationals,
-//! computed with [`Rational`] and no rounding anywhere.
-//!
-//! [`Interpolation::Ease`] is the cubic Bézier every editor draws as two
-//! handles, and it is the one with an arithmetic problem worth stating
-//! plainly. A Bézier is parameterised by `t`, but a curve is asked for a value
-//! at a *time*, and getting from one to the other means solving `x(t) = time`
-//! — a cubic. Cardano's formula needs a cube root, which is not rational, so
-//! there is no exact answer to find.
-//!
-//! What is done instead: `t` is found by bisection to [`EASE_BITS`] halvings,
-//! and the value is then computed *exactly* at that `t`. So the number handed
-//! back is not an approximation of the curve — it is the curve's exact value
-//! at a dyadic parameter within `2^-32` of the right one. The approximation is
-//! entirely in which point of the curve was chosen, never in the arithmetic
-//! that evaluated it, and the same instant gives the same answer on every
-//! machine because integer bisection has no rounding mode to disagree about.
-//!
-//! Bisection needs `x(t)` to be monotone, which is why the handles' horizontal
-//! positions are held inside the span (R-1.3): a handle outside it makes a
-//! curve that goes back in time, where "the value at this instant" has more
-//! than one answer and no amount of arithmetic will pick between them.
+//! Values hold before the first keyframe and after the last. Hold and linear
+//! interpolation use exact rational arithmetic. Ease interpolation evaluates a
+//! cubic Bézier after finding its monotone time parameter with [`EASE_BITS`]
+//! rounds of integer bisection. Horizontal handles remain inside the keyframe
+//! span so each instant has one result.
 
 use alloc::vec::Vec;
 

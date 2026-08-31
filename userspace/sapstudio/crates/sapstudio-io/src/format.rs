@@ -11,19 +11,9 @@
 //! 48      N     payload
 //! ```
 //!
-//! Versioned from its first byte, length-prefixed, and digested (R-9.3). The
-//! digest is what makes a half-written file detectable rather than loadable:
-//! any change to any payload byte, and any change to the length, is refused by
-//! name before a single field reaches the model.
-//!
-//! The payload is written by hand rather than derived. That is deliberate: the
-//! format is the long-term custody of the user's work, so every field in it is
-//! a decision someone made and can read here, and the decoder's bounds are the
-//! model's own capacities rather than whatever a derive happened to allow.
-//!
-//! History is not saved. Undo is a property of a session, not of a project; a
-//! file that carried its own history would make "open the file" and "open the
-//! file and undo twice" two different projects with one name.
+//! The file is versioned, length-prefixed, and protected by a payload digest
+//! (R-9.3). The hand-written codec uses the model's own bounds. Edit history is
+//! session state and is not stored in the project file.
 
 use alloc::vec::Vec;
 
@@ -106,10 +96,7 @@ pub fn encode(project: &Project) -> Result<Vec<u8>> {
 
 /// Write one item.
 ///
-/// The decoder has had a `read_item` since the format's first version; this is
-/// its other half, and having them face each other is what makes it possible
-/// to read the two side by side and see that every field written is a field
-/// read.
+/// Keep this field order aligned with `read_item`.
 fn write_item(writer: &mut Writer, item: &Item, media: &[(MediaId, &MediaAsset)]) -> Result<()> {
     match item {
         Item::Clip(clip) => {
@@ -223,19 +210,8 @@ fn write_item(writer: &mut Writer, item: &Item, media: &[(MediaId, &MediaAsset)]
                     writer.bytes(grade.bytes())?;
                 }
             }
-            // After the grade, matching the order the motion takes after the
-            // transform. The first version of this comment went further and
-            // said the reader is then "holding both when it has to refuse a
-            // strength with no look" -- and the control for that swapped both
-            // the write and the read and broke nothing, because the refusal
-            // lives in `Clip::with_grade_strength` at the end of the builder
-            // chain and cannot see what order the bytes arrived in. The order
-            // is a convention, and saying so is better than leaving a reason
-            // nothing checks.
-            //
-            // A count of nought when there is none, which is what `write_curve`
-            // already writes for an absent lane -- four bytes, and no new tag
-            // to reserve.
+            // Grade strength follows the grade by format convention. An absent
+            // curve uses write_curve's zero count.
             write_curve(writer, clip.grade_strength())?;
         }
         Item::Gap(duration) => {

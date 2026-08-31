@@ -1,9 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Converting a frame from one description to another.
-//!
-//! This is where the exact matrices and the integer transfer functions stop
-//! being arithmetic and start being pixels. The order is the one colour
-//! science requires and the one most pipelines get wrong:
+//! Convert frames between colour descriptions.
 //!
 //! ```text
 //!   code values  →  normalise by range
@@ -15,15 +11,9 @@
 //!                →  quantise by range
 //! ```
 //!
-//! Changing gamut anywhere but in linear light is the classic mistake: a
-//! matrix applied to gamma-encoded values is not a gamut conversion, it is a
-//! different picture that happens to look nearly right on a monitor.
-//!
-//! Two bounded contracts, stated rather than worked around (R-1.1, R-1.2).
-//! The conversion refuses to change chroma subsampling, because that is a
-//! resampling filter and a filter is a decision with a name; and it refuses a
-//! geometry change, because that is a scaler. Both are separate operations
-//! that will arrive with their own contracts.
+//! Gamut conversion occurs only in linear light. This operation does not change
+//! geometry or chroma subsampling; scaling and resampling are separate APIs
+//! (R-1.1, R-1.2).
 
 use alloc::vec::Vec;
 

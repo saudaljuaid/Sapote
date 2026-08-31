@@ -1,16 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! The point a framing acts about.
+//! Transform pivot behavior.
 //!
-//! M8.9 fixed it at the frame's centre with a good argument: scaling about the
-//! corner "sends the picture sliding off to the lower right the moment
-//! somebody drags a scale slider", which is not what anybody means by "make it
-//! bigger". The centre is the right *default* and it is a poor *rule* — a
-//! lower third that swings in pivots on its left edge, and a card that flips
-//! pivots on the line it flips about.
-//!
-//! M8.24 made the case sharper than it was, which is why this arrives now
-//! rather than three milestones ago: a turn about the centre is a turn about
-//! the centre, and every other pivot was unreachable.
+//! The frame center is the default, while explicit pivots may sit anywhere.
 
 use sapstudio_core::{Digest, Duration, Instant, Rational, Timebase};
 use sapstudio_model::{
@@ -45,8 +36,7 @@ fn framing() -> Transform {
 
 #[test]
 fn a_transform_pivots_on_the_centre_until_somebody_moves_it() {
-    // The default is the decision M8.9 made, kept. What is new is that it is a
-    // default rather than the only answer.
+    // The center is the default, not the only valid pivot.
     assert_eq!(framing().anchor(), (r(1, 2), r(1, 2)));
     assert_eq!(
         framing()
@@ -58,9 +48,7 @@ fn a_transform_pivots_on_the_centre_until_somebody_moves_it() {
 
 #[test]
 fn a_pivot_outside_the_frame_is_a_pivot() {
-    // No refusal, and that is a decision rather than an omission: a card
-    // swinging in from above the picture turns about a point above it, so a
-    // bound here would be a bound on moves rather than on values.
+    // Off-frame pivots support motion entering from outside the picture.
     for anchor in [
         (r(-3, 1), r(1, 2)),
         (r(1, 2), r(7, 2)),

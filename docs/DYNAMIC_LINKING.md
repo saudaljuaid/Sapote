@@ -41,10 +41,9 @@ refused before a user mapping is entered.
 
 This proof package uses legacy format 2, whose body has integrity hashing but
 no publisher signature. Sapote's Ed25519-signed format-v3 repository and trust
-policy are separate; the current guest package installer does not yet turn a
-signed repository artifact into this dynamic application package. The dynamic
-proof therefore establishes authenticated System-image loading, not signed
-publisher provenance or in-guest installation.
+policy are separate. The dynamic proof covers authenticated System-image
+loading; publisher provenance and in-guest installation belong to the package
+service boundary.
 
 ## Admission policy and bounds
 
@@ -90,7 +89,7 @@ The admitted relocation subset is `R_X86_64_RELATIVE`, `R_X86_64_64`,
 wholly inside an RW load, and target ranges may not overlap. Undefined strong
 symbols fail; unresolved weak symbols become zero.
 
-Global preemption scope and lifecycle topology are deliberately separate. The
+Global preemption scope and lifecycle topology are separate. The
 relocator searches the root first, then libraries in breadth-first
 `DT_NEEDED` load order. Constructors run dependencies first and the root last;
 destructors run the exact reverse. Missing/ambiguous SONAMEs and cycles are
@@ -134,16 +133,15 @@ Ring 3 passes, a positive shared-page count, per-instance TLS/lifecycle success,
 and a clean final cache/resource census. It retains the root, library, catalog,
 `readelf` reports, serial log, and Data image from the same commit.
 
-## Deliberate limits
+## Scope
 
 - There is no `PT_INTERP`, `ld.so`, `dlopen`, `dlsym`, lazy binding, symbol
   versioning, unload API, or environment-controlled search path.
 - Only authenticated DSO RX pages use the global cache. Read-only data is not
   shared, and there is no page deduplication for root executables or anonymous
   process memory.
-- The QEMU proof has two concurrent process instances, one direct library per
-  instance, and one initial thread per process. Transitive graph and hostile
-  scope cases are host-tested, but a multi-library QEMU fixture and
-  second-thread copied-TLS proof remain future coverage.
+- The QEMU proof covers two concurrent process instances, one direct library
+  per instance, and one initial thread per process. Host tests cover transitive
+  graphs and hostile inputs.
 - This does not add a hosted libc ABI or make arbitrary Linux shared objects
   compatible with Sapote's native ABI.

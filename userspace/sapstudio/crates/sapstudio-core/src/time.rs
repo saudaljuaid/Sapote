@@ -143,30 +143,12 @@ impl Instant {
         ))
     }
 
-    /// This position in another timebase, rounded down to the tick it is in.
+    /// Convert this position to the containing tick in another timebase.
     ///
-    /// [`Instant::convert`] refuses a position that does not land on a tick,
-    /// which is right for time and wrong for sound. A frame at 30000/1001 is
-    /// 1601.6 samples at 48 kHz — no frame is a whole number of samples, and
-    /// refusing to say where a frame *starts* would make it impossible to mix
-    /// the commonest rate in television.
-    ///
-    /// So this answers the different question: which tick of the target is
-    /// this position inside — the floor, by definition of "inside".
-    ///
-    /// Consecutive positions tile the target with no gap and no overlap,
-    /// because each one's answer is the next one's beginning. That property is
-    /// *not* what picks the floor over rounding to nearest, and saying so
-    /// mattered: a negative control replaced the floor with a round and the
-    /// tiling test still passed, because rounding is monotone too and
-    /// consecutive rounds also tile. What rounding breaks is the definition —
-    /// it can place a frame's start up to half a sample *after* the frame
-    /// actually begins, which is a sub-sample offset applied to the whole
-    /// programme rather than a dropout at one boundary.
-    ///
-    /// It is a *different name* rather than a flag on `convert`, because the
-    /// two answer different questions and a caller must say which it wants
-    /// (R-1.3).
+    /// Unlike [`Instant::convert`], this accepts positions between target ticks
+    /// and rounds down. Consecutive boundaries therefore partition target ticks
+    /// without shifting a start past its true position. The separate method
+    /// keeps exact conversion and containment conversion explicit (R-1.3).
     ///
     /// # Errors
     ///

@@ -17,33 +17,14 @@
 //! 96      N     the blocks
 //! ```
 //!
-//! Each block is sixteen bytes: the lowest sample as a signed 32-bit
-//! little-endian integer, then the highest, then the mean of the squares as a
-//! signed 64-bit one. Level zero comes first and each level is half the length
-//! of the one before it, rounded up; within a level the blocks are grouped by
-//! channel, all of channel nought's before any of channel one's.
+//! Each block stores signed 32-bit minimum and maximum samples followed by a
+//! signed 64-bit mean square. Level zero comes first; each following level has
+//! half as many blocks, rounded up. Blocks are grouped by channel within a
+//! level.
 //!
-//! # What is not in the header
-//!
-//! The number of levels, and the number of blocks in each. Both follow from
-//! the block size and the sample count, which are in the header, so storing
-//! them would create two statements of one fact and therefore a file that can
-//! disagree with itself — and a reader that would then have to decide which
-//! half to believe. The reader computes the shape it expects and reads exactly
-//! that; a file holding more bytes or fewer is refused by length rather than
-//! by a mismatch between two numbers it contains.
-//!
-//! That is the same reasoning as the exclusive out point in an EDL and the
-//! bounded frame count in a reel: **derive what can be derived, so there is
-//! nothing to disagree.**
-//!
-//! # Why the sound's digest is in the header
-//!
-//! So that a stale summary is something a reader can *see*. The alternative in
-//! every editor that has ever shipped one is a modification time, which a
-//! copy, a restore from backup, a clock correction or an archive extraction
-//! will each happily lie about — and a waveform drawn from the wrong sound is
-//! worse than no waveform, because it looks like an answer.
+//! Level counts are derived from the base block size and sample count. Readers
+//! reject any payload whose exact derived length does not match. The source
+//! digest prevents a summary from being used with different audio.
 
 use alloc::vec::Vec;
 

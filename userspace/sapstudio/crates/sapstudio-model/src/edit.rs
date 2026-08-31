@@ -18,31 +18,9 @@ use crate::track::TrackKind;
 
 /// One change to a sequence.
 ///
-/// ## Why some variants are so much bigger than the rest
-///
-/// `InsertItem` carries an [`Item`], and an item is the largest value in this
-/// crate. That is not an accident of this variant: it is what an insert *is*,
-/// and it is also what makes undo work. A `RemoveItem` returns an
-/// `InsertItem` holding the item that came out, because nothing else in the
-/// journal remembers it — the sequence no longer has it and the index alone
-/// cannot conjure it back. [`Edit::DropItem`] carries one for the same reason,
-/// as the inverse of a lift.
-///
-/// This enum used to carry a `clippy::large_enum_variant` exemption, and it
-/// does not any more — **the lint stopped firing and the `expect` said so**.
-/// The lint compares the largest variant against the next largest, and until
-/// a lift existed there was exactly one variant holding an item. Now there are
-/// two, they are the same size, and there is no outlier to complain about.
-///
-/// The exemption was written as an `expect` rather than an `allow` precisely
-/// so that the day its premise stopped being true the build would fail rather
-/// than carry a paragraph explaining a lint that no longer applies. It did.
-///
-/// What is left is the part that was doing the work anyway: `tests/size.rs`
-/// holds a ceiling on this enum, so a variant that grew the *whole* history's
-/// cost fails a test. And the reason boxing is not the remedy has not changed
-/// — R-5.2 forbids an allocation that is not both bounded by a named policy
-/// constant and fallible, and `Box::new` is neither.
+/// Item-carrying variants retain the complete value needed for undo.
+/// `tests/size.rs` bounds the total history cost, and R-5.2 rules out
+/// infallible boxing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Edit {
     /// Place an item, moving everything after it later.
@@ -475,24 +453,7 @@ impl Edit {
         reason = "a dispatch is as long as the number of things it dispatches"
     )]
     pub fn apply(&self, sequence: &mut Sequence) -> Result<Self> {
-        // This is a dispatch table: one arm per edit, each three to six lines
-        // of doing the thing and naming its inverse. Its length is the number
-        // of operations the model supports, which is the point of it, and the
-        // line lint is measuring the wrong property.
-        //
-        // Two things did come out of it, and they came out because they
-        // deserved to rather than to satisfy a count: `retime` and `slip` are
-        // the two arms that read before they write, and that shape is worth a
-        // name. What has deliberately *not* happened is splitting the match
-        // itself — a subset of a dispatch needs an arm for every variant it
-        // does not handle, which is a branch nothing reaches and no test can
-        // cover. `Edit::Keyframe` nests its four operations for exactly that
-        // reason, and grouping the item edits the same way is the move if this
-        // ever needs to shrink again.
-        //
-        // `expect` rather than `allow`, so that the day this drops back under
-        // a hundred lines the compiler says so instead of leaving a stale
-        // waiver behind.
+        // One arm applies each edit and returns its exact inverse.
         match self.clone() {
             Self::InsertItem { track, index, item } => {
                 sequence.track_mut(track)?.insert(index, item)?;
@@ -816,36 +777,22 @@ fn bring_on(
     strength: Option<crate::curve::Curve>,
 ) -> Result<Option<crate::curve::Curve>> {
     let Item::Clip(clip) = lane.item(index)?.clone() else {
-        // A gap has no look to bring on, and the same argument `regrade` makes
-        // applies: accepting it and doing nothing would make the inverse a lie.
+        // A gap has no grade to animate.
         return Err(ModelStatus::NotAClip);
     };
-    // `with_grade_strength` is what refuses a strength with no look and a curve
-    // counted another way, so this does not check either again -- one guard, in
-    // the type that owns the invariant, rather than one here and one there to
-    // keep agreeing. Built before the write, so a refusal leaves the track as
-    // it was (R-1.4).
+    // Build before replacement so an error leaves the track unchanged (R-1.4).
     let brought = clip.with_grade_strength(strength)?;
     lane.replace(index, Item::Clip(brought))?;
     Ok(clip.grade_strength().cloned())
 }
 
-/// Take an item off a track, leaving a gap as long, and give it back.
-///
-/// The transition check is [`crate::track::Track::transition_at`] on the two
-/// boundaries this item touches, rather than the "at or after" check a split
-/// uses. A lift replaces in place, so nothing is renumbered and a dissolve
-/// three cuts later is none of this edit's business — but a dissolve on
-/// *either side of this item* would be left mixing a gap, which the layer
-/// stack refuses at the frame rather than here.
+/// Remove an item and replace it with an equal-length gap.
 ///
 /// # Errors
 ///
-/// [`ModelStatus::NotAClip`] for a gap, which a lift would leave exactly as it
-/// found it — and an edit that changes nothing still takes a place in the
-/// history and still claims, on undo, to have put something back.
-/// [`ModelStatus::TransitionWouldLoseItsClip`], and whatever the track
-/// refuses.
+/// [`ModelStatus::NotAClip`] for a gap,
+/// [`ModelStatus::TransitionWouldLoseItsClip`] if a transition touches the
+/// item, or any error returned by the track.
 fn lift(lane: &mut crate::track::Track, index: usize) -> Result<Item> {
     let held = lane.item(index)?.clone();
     if matches!(held, Item::Gap(_)) {
@@ -1036,15 +983,9 @@ fn replay(
     if lane.kind() == crate::TrackKind::Audio
         && playback != Playback::At(sapstudio_core::Rational::ONE)
     {
-        // Sound at a speed other than one needs a resampler, and a resampler
-        // needs a filter somebody chose and a decision about pitch. Both are a
-        // milestone of their own, and playing the samples at the wrong rate in
-        // the meantime would be an answer nobody asked for (R-1.3).
-        //
-        // A freeze is refused by the same clause and for a sharper reason: a
-        // held frame of sound is a held *block* of samples, which is a tone at
-        // the block rate. Silence would be a different answer, and choosing
-        // one for somebody is exactly what R-1.3 forbids.
+        // Audio retiming requires an explicit resampling filter and pitch
+        // policy. Freezing audio also needs a defined output rather than an
+        // implicit held block or silence (R-1.3).
         return Err(ModelStatus::SoundCannotBeRetimed);
     }
     // Built before the write, so a refusal leaves the track as it was (R-1.4).

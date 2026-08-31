@@ -13,16 +13,10 @@ change. It is normative, and review will cite it by rule number.
 ```sh
 rustup target add x86_64-unknown-none
 make hooks     # enable the pre-commit check for this clone
-make verify    # everything this repository can currently prove
+make verify    # run the complete local verification gate
 ```
 
-`make hooks` sets `core.hooksPath`, which is local configuration and therefore
-not carried by a clone. Run it, and run it again on every fresh clone. It is
-one line and it is the difference between finding a hygiene failure before the
-commit and finding it in CI: this repository has had a commit pushed that
-`make lint` refuses, because the hook was not installed and the shell command
-that was supposed to gate the push had the gate and the push as separate
-statements.
+`make hooks` sets the clone-local `core.hooksPath`; run it once for each clone.
 
 Ubuntu 24.04 or a compatible Debian system is the reference host, as it is for
 Sapote, and the same GNU binutils build both. The pinned compiler is in
@@ -51,17 +45,12 @@ Do not push directly to `main`, bypass hooks, or force-push shared history.
 | Platform boundary, allocator, or ABI | Above, plus `make verify` and, once they exist, the relevant QEMU scenarios |
 | A new dependency | The complete import gate in [`docs/DEPENDENCY_POLICY.md`](docs/DEPENDENCY_POLICY.md) |
 
-Every change that claims an invariant performs the negative control described
-in [`docs/VERIFICATION.md`](docs/VERIFICATION.md) and reports the refusal it
-produced. An invariant no test can break is not an invariant.
+For a new invariant, include the negative control described in
+[`docs/VERIFICATION.md`](docs/VERIFICATION.md) and report its failure result.
 
 **A change that adds or removes a test updates the counts in the same commit.**
 `docs/ARCHITECTURE.md` states a count per crate and `README.md` states a total
-and a count of negative controls, and `make lint` refuses when any of them
-disagrees with the tree. That is friction on purpose: those numbers were kept
-by hand for the first five hundred tests, and a number kept by hand is a number
-that goes stale — which in a document whose whole claim is that it does not
-overstate is worse than having no number at all.
+and a count of negative controls. `make lint` checks both against the tree.
 
 ## Commits
 
@@ -81,11 +70,9 @@ the negative control and its refusal; and the most credible failure the checks
 do not cover. "None" is not an acceptable risk statement for anything that
 touches the model, the platform, or a user's file.
 
-## What will be refused
+## Review boundaries
 
-A change that widens a bounded contract instead of creating a new one; that
-adds a dependency outside the gate; that introduces `unsafe` outside the two
-crates permitted to hold it; that adds a portability layer or a POSIX
-assumption; that makes a render non-deterministic; or that could lose a user's
-work. These are not review preferences. They are
-[the rules](docs/ENGINEERING_RULES.md).
+Do not widen bounded contracts in place, bypass the dependency gate, add
+`unsafe` outside its permitted crates, introduce POSIX assumptions, make
+renders nondeterministic, or weaken project-data safety. The complete rules are
+in [`docs/ENGINEERING_RULES.md`](docs/ENGINEERING_RULES.md).

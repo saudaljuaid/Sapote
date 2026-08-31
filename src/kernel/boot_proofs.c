@@ -483,14 +483,7 @@ void prove_clocks_without_pit(void)
     }
 }
 
-/*
- * Turn three calibrated rates into time a kernel can use. Everything before this
- * could measure an interval that had already happened; nothing could name an
- * instant or ask to be woken at one. The clock supplies the instant and the
- * deadline timers supply the waking, and a sleep proves both at once: it can
- * only return on time if the clock's origin, the conversion, the one-shot count
- * and the expiry path are all right together.
- */
+/* Verify the monotonic clock and deadline timer with one bounded sleep. */
 void prove_monotonic_time(void)
 {
     struct clock_state clock;
@@ -599,19 +592,8 @@ void prove_wall_clock(void)
 }
 
 /*
- * Take ownership of the page tables.
- *
- * Everything before this ran on the hierarchy boot.S builds in 32-bit mode:
- * 2048 huge pages covering the first 4 GiB, every one of them present, writable
- * and executable, because EFER.NXE is never set there and so the no-execute bit
- * does not exist on the processor. linker.ld has carried separate R, RX and RW
- * segments since day one and `make verify` has refused an RWX load segment for
- * just as long. Neither fact ever reached the hardware, and nothing noticed.
- *
- * This is the third property Sapote has found to be verified in name only,
- * after the QEMU suite that never ran and the PIT that delivered twice per
- * period. The pattern each time is the same: the check was necessary and was
- * never sufficient.
+ * Replace the bootstrap 4 GiB RWX huge-page map with the kernel's permissioned
+ * hierarchy. The linker segments define the final R, RX, and RW mappings.
  */
 void install_page_tables(const struct paging_device_windows *device_windows)
 {
@@ -1158,16 +1140,9 @@ void prove_heap_lifecycle(void)
 }
 
 /*
- * Count what is actually on the machine.
- *
- * Every driver Sapote will ever have begins here, because nothing above this
- * layer can name a device that nothing below it has found. The enumeration is
- * read-only on purpose: sizing a base address register means writing all ones
- * into it, and a boot that only counts devices has no business disturbing one.
- *
- * It runs last because it needs everything under it - the heap for its table,
- * the page tables for the uncacheable window, and interrupts disabled so the
- * two halves of a port access cannot be separated.
+ * Enumerate PCI functions without sizing BARs or changing device state. The
+ * table uses the heap and mapped configuration window, with interrupts disabled
+ * across paired port accesses.
  */
 void bring_up_pci(const struct acpi_mcfg *mcfg, bool present)
 {
@@ -1303,24 +1278,12 @@ static void proof_worker(void *context)
         thread_yield();
     }
 
-    /*
-     * Returning is how a thread ends. The trampoline turns it into
-     * thread_exit, so there is deliberately nothing here to say so.
-     */
+    /* The entry trampoline calls thread_exit after this function returns. */
 }
 
 /*
- * Turn one thread of control into several.
- *
- * Everything below this layer runs on the single stack boot.S set up, so every
- * wait blocks the machine. This is the increment that makes a wait belong to
- * something: three threads created from the heap and the page tables, each on
- * its own guarded stack, rotating through a shared log in an order the
- * scheduler fixes rather than one the hardware happens to produce.
- *
- * The order is asserted exactly. A scheduler that runs everything eventually
- * but not in the order it claims is a scheduler whose behaviour no caller can
- * reason about, and "all three threads ran" would not have caught it.
+ * Create three threads on guarded stacks and verify their exact round-robin
+ * order through a shared log.
  */
 void prove_threads(void)
 {
@@ -2320,11 +2283,7 @@ void prove_screen_console(void)
         console_panic("screen console left something in a cell it never drew");
     }
 
-    /*
-     * A byte the font does not cover is substituted rather than refused. A
-     * console that stops on an unexpected character eventually swallows the
-     * message explaining what went wrong.
-     */
+    /* Unsupported bytes use the replacement glyph without stopping output. */
     status = screen_putc('\x01');
 
     if (status != SCREEN_STATUS_OK) {

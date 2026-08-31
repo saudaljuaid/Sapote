@@ -12,23 +12,10 @@
 #define CPU_GDT_USER_DATA_SELECTOR UINT16_C(0x2B)
 #define CPU_GDT_USER_CODE_SELECTOR UINT16_C(0x33)
 /*
- * The RFLAGS bits the processor, rather than the program, decides.
- *
- * Intel SDM volume 1 section 3.4.3.3 and volume 3A section 6.12.1: RF controls
- * the processor's response to instruction-breakpoint conditions, and its value
- * in the RFLAGS image saved on entry to a handler is set by the processor as
- * bookkeeping about the trap. It is not a choice the interrupted program made,
- * so a kernel that authenticates a user register set has to decide what to do
- * with it. Sapote discards it: every CPL3 boundary here masks it out before
- * checking what is left, and no saved context carries it back out through an
- * IRETQ.
- *
- * Discarding costs nothing. Sapote arms no instruction breakpoints and loads no
- * debug registers, so nothing in this kernel observes RF at all. Requiring it
- * clear instead is what a kernel does when it has mistaken processor
- * bookkeeping for program state, and it makes the kernel refuse a perfectly
- * legal return: QEMU 8.2 leaves the bit clear on these traps and QEMU 9.1 does
- * not, and both are entitled to.
+ * RFLAGS bits supplied as processor bookkeeping rather than user state.
+ * Intel SDM volume 1 section 3.4.3.3 and volume 3A section 6.12.1 identify RF
+ * as trap metadata. CPL3 boundaries mask it before validation and never restore
+ * it. Sapote does not use instruction breakpoints or debug registers.
  */
 #define CPU_RFLAGS_PROCESSOR_BOOKKEEPING UINT64_C(0x00010000)
 

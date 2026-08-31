@@ -2,12 +2,11 @@
 
 # Open-source map
 
-This is the complete survey of open-source work SapStudio can build on, with a
-verdict for each. It is deliberately wider than what will be used: knowing what
-was considered and rejected is worth as much as knowing what was adopted.
+This table records the open-source components evaluated for SapStudio and the
+current verdict for each.
 
-Nothing in this document is a dependency yet. A component becomes a dependency
-only by going through the import gate in
+Listing a component does not make it a dependency. Adoption requires the import
+gate in
 [`DEPENDENCY_POLICY.md`](DEPENDENCY_POLICY.md), which re-verifies every claim
 made here against the vendored source.
 
@@ -101,7 +100,7 @@ library. Mostly it should not be.
 | Component | Language | Licence | Tier | Verdict | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `serde` | Rust | MIT / Apache-2.0 | T1 | Adopt | `no_std` with `alloc`. Derives only; no runtime reflection. |
-| `postcard` | Rust | MIT / Apache-2.0 | T1 | Adopt | Deterministic, compact, `no_std`, schema-stable enough to version deliberately. |
+| `postcard` | Rust | MIT / Apache-2.0 | T1 | Adopt | Deterministic, compact, `no_std`, and suitable for an explicitly versioned schema. |
 | `ciborium` (CBOR) | Rust | Apache-2.0 | T1 | Watch | Self-describing, useful for metadata sidecars, larger than `postcard`. |
 | `rmp-serde` (MessagePack) | Rust | MIT | T1 | Watch | No advantage over `postcard` here. |
 | `serde_json` | Rust | MIT / Apache-2.0 | T1 | Candidate | Needed only for interchange with FCPXML/OTIO tooling, not for the native format. |
@@ -173,7 +172,7 @@ path, not a formality.
 | `libvpx` | C | BSD-3-Clause | T2 | Watch | VP8/VP9 ingest for older material. |
 | `openh264` | C++ | BSD-2-Clause | T2 | Candidate | Permissive H.264 decode; Cisco's patent position applies to their binaries, not to source built here. |
 | `libde265` | C | LGPL-3.0 | T2 | Candidate | HEVC decode; compatible, and smaller than the alternatives. |
-| `vvdec` | C++ | BSD-3-Clause-Clear | T2 | Watch | VVC is not yet worth the surface area. |
+| `vvdec` | C++ | BSD-3-Clause-Clear | T2 | Watch | VVC support is outside the current codec scope. |
 | `zune-jpeg` | Rust | MIT / Apache-2.0 | T0 | Adopt | Motion-JPEG and still JPEG in safe Rust. A real T0 decoder available today. |
 | FFmpeg `libavcodec` | C | LGPL-2.1-or-later | T2 | Reference | Same as `libavformat`: the fixture and conformance oracle, not a runtime dependency. |
 | Proprietary camera SDKs (BRAW, R3D, X-OCN) | — | proprietary | T3 | Reject | R-2.5 and R-12.2. Not negotiable. |
@@ -187,7 +186,7 @@ path, not a formality.
 | `x264` | C + asm | GPL-2.0-or-later | T2 | Candidate | H.264 delivery is what the world still asks for. Licence is compatible; the assembly needs `SAP-04`. |
 | `x265` | C++ + asm | GPL-2.0-or-later | T2 | Watch | Same shape, larger, slower to justify. |
 | `libaom` (encode) | C | BSD-2-Clause + patent | T2 | Watch | Reference encoder; too slow for delivery. |
-| `vvenc` | C++ | BSD-3-Clause-Clear | T2 | Watch | Not yet. |
+| `vvenc` | C++ | BSD-3-Clause-Clear | T2 | Watch | VVC export is outside the current codec scope. |
 | `libjpeg-turbo` | C + asm | IJG / BSD-3-Clause / Zlib | T2 | Watch | Only if JPEG export becomes hot enough to leave Rust. |
 
 ## 11. Intermediate and mezzanine codecs
@@ -455,7 +454,7 @@ short on purpose.
 
 | Area | Dependencies |
 | --- | --- |
-| **Native interface** | `libm`, `bytemuck`, `arrayvec`, `heapless`, `embedded-graphics`. An allocator is not yet required. |
+| **Native interface** | `libm`, `bytemuck`, `arrayvec`, `heapless`, `embedded-graphics`. |
 | **Project model** | `slotmap`, `hashbrown`, `rlsf`, `serde`, `postcard`, `blake3`, `sha2`. Host-only: `proptest`, `cargo-fuzz`, `criterion`, `miri`, `cargo-deny`. |
 | **Frame pipeline** | `tiny-skia`, `ttf-parser`, `hound`, `dasp`, `lz4_flex`, `miniz_oxide`, `png`. |
 | **Editing and export** | `zune-jpeg`, `rubato`, `ebur128`, `biquad`, `microfft`, `exr`. |
@@ -467,47 +466,12 @@ Sapote is not already asked for in
 
 ### What the current implementation uses
 
-Fewer than the list expected, which is worth recording rather than quietly
-correcting. The time model, the project model, undo and redo, the generational
-store, the bounded growth helpers, the initial heap, and the freestanding
-runtime
-were all written with **no dependencies at all** — not one line of third-party
-code in the tree.
+The current tree implements the time and project models, edit journal,
+generational store, bounded containers, allocator, runtime, SHA-256, project
+format, frame types, cache, test patterns, and `SPRW` format without third-party
+dependencies.
 
-Three early entries turned out to be things this project must own
-anyway: `slotmap`'s job is done by `sapstudio_model::Store`, because a
-generational store that refuses a stale identifier by name is thirty lines and
-is the shape the rest of the model is built on; `rlsf`'s job is done for now by
-a bump allocator whose limits are stated, because the real allocator wants
-`SAP-03`'s pages and there are none yet; and `hashbrown` has not been needed,
-because nothing in the model is keyed by anything but an index.
-
-Two more turned out the same way at the file format. `sha2`'s job is done by
-`sapstudio_core::digest`, a from-scratch SHA-256 checked against the published
-vectors including the one-million-character message — written because the
-import gate needs a network to vendor anything and there was none, and kept
-because it is a hundred and fifty lines with a decisive test. `serde` and
-`postcard`'s job is done by a hand-written format, which is the better answer
-regardless: a project file is long-term custody of the user's work, every field
-in it should be a decision someone made and can read, and its decoder's bounds
-should be the model's own capacities rather than whatever a derive happened to
-allow.
-
-The frame types, the pool, the test patterns, and the `SPRW` mezzanine followed
-the same path: all four were on the "writes itself" list already, and
-building them confirmed why. A frame's description is the product's semantics;
-a pool's eviction order has to be deterministic in a way no general cache
-promises; and the mezzanine is the format SapStudio owns end to end.
-
-The rest — `blake3` where SHA-256 is too slow to be a cache key, `libm` for the
-first transcendental, `tiny-skia` when there is a picture to draw, and `rlsf`
-when `SAP-03` provides pages — are still expected, and each will arrive through
-the gate in [`DEPENDENCY_POLICY.md`](DEPENDENCY_POLICY.md) rather than because
-a list once predicted them. `sha2` will be evaluated against this project's own
-implementation when the gate can be run; the vectors decide it, not the fact
-that one of them is a dependency.
-
-The C and C++ entries in this document begin to matter when
-`SAP-04` makes assembly-backed codecs worth their boundary — and each will
-arrive under R-3.4's terms: after a Rust implementation exists, bit-exact with
-it, measured against it, and sealed behind the one ABI crate.
+Candidates in the tables remain candidates until they pass
+[`DEPENDENCY_POLICY.md`](DEPENDENCY_POLICY.md). C and C++ libraries must also
+meet R-3.4: a Rust reference implementation, bit-exact comparison, measurements,
+and an ABI boundary in the designated crate.

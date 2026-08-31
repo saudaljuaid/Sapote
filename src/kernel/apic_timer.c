@@ -39,10 +39,8 @@
 #define APIC_TIMER_MAX_COUNT UINT32_C(0xFFFFFFFF)
 
 /*
- * The reference interval: a tenth of a second of the ACPI power management
- * timer, whose rate the ACPI specification fixes rather than one this kernel
- * measured. The PIT used to serve here, but its mode-3 edge count made it an
- * unsuitable independent calibration reference.
+ * Calibrate against one tenth of a second on the fixed-rate ACPI PM timer.
+ * The PIT's mode-3 edge count is not suitable as an independent reference.
  */
 #define REFERENCE_PM_TICKS (PM_TIMER_FREQUENCY_HZ / 10U)
 

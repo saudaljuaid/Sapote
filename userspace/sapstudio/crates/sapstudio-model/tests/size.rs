@@ -23,33 +23,10 @@ use sapstudio_model::{Clip, Edit, Item, Mask, Motion, Transform};
 
 /// What one item on a track may cost.
 ///
-/// Set a little above the 520 bytes it is, so that ordinary layout differences
-/// between compilers do not fail the build, and far enough below a doubling
-/// that a new field large enough to matter does.
-///
-/// The history of this number is the history of what a clip carries: 288
-/// before retiming, 320 after an exact speed, 344 after an opacity curve,
-/// 416 once a clip could animate its mask as well as its framing — an
-/// `Option<Motion>` was 72 bytes, three lanes of curve, and there are two of
-/// them — 440 once a grade could come on over a shot, which is one more
-/// `Option<Curve>` at 24, 488 once a motion gained a fourth lane for the turn,
-/// which is 24 more in each of the two motions, and 520 once a transform
-/// carried the point it acts about — two rationals, 32 bytes.
-///
-/// The ceiling moved from 512 to 576 in that last step, and what ate the room
-/// is named above rather than left to be worked out: a fourth lane, twice. At
-/// 512 the headroom had fallen to 24 bytes — exactly one more `Option<Curve>`
-/// — which makes a ceiling a tripwire for the next field rather than a bound
-/// on the shape, and a tripwire fails for the wrong reason.
-///
-/// Raising a ceiling is allowed; raising it without saying which change ate
-/// the room is not. And raising it without measuring the *image* would be
-/// worse: `Clip` going 320 → 344 took two pages **off** the program, because
-/// past 320 the optimiser stops copying a clip inline into each of
-/// `Edit::apply`'s arms; going 344 → 416 put those two pages back. The
-/// relationship is not monotone and cannot be reasoned about, only measured,
-/// which is why every milestone that moves this number records what the image
-/// did in [the platform contract](../../../docs/PLATFORM_CONTRACT.md).
+/// The current item is about 520 bytes. This ceiling tolerates compiler layout
+/// differences while still catching a material size increase. Any increase
+/// should be checked against the freestanding image measurements in the
+/// [platform contract](../../../docs/PLATFORM_CONTRACT.md).
 const MAX_ITEM_BYTES: usize = 576;
 
 /// What one edit in the history may cost.

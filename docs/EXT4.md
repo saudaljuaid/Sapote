@@ -7,7 +7,7 @@ Sapote has one ext4 implementation: the audited, pinned `ext4plus` source under
 features disabled. Cargo is locked and forced offline through `.cargo/config.toml`;
 the exact registry closure is under `vendor/rust-crates`.
 
-The integrated backend is deliberately read-only. VFS remains the sole owner of
+The integrated backend is read-only. VFS remains the sole owner of
 mounts, vnodes, open-file descriptions, generations, and directory iterators.
 The ext4 backend owns one opaque Rust `Ext4` object per admitted volume and
 generation-authenticated C file/directory cookies. It implements root and nested
@@ -46,23 +46,20 @@ index; this is correct but quadratic for large directories.
 
 ## Ownership and lock order
 
-The current kernel executes this path synchronously on one core. The required
+The kernel executes this path synchronously on one core. The required
 order is VFS object/generation state, ext4 backend handle state, ext4plus's
 internal synchronous read lock, native byte callback, active NVMe volume
 session. Code must not call back into VFS while it owns an ext4plus object or an
-NVMe session. Heap allocation may occur inside ext4plus, but no heap allocation
-survives refused admission and no NVMe lease survives any operation. SMP work
-must add an explicit VFS/backend lock before relying on this order; the present
-single-core serialization is not an SMP locking claim.
+NVMe session. Heap allocation may occur inside ext4plus, but no allocation
+survives a rejected mount and no NVMe lease survives an operation. This lock
+order applies to the current single-core execution model.
 
 ## Read-write admission gate
 
-Upstream reads an existing JBD2 journal but does not journal new mutations.
-Consequently Sapote does not pass a writer into ext4plus. `sync`, create,
-write, truncate, mkdir, rename, unlink, rmdir, and link all return `EROFS`.
-Sapote does not advertise ext4 write or crash-recovery support. Read-write
-admission requires all of the following
-in the same implementation:
+Upstream reads an existing JBD2 journal but does not journal new mutations, so
+Sapote does not pass a writer into ext4plus. `sync`, create, write, truncate,
+mkdir, rename, unlink, rmdir, and link return `EROFS`. Enabling the write path
+requires all of the following in one implementation:
 
 1. ordered-data JBD2 descriptor, data, revoke, and checksummed commit records;
 2. an NVMe Flush after journal data and before acknowledging the commit;
@@ -71,14 +68,13 @@ in the same implementation:
    namespace/resource census checks; and
 5. refusal tests for unsupported feature combinations and corrupt metadata.
 
-This gate prevents a home-block writer from being mistaken for crash-consistent
-ext4. The vendored port record in `vendor/ext4plus/SAPOTE-PORT.md` tracks the
-delta from the exact upstream commit.
+The vendored port record in `vendor/ext4plus/SAPOTE-PORT.md` tracks the delta
+from the pinned upstream commit.
 
 ## Ordered transaction foundation
 
-The vendored crate now contains a lower-level, no-std transaction primitive;
-this does **not** open the read-write admission gate. `JournalTransaction`
+The vendored crate contains a lower-level `no_std` transaction primitive.
+`JournalTransaction`
 accepts only complete 4 KiB block images, rejects duplicate or out-of-range
 home blocks, bounds ordered-data, metadata, and revocation sets to 64 blocks
 each, and
@@ -101,7 +97,7 @@ without leaving a sequence gap. Public tests cover wrap, full-ring refusal,
 early/out-of-order reclamation refusal, abort, revoke corruption, and replay
 suppression.
 
-`JournalSuperblockImage` closes the next hostile-input boundary. It validates
+`JournalSuperblockImage` validates
 the exact 1,024-byte JBD2 v2 superblock header, checksum-v3/64-bit feature set,
 CRC32C checksum, 4 KiB block size, sequence, clean/live start, and a bounded
 logical journal length. Header, feature, checksum-type, and stored/calculated
@@ -113,26 +109,25 @@ inode (including its superblock), and the mapped ring refuses home metadata
 that aliases that superblock or revoke records when the corresponding
 incompatible-feature bit is absent.
 
-`load_journal_inode_map` now follows the admitted ext4 journal inode through the
+`load_journal_inode_map` follows the admitted ext4 journal inode through the
 same bounded extent/block-map iterator used by ext4plus, refuses holes,
 duplicates, truncation, excess blocks, and superblock-length disagreement, and
 reads logical block zero without consulting the replay overlay. The public host
 suite passes the deterministic e2fsprogs image from the Python profile test into
 Rust and proves that its real journal inode maps into the clean ring. Libext2fs
-creates a feature-zero journal and normally leaves its on-mount upgrade to
-Linux; because the fixture is deliberately never mounted, the generator
-performs that exact deterministic upgrade itself. It installs the admitted
+creates a feature-zero journal and normally upgrades it on mount. The fixture
+generator performs that deterministic upgrade without mounting the image. It
+installs the admitted
 revoke/64-bit/checksum-v3 bits and CRC32C, then both e2fsck and the independent
 Python/Rust parsers revalidate the result. The fixture verifier pins the clean
 start, 4 MiB journal length, UUID match, feature masks, checksum type, and
 stored checksum.
 
-The production Rust mount path performs the same journal-inode discovery and
-JBD2 admission before exposing the filesystem to VFS. A clean filesystem must
+The Rust mount path performs the same journal-inode discovery and JBD2 admission
+before exposing the filesystem to VFS. A clean filesystem must
 map into a complete clean ring; a filesystem carrying ext4's recovery bit is
 admitted only after ext4plus has validated and installed its read overlay, and
-still has to pass Sapote's bounded journal map and superblock profile. This is
-runtime hostile-input enforcement, not writable-backend admission.
+still has to pass Sapote's bounded journal map and superblock profile.
 
 `recover_committed_ring` implements the bounded live-ring reader for Sapote's
 single-descriptor transaction profile. It starts at the admitted JBD2 sequence
@@ -164,31 +159,18 @@ clean or advanced-tail JBD2 superblock write
 Flush(JournalState)
 ```
 
-There is no metadata home-block operation before `Flush(Commit)`, and no slot
-reuse before `Flush(JournalState)`. The intervening barriers order the live
-superblock before the commit. The filesystem owner must first make ext4's
-incompat-recovery bit durable; that platform mutation remains outside this
-lower-level planner. A complete, checksummed commit is required before
+Metadata home blocks appear only after `Flush(Commit)`, and slots are reused
+only after `Flush(JournalState)`. The barriers order the live superblock before
+the commit. The filesystem owner makes ext4's incompat-recovery bit durable
+before executing the plan. A complete, checksummed commit is required before
 `replay_committed_transaction()` returns any home image. Pure tests cut the
 mapped operation list at every boundary and prove each durable prefix is either
 clean, contains only an uncommitted tail, or replays the complete metadata
 image. They also corrupt descriptor, data, and commit bytes independently.
-`make ext4-tests` runs equivalent public-API transaction controls from the
-isolated `tools/ext4-transaction-tests` harness in the admitted
-`--no-default-features --features sync` profile, as well as the existing hostile
-image suite. This avoids importing unrelated upstream fixture tests while using
-only the committed Cargo source mirror.
+`make ext4-tests` runs the public transaction checks from
+`tools/ext4-transaction-tests` with
+`--no-default-features --features sync`, followed by the hostile-image suite.
 
-Sapote's NVMe layer already exposes the required `nvme_volume_flush()` fence,
-but the ext4 backend deliberately does not bind the plan to it yet. The ring
-planner now validates a discovered journal-inode map, constructs live and
-clean/advanced-tail state operations, and derives the replay/checkpoint set for
-its bounded live-ring profile, but it does not issue the home or superblock
-writes. The remaining work is not a small wrapper: it needs making ext4's
-recovery marker durable, binding recovery, operations, and barriers to the
-platform writer,
-redirecting ext4plus mutations away from immediate home writes, allocation
-rollback, a writable Rust/C volume lease, VFS-level mutation/handle coherency,
-and power-cut QEMU coverage. Until all of those are integrated,
-`ext4_backend_drive().read_only` remains true and create, write, truncate,
-rename, unlink, and sync remain `EROFS`.
+The ring planner validates the journal map and produces live, checkpoint, and
+tail-state operations. It does not issue filesystem or superblock writes. The
+mounted ext4 backend remains read-only, and mutation operations return `EROFS`.

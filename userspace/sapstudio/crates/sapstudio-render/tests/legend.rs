@@ -168,10 +168,8 @@ fn the_type_is_premultiplied_in_light_and_not_in_code_values() {
         .expect("a frame");
     let packed = frame.to_packed().expect("bytes");
 
-    // The coverage, computed here rather than read out of the frame. Over an
-    // *opaque* black field the composited alpha is 255 everywhere -- which is
-    // right, and is why the first version of this test found nothing partly
-    // covered and had to be told where to look.
+    // Inspect caption coverage directly because compositing over opaque black
+    // makes the output alpha 255 everywhere.
     let coverage = font::caption(BRIEF, 240, 120)
         .expect("a caption")
         .expect("a run")
@@ -689,9 +687,7 @@ fn a_block_straddles_the_point_it_was_placed_at() {
 
 #[test]
 fn a_card_of_one_line_is_set_where_one_line_used_to_be() {
-    // The single-line case went through a different function before blocks
-    // existed. It has to land in exactly the same place, or every card in
-    // every project made before this moved.
+    // Keep the single-line layout compatible with existing projects.
     let (width, height) = (320_usize, 180_usize);
     let size = Rational::new(1, 6).expect("a size");
     let centre = Rational::new(1, 2).expect("a place");

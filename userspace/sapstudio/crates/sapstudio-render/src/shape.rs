@@ -1,48 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Shapes, and the exact area of a pixel inside one.
+//! Exact pixel coverage for convex shapes.
 //!
-//! M4.5 recorded the reason wipes were not built: *a wipe needs a shape and a
-//! shape needs a rasteriser*. This is that rasteriser, and it is the same
-//! primitive a mask needs, so it is built once.
-//!
-//! ## Coverage is an area, not a sample
-//!
-//! The usual rasteriser asks "is the pixel's centre inside the shape" and gets
-//! a jagged edge, or asks it at sixteen sub-positions and gets sixteen
-//! possible answers instead of two hundred and fifty-six. This one computes
-//! the **exact area** of the pixel square that lies inside the shape, as a
-//! rational, and quantises once at the very end.
-//!
-//! That is worth the arithmetic for a reason that shows up immediately: a wipe
-//! is a straight line crossing a whole frame over a second, so the *same* edge
-//! is drawn at a thousand slightly different offsets. Sampled coverage makes
-//! the edge crawl — each pixel flips between two values at a different moment
-//! — while exact area makes it slide, because the area under a line is a
-//! continuous function of where the line is and a sample is not.
-//!
-//! ## Two implementations, one of them to be checked against
-//!
-//! A convex shape is an intersection of half-planes, and coverage is computed
-//! by clipping the pixel square against each in turn and taking the shoelace
-//! area of what is left. That is general: one edge is a wipe, four are a
-//! rectangle, many are a mask.
-//!
-//! There is also a closed form for the one-edge case — the area of a unit
-//! square under a line, in three lines of arithmetic — and it is *not* what
-//! the rasteriser calls. It exists to be compared against, pixel for pixel,
-//! over a whole frame at several angles. Two implementations that share no
-//! code and agree everywhere is a much stronger statement than one
-//! implementation and a test that agrees with it, which is the same argument
-//! [`crate::lut`] makes for keeping trilinear interpolation alive.
-//!
-//! ## What it refuses
-//!
-//! Every coordinate is an exact rational and every clip is exact, which means
-//! denominators grow: an intersection point is a ratio of products of the
-//! inputs, and the shoelace area multiplies those together again. A shape
-//! whose arithmetic will not fit in a rational is **refused by name** rather
-//! than quietly evaluated in floating point. There is no floating point here
-//! to fall back to, which is the point.
+//! The rasterizer clips each pixel square against the shape's half-planes and
+//! computes the remaining area as a rational. A separate one-edge closed form
+//! provides an independent check for wipes. Arithmetic overflow is reported
+//! instead of falling back to floating point.
 
 use alloc::vec::Vec;
 
@@ -63,16 +25,7 @@ pub const MAX_EXTENT: usize = 16_384;
 /// Full coverage, as a byte.
 pub const FULL: u8 = 255;
 
-/// One half-plane: every point where `a·x + b·y <= c`.
-///
-/// The inequality is not strict, so the boundary line belongs to the region.
-/// **Nothing here can tell the difference**, and that was established by
-/// trying: making it strict changes no coverage anywhere, because a line has
-/// no area and the clipper puts back as a crossing point exactly the corner
-/// the strict test would have dropped. It is written down so that a later
-/// `contains(point)` — which *can* tell — does not have to decide it again,
-/// and it is recorded as a decision without a consequence rather than dressed
-/// up as one with one.
+/// One closed half-plane: every point where `a·x + b·y <= c`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Edge {
     a: Rational,
@@ -611,11 +564,8 @@ pub fn quantise(coverage: Rational) -> Result<u8> {
 
 /// A wipe whose edge fades rather than cutting.
 ///
-/// Two parallel lines with a linear ramp between them: fully covered on the
-/// near side of the first, not at all past the second, and a straight run in
-/// between. The band is measured in the edge's own units, which is why nothing
-/// constructs one of these directly — [`sweeping_soft`] takes a softness as a
-/// fraction of the wipe's travel, where the units cancel.
+/// Two parallel lines with a linear coverage ramp between them. `band` is
+/// measured in the edge's coordinate units.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Feather {
     edge: Edge,

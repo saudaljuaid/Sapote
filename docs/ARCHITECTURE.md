@@ -7,8 +7,8 @@ boots through Multiboot2, installs its own memory and interrupt foundations,
 discovers emulated hardware, and can hand control to the Sapote Redwood workspace
 or one of the bounded QEMU proof scenarios.
 
-This page is the durable map. Source, headers, self-tests, and the Boot Ledger
-remain authoritative when implementation details change.
+Source, headers, self-tests, and the Boot Ledger define the implementation. This
+page maps those pieces by subsystem.
 
 ## Boot and CPU boundary
 
@@ -80,7 +80,7 @@ before a driver can claim resources. BAR mappings, MSI-X vectors, and DMA
 buffers are typed and generation-checked. Without an IOMMU, a bus-mastering
 device is still treated as capable of reaching all physical memory.
 
-The current device boundaries are deliberately small:
+The device boundaries are explicit:
 
 - xHCI: one emulated controller and one endpoint-zero descriptor transfer;
 - NVMe: at most two controllers, one namespace and queue pair each, with
@@ -109,31 +109,24 @@ while they still belong to the kernel, and it is withdrawn only after the
 engines are stopped and the controller is back in reset - before the memory is
 reclaimed, never after. See [`AUDIO.md`](AUDIO.md).
 
-This is a small kernel VFS, not a Unix compatibility layer: it has no mount
-namespaces, dentry cache, advisory locks, mmap, or general pathname ABI. FAT32
-remains the writable backend. Ext4 mutations and sync return `EROFS` because no
-JBD2 writer or crash-recovery proof exists. The exact storage designs and limits
-are in [`FAT32.md`](FAT32.md) and [`EXT4.md`](EXT4.md).
+This is a small kernel VFS, not a Unix compatibility layer. FAT32 is writable;
+ext4 is read-only and returns `EROFS` for mutations and sync. The storage
+profiles are documented in [`FAT32.md`](FAT32.md) and [`EXT4.md`](EXT4.md).
 
 `package_manager.c` parses the canonical signed repository-index and package-v3
 formats and produces bounded deterministic install/remove plans against
 `package_state.c` installed databases. Its serialized graph workspace is kept
 off the 16 KiB syscall stack, and every trust decision is delegated to explicit
 immutable-key and Ed25519 callbacks that fail closed when unavailable. The
-existing VFS-backed `package_service.c` recovers already-staged package
-generations. These cores are not yet connected by guest crypto, download,
-staging, public `sap` commands, or Store UI; the current boundary is documented
-in [`PACKAGE_MANAGER.md`](PACKAGE_MANAGER.md) and
+VFS-backed `package_service.c` recovers already-staged package generations.
+Crypto, download, staging, client commands, and Store presentation sit outside
+these cores. The boundary is documented in [`PACKAGE_MANAGER.md`](PACKAGE_MANAGER.md) and
 [`PACKAGE_TRANSACTIONS.md`](PACKAGE_TRANSACTIONS.md).
 
-`nvidia.c` is fifteen bounded drivers for the register and configuration
-contracts an NVIDIA board publishes, written from envytools, Nouveau, Mesa/NVK
-and NVIDIA's own published material rather than from a datasheet that does not
-exist, and from the PCI and PCI Express specifications for the capabilities
-four of them cross-check against. Fourteen of them read only; the fifteenth
-clears the ROM shadow bit the PROM window requires and proves it restored. The bytes that come out of that window are parsed in freestanding
-Rust, never in C. Nothing here has run against NVIDIA silicon, and the header,
-the module and a build gate all say so. See [`NVIDIA.md`](NVIDIA.md).
+`nvidia.c` contains fifteen bounded register and configuration probes based on
+envytools, Nouveau, Mesa/NVK, NVIDIA's open modules, and the PCI specifications.
+Fourteen are read-only; the video-BIOS probe restores its temporary ROM-shadow
+change. Rust validates the ROM bytes. See [`NVIDIA.md`](NVIDIA.md).
 
 ## Networking
 
@@ -264,12 +257,9 @@ keeping development diaries in the active documentation set.
 
 ## Current limits
 
-Sapote has no SMP, IPv6, general-purpose transport TLS, firewall, routing, Wi-Fi, IOMMU,
-general Unix VFS, journaled crash recovery, hosted `ld.so`/`dlopen`, signals,
-ambient Unix descriptor table, broad hardware support, or browser. Native ABI
-v1 is stable within its documented static and bounded PIE/DSO profiles, not a
-POSIX personality.
-There is no fork, exec, process identifier space or inter-process
-communication. The thirteen bounded drivers bind and identify their devices;
-none of them moves data. The HD Audio driver identifies codecs and plays
-nothing. See [`NATIVE_LIMITATIONS.md`](NATIVE_LIMITATIONS.md).
+Sapote is single-core and has no IPv6, firewall, routing, Wi-Fi, IOMMU, general
+Unix VFS, hosted `ld.so`/`dlopen`, signals, ambient Unix descriptor table, or
+browser. Native ABI v1 supports its documented static and bounded PIE/DSO
+profiles rather than a POSIX personality. Process creation, fork, exec, process
+IDs, and IPC are outside the ABI. See
+[`NATIVE_LIMITATIONS.md`](NATIVE_LIMITATIONS.md).

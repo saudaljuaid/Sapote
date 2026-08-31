@@ -1,16 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! A rotation that is exact, and the things that turn by it.
+//! Exact rational rotations.
 //!
-//! `transform.rs` has said since M8.9 that there is no rotation here, because
-//! "a sine and a cosine are not exact, and a project whose framing depended on
-//! them would drift". That is true of an *angle* and false of a *rotation*.
-//!
-//! The rational points on the unit circle are dense, and `t = tan(θ/2)` reaches
-//! every one of them: `cos = (1 − t²)/(1 + t²)`, `sin = 2t/(1 + t²)`. So a turn
-//! is stored as the point — which is what makes `cos² + sin² = 1` a fact rather
-//! than a rounding — and the parameter is how one is built and how one is
-//! animated, because `t` runs over the whole line while the angle runs over an
-//! interval and a curve needs somewhere unbounded to live.
+//! A half-angle parameter maps rational values onto the unit circle with
+//! `cos = (1 - t²)/(1 + t²)` and `sin = 2t/(1 + t²)`.
 
 use sapstudio_core::{Digest, Duration, Instant, Rational, Timebase};
 use sapstudio_model::{

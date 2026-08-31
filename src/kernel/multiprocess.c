@@ -1,28 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /*
- * Several bounded user processes, private address spaces, and one round robin.
- *
- * The v0.7.0 Ring 3 proof built one address space, entered it once, and tore it
- * down before anything else could exist. That is a single process in the
- * narrowest sense: not one process at a time, but one process ever, with no
- * saved register set to come back to and no second hierarchy to come back
- * from. Everything above it - the syscall boundary, the measured BusyBox
- * profiles, the Terminal - inherited that shape.
- *
- * This file is the other half. It installs up to PAGING_PROCESS_SPACE_SLOTS
- * processes at once, each with its own hierarchy, image frame, stack frames and
- * generation, and gives the processor to them in turn. A process leaves through
- * the same reviewed CPL3 gate the proof uses; the difference is that its
- * complete register set is saved on the way out and loaded again on the way
- * back, so the program resumes at the instruction after the one it left on.
- *
- * The schedule is cooperative and interrupts stay masked in CPL3, which is
- * deliberate: a preemptive user scheduler would have to take the local APIC
- * timer away from the clock that every deadline in the kernel is built on, and
- * that is a separate change with separate evidence. What is proved here is that
- * several processes exist together, run interleaved, cannot see each other's
- * memory, and that one of them faulting is that process ending rather than the
- * machine ending.
+ * Cooperative round-robin scheduling for bounded user processes. Each process
+ * owns a private page hierarchy, image, stack, generation, and saved register
+ * set. CPL3 interrupts stay masked. A process fault ends that process without
+ * ending the kernel or its peers.
  */
 #include <stdbool.h>
 #include <stddef.h>

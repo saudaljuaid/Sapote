@@ -1,23 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! A grade that comes on over a clip.
+//! Clip-local grade-strength animation.
 //!
-//! A look was applied or it was not. That made "bring this look on over the
-//! shot" something this model could not describe at all, and it was the last
-//! place a parameter was a **value** where it could be a curve — the phrase
-//! two of the last three milestones ended their "not done" lists with.
-//!
-//! What animates is not *which* look. A digest is not a quantity and two
-//! tables have nothing between them to interpolate; a grade that changed
-//! identity per frame would be a different grade every frame rather than an
-//! animated one. What animates is the **strength**: how far the picture has
-//! travelled from ungraded towards graded, nought for the clip untouched and
-//! one for the look applied exactly as it always was.
-//!
-//! On the clip and measured from the clip's own start, which is the same
-//! decision M8.10, M8.21 and M8.22 each made and for the same reason: there is
-//! no keyframe name to survive a renumbering, so a ripple that moves every
-//! item after this one moves the arrival with it and renames nothing. It is
-//! the fourth lane counted that way, and a cut re-bases all four or none.
+//! The look digest stays fixed while a zero-to-one curve blends the grade in.
+//! Splits and joins rebase the curve with the other clip-local animation lanes.
 
 use sapstudio_core::{Digest, Duration, Instant, Rational, Timebase};
 use sapstudio_model::{
@@ -102,11 +87,7 @@ fn clip() -> Clip {
 
 #[test]
 fn a_graded_clip_with_no_curve_is_all_the_way_graded() {
-    // One rather than nought, and the difference is every project written
-    // before this milestone. Neutral for something that multiplies is one;
-    // neutral for a *grade* is fully applied, because that is what a graded
-    // clip has done since grades existed. A default of nought would have
-    // turned off every look in the world.
+    // One is the neutral multiplier and preserves a fully applied grade.
     let held = clip();
     assert!(held.grade_strength().is_none());
     for offset in [0, 1, LENGTH / 2, LENGTH - 1] {

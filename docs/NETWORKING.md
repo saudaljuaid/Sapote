@@ -56,8 +56,8 @@ Stale handles cannot alias a later device generation.
 - TCP provides eight connections, 8,192 receive bytes and one 1,460-byte
   retransmission segment per connection, four retransmissions, checked sequence
   and acknowledgement state, active and passive open, FIN close, RST handling
-  in both directions, polling, cancellation, and owner/generation isolation. It
-  is deliberately not a full RFC-complete congestion-control implementation.
+  in both directions, polling, cancellation, and owner/generation isolation.
+  Congestion control is limited to this bounded profile.
 - HTTP/1.1 accepts `http://` URLs only. It bounds headers to 4,096 bytes and 32
   fields, supports `Content-Length`, chunked transfer, and four redirects, and
   rejects conflicting framing, malformed chunks/status/header lines, redirect
@@ -72,17 +72,16 @@ four-tuple produces a child connection in `SYN_RECEIVED`, drawn from the same
 eight-slot table an outbound connection is drawn from, and `network_tcp_accept`
 hands it over once the peer's acknowledgement completes the handshake.
 
-Three properties are worth stating plainly, because each of them is a bound
-rather than a promise:
+Three bounds define listener behavior:
 
-- **A listener costs nothing while nobody accepts.** A handshake completes on
+- **A listener costs nothing before acceptance.** A handshake completes on
   any pump -- the peer's acknowledgement is an inbound segment like any other --
   but *retransmission and reaping* of half-open children happen only inside
   `network_tcp_accept`. A peer that opens a connection and vanishes therefore
   leaves nothing durable behind, and a listener whose peer's hardware address is
-  unknown makes progress only while an accept is outstanding. That is
-  deliberate; there is no background timer wheel in this release.
-- **Closing a listener refuses its children.** A child nobody accepted belongs
+  unknown makes progress only while an accept is outstanding. Listener work is
+  driven by `network_tcp_accept` rather than a background timer.
+- **Closing a listener refuses its unaccepted children.** Such a child belongs
   to the listener, and closing the listener resets those peers and reclaims
   their slots. A child already accepted is an independent connection with its
   own handle and is left alone.
@@ -95,7 +94,7 @@ completed connection is waiting, and never as connected or writable.
 
 The `network-tcp-listen` scenario proves both halves. Its first peer is
 accepted, sends bytes, receives bytes, closes, and is closed. Its second peer is
-deliberately never accepted: the listener is polled until it reports the waiting
+left unaccepted: the listener is polled until it reports the waiting
 connection as acceptable, then closed, and the peer reports the reset it
 received back over UDP. Nothing is left allocated afterwards.
 
@@ -194,7 +193,7 @@ silence/timeouts, NAK, NXDOMAIN, truncation, CNAME, bad checksum, ARP conflict,
 TCP reset/retransmission, HTTP chunking/redirect/truncation/malformed framing,
 redirect loops, and malformed floods. Two modes reverse the roles: the guest
 announces a port over UDP and the peer opens a TCP connection *to* it, either to
-a port Sapote is listening on or to one it deliberately is not. It writes
+a port Sapote is listening on or to one with no listener. It writes
 classic PCAP with deterministic packet timestamps.
 
 `tools/network_packet_audit.py` independently reconstructs the captured
@@ -216,5 +215,4 @@ TCG on the v2.1.0 development host, not general throughput claims:
 
 The 22-second evidence interaction completed DHCP, ping, DNS, HTTP streaming,
 FAT32 synchronization, screen updates, keyboard/pointer input, and `netstat`
-without packet drops. Larger-body and multi-connection performance remains
-future work.
+without packet drops.

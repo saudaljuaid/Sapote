@@ -347,12 +347,8 @@ enum ui_anim_status ui_anim_draw(
         left = (centre / one) - (width / 2);
 
         /*
-         * Vertical sampling is deliberately not linear. The neck holds the
-         * bottom of the window stretched thin, so the source has to be
-         * consumed quickly at the top of the shape and slowly at the
-         * bottom; an ease-out curve does that, and it blends back to a
-         * straight mapping as the pinch releases. Reading it the other way
-         * round gives a comically tall title bar sitting on a funnel.
+         * Ease-out sampling keeps the lower edge compressed at the neck and
+         * blends toward linear sampling as the pinch releases.
          */
         inverse = one - down;
         source_v = fixed_lerp(down, one - fixed_multiply(inverse, inverse),

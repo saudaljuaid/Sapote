@@ -1,17 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! A clip held on one frame.
+//! Frozen-clip behavior.
 //!
-//! M8.18 refused a speed of nought with a note: it "would show one frame
-//! forever and consume no media — a freeze, which is a different edit with a
-//! different name". The second half of that sentence is why this is a case of
-//! its own rather than a zero in the speed.
-//!
-//! A freeze does **not** consume no media. It consumes exactly one frame, and
-//! `floor(offset x 0)` cannot say so: it puts [`Clip::source_end`] at the in
-//! point, which claims a clip that shows a frame reads none of it. A join
-//! would then believe two stills of different frames are contiguous, a library
-//! check would believe a still needs no media at all, and a reel would write
-//! down a range of nothing. Those are the tests below.
+//! A freeze consumes exactly one source frame and remains distinct from
+//! zero-speed playback.
 
 use sapstudio_core::{Digest, Duration, Rational, Timebase};
 use sapstudio_model::{
@@ -111,10 +102,8 @@ fn a_freeze_consumes_exactly_one_frame() {
 
 #[test]
 fn a_still_can_be_held_past_the_end_of_its_own_media() {
-    // A frozen clip reads one frame, so its length on the timeline is not
-    // bounded by what is left of the asset after it. That is what a still
-    // *is*, and a library check written against the timeline length -- which
-    // is what this project shipped for eleven milestones -- would refuse it.
+    // A frozen clip reads one frame, so its timeline length is not bounded by
+    // the remaining source duration.
     let mut project = Project::new();
     let sequence = project.add_sequence(RATE).expect("room");
     let media = project

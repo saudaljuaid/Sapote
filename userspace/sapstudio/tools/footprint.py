@@ -100,9 +100,8 @@ UNKNOWN = "(crate unreadable)"
 #: name: `memcmp`, `memset`, `__udivti3`. Those carry no crate and never will.
 #:
 #: The bound is roughly twenty times the real figure on purpose. It is not
-#: there to notice a symbol; it is there to notice the *reader* going blind,
-#: which is a cliff rather than a slope -- when the mangling changes, this
-#: goes from a quarter of a per cent to a hundred in one commit.
+#: This limit detects a symbol reader that no longer recognises the toolchain's
+#: mangling. That failure produces a sudden jump rather than gradual growth.
 UNREADABLE_SHARE = 0.05
 
 #: A crate root in Rust's v0 mangling: `C`, an optional disambiguator of

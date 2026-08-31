@@ -9,25 +9,9 @@
 #include <sapote/surface.h>
 
 /*
- * Text on the framebuffer.
- *
- * The whole layer is one idea: a character is a small bitmap, and drawing one
- * is copying its rows into a rectangle of pixels. Everything else here is
- * bookkeeping about where the next rectangle goes.
- *
- * Two decisions are worth stating because neither is forced.
- *
- * The first is that drawing goes through a cached surface. Reading the
- * device framebuffer to scroll means one device read per pixel, while moving
- * the same pixels in ordinary write-back RAM avoids that cost. Verification
- * still reads
- * the framebuffer after present, because asking the surface whether it agrees
- * with itself would turn the strongest proof in this stack into no proof.
- *
- * The second is that an unknown byte is drawn rather than refused. A console
- * exists to carry the message that explains what went wrong; one that stops on
- * an unexpected character will eventually swallow exactly the message somebody
- * needed.
+ * Bitmap text rendered through a cached surface. Scrolling stays in write-back
+ * memory, while presentation checks still read the device framebuffer.
+ * Unknown bytes use a replacement glyph so console output can continue.
  */
 
 /* What an uncovered byte is drawn as. Present in ASCII, so always available. */

@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! `.cube`: the file a colourist hands over.
+//! Adobe/Iridas `.cube` look-up tables.
 //!
-//! Adobe and Iridas's text format, and the one every grading system reads and
-//! writes. A header of key-value lines, then `size³` triples of decimal
-//! numbers, one per line:
+//! The format contains key-value headers followed by `size³` decimal RGB
+//! triples:
 //!
 //! ```text
 //! # a comment
@@ -16,43 +15,10 @@
 //! ...
 //! ```
 //!
-//! # The traps, and what each one costs
-//!
-//! **Red varies fastest.** The innermost loop of the sample order is red, then
-//! green, then blue. Reading it the other way transposes the cube — and a
-//! transposed grade is not a crash or a garish mess, it is a *plausible*
-//! picture with the wrong look, which is the worst kind of wrong for a format
-//! to be. There is a test with a table that is asymmetric in every axis, so a
-//! transposition cannot hide.
-//!
-//! **The numbers are decimal text.** Which means they can be read *exactly*:
-//! `0.123456` is `123456/1000000` and nothing is lost. A reader that went
-//! through a binary floating-point type would lose that on the way in, for no
-//! reason, in a project that has no floating point anywhere else. So the
-//! parser builds a [`Rational`] from the digits and converts once.
-//!
-//! **`DOMAIN_MIN` and `DOMAIN_MAX` are not always nought and one.** A table
-//! authored for log footage may declare any input range, and applying it as
-//! though the range were the unit interval silently applies the wrong look to
-//! every pixel. This build reads the domain and refuses anything but the unit
-//! interval by name, rather than ignoring the lines — which is the failure
-//! mode a reader that skipped unknown keys would have.
-//!
-//! **Output values may leave nought to one, and must not be clamped.** A look
-//! can send a highlight above white on purpose, and a reader that clamped on
-//! the way in would quietly flatten it.
-//!
-//! **`LUT_1D_SIZE` is a different thing in the same file extension.** A
-//! one-dimensional table is a per-channel curve, not a cube, and reading one
-//! as the other would treat a curve's samples as a cube's and produce
-//! nonsense. It is refused by name.
-//!
-//! **Scientific notation is refused rather than guessed at.** The format's
-//! own description does not call for it, but files in the wild carry it for
-//! very small values. Refusing by name says plainly that this is unimplemented
-//! rather than mis-parsed, and adding it is a small change on the day a file
-//! that needs it turns up — which is a better place to be than having read
-//! `1e-3` as one.
+//! Red varies fastest in the sample order. Decimal values are parsed exactly as
+//! [`Rational`] values before conversion. The parser accepts the unit input
+//! domain, preserves output values outside zero through one, and rejects 1D
+//! tables and scientific notation with named errors.
 
 use alloc::vec::Vec;
 

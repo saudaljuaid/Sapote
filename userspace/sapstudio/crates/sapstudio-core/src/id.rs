@@ -3,7 +3,7 @@
 //!
 //! An identifier names a slot *and* the occupancy of that slot. When a clip is
 //! deleted its slot's generation moves on, so every identifier that named it
-//! stops resolving — by [`CoreStatus::StaleIdentifier`], immediately, rather
+//! stops resolving — by [`crate::CoreStatus::StaleIdentifier`], immediately, rather
 //! than by quietly resolving to whatever was put there next.
 //!
 //! The type parameter is a marker only. A `Id<Clip>` cannot be passed where a

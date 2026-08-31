@@ -1,9 +1,8 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
 
-# Native platform limitations
+# Native platform scope
 
-The native ABI v1 intentionally has a bounded hardware and compatibility
-profile:
+Native ABI v1 has this bounded hardware and compatibility profile:
 
 - x86_64 static `ET_EXEC` plus a bounded authenticated PIE/shared-object
   profile; no interpreter, `dlopen`, symbol versions, lazy binding, `fork`,
@@ -23,8 +22,7 @@ profile:
   POSIX sockets, C++ runtime, or Rust `std` support;
 - CMOS UTC has one-second resolution, a 1970-through-9999 range, no timezone
   database, and no persistent anti-rollback policy;
-- HD Audio control-plane communication remains kernel-only and does not yet
-  provide native sample streaming.
+- HD Audio provides one 48 kHz, signed-16-bit stereo playback stream with two
+  logical handles for one owning process.
 
-These are explicit refusals or absent interfaces. They are not represented by
-success-returning stubs.
+Unsupported operations return explicit errors rather than success stubs.

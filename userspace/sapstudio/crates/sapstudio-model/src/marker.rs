@@ -1,34 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! A note somebody left on the timeline.
+//! Timeline markers.
 //!
-//! `ARCHITECTURE.md` has listed markers as planned since its first version,
-//! beside nested sequences, "so the shape is decided before the pressure to
-//! compromise it arrives". This is the shape.
-//!
-//! A marker is **not** an item and does not live on a track. It names an
-//! instant in the programme and carries text, and that is the whole of it:
-//! nothing renders it, nothing composites it, and no clip is affected by one.
-//! It is the one thing in this model that exists purely for the person editing.
-//!
-//! ## At an instant, and absolutely
-//!
-//! A marker's instant is a position in the *programme*, not an offset into
-//! anything. It does not move when an item ripples, and that is a decision
-//! rather than an omission: a marker says "look at this moment", and the
-//! moment is a moment of the finished piece. A note reading "fix the sync
-//! here" is about a place on the timeline; moving it because an unrelated
-//! shot got longer would move it away from the thing it is about.
-//!
-//! The opposite decision — a marker that belongs to a clip and travels with it
-//! — is a different feature with a different name, and it is one an editor
-//! wants too. It is not this one.
-//!
-//! ## One per instant
-//!
-//! Two markers at one instant is the same nothing as none: neither can be
-//! named, moved, or removed without saying which, and "which" is exactly what
-//! an instant was going to answer. So a collision is refused, the same
-//! decision [`crate::Curve`] makes about keyframes and for the same reason.
+//! A marker stores text at an absolute programme instant. It is not a track
+//! item, does not render, and does not move with ripple edits. Each sequence
+//! allows at most one marker per instant, matching keyframe collision rules.
 
 use alloc::string::String;
 
@@ -38,10 +13,7 @@ use crate::status::{ModelStatus, Result};
 
 /// How many characters a marker may carry.
 ///
-/// The same bound a title's line has, and not by coincidence: both are text a
-/// person types into a box, both are bounded because a hostile file must not
-/// be able to talk its way past a bound (R-11.2), and having one number for
-/// "a line of text somebody typed" is better than having two that drift.
+/// Shared with the title line limit so user-entered text has one bound.
 pub const MAX_MARKER_TEXT: usize = 128;
 
 /// How many markers one sequence may hold.
@@ -60,10 +32,7 @@ pub struct Marker {
 impl Marker {
     /// A marker at an instant, saying something.
     ///
-    /// Empty text is allowed, and deliberately: a marker with nothing written
-    /// on it is the commonest kind there is — somebody pressed the key to mark
-    /// a spot and will come back to it. Refusing that would refuse the gesture
-    /// the feature exists for.
+    /// Empty text is allowed for an unnamed position marker.
     ///
     /// # Errors
     ///

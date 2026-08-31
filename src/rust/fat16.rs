@@ -6,7 +6,7 @@
 //! 13.3. Sector fields are little-endian and are decoded from checked slices;
 //! no packed structure ever points into a controller-owned block.
 
-/// The namespace and FAT sector size supported by this milestone.
+/// The supported namespace and FAT sector size.
 pub const BLOCK_BYTES: usize = 4096;
 /// The one accepted total-sector count.
 pub const TOTAL_SECTORS: u64 = 4096;

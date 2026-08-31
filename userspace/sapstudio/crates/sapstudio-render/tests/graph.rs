@@ -202,10 +202,7 @@ fn evaluating_a_node_twice_is_a_cache_hit() {
 
 #[test]
 fn evaluating_in_any_order_gives_the_same_answers() {
-    // R-6.2, made concrete. Sapote is single-core, so this is close to
-    // trivially true today - which is exactly when it should be established,
-    // because it is a property of the model rather than of the scheduler, and
-    // the day cores arrive nothing here should have to change.
+    // R-6.2: graph output is independent of evaluation order.
     let (graph, leaves) = sample();
 
     let reference: std::vec::Vec<_> = {
@@ -371,16 +368,7 @@ fn an_unknown_node_is_refused() {
 
 #[test]
 fn a_node_may_only_name_nodes_that_already_exist_on_every_input() {
-    // A cycle is unrepresentable because a node may only refer to nodes added
-    // before it — there is no `add_edge` to get wrong and no validation pass to
-    // forget. That argument only holds if *every* input is checked, and `Over`
-    // has two.
-    //
-    // A control found this untested. Reporting only one of `Over`'s inputs
-    // failed nothing, because the identity computation reaches both and
-    // refuses first. Two independent mechanisms enforce the same rule, which is
-    // fine — but the rule itself was resting on the one nobody had written a
-    // test for. This is that test, and it names both sides.
+    // Every input must refer to an earlier node. Check both inputs of `Over`.
     let mut graph = Graph::new();
     let real = graph
         .add(Node::Pattern {
@@ -498,12 +486,8 @@ fn a_transform_node_is_named_by_its_pivot_as_well() {
     let mut graph = Graph::new();
     let base = graph
         .add(Node::Pattern {
-            // A checkerboard rather than bars, and the first version of this
-            // test used bars and could not see half of what it asserts: bars
-            // are constant *down* the frame, so moving the pivot down changed
-            // no pixel and the comparison passed vacuously. Which is the same
-            // fixture lesson this project has recorded eight times, met here
-            // while writing a test *for* a control that had found a gap.
+            // A checkerboard varies on both axes, so horizontal and vertical
+            // pivot changes are both observable.
             pattern: TestPattern::Checkerboard { square: 3 },
             description: described,
         })

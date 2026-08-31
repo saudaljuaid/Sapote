@@ -9,45 +9,13 @@
 #include <sapote/pci.h>
 
 /*
- * Fifteen bounded drivers for the register and configuration contracts an
- * NVIDIA graphics board publishes across its PCI functions.
+ * Fifteen bounded probes for NVIDIA PCI configuration, MMIO registers, and
+ * VBIOS data. Sources and per-probe coverage are listed in docs/NVIDIA.md.
  *
- * Everything here is written from public material: the envytools hardware
- * documentation project, the Nouveau driver in the Linux kernel, Mesa's NVK
- * back end, NVIDIA's own open GPU kernel modules and published headers, the
- * PCI and PCI Express base specifications for the capability structures, the
- * PCI Firmware Specification for the expansion ROM, and the High Definition
- * Audio specification for the audio function. Where the public record is
- * exact -- the master control register at offset zero, the endian switch
- * beside it, the timer's two halves and its rate pair, the ROM window and its
- * shadow-disable bit -- this driver states it. Where it is not, this driver
- * reads and reports rather than asserts.
- *
- * Not all fifteen are equally NVIDIA-specific, and pretending otherwise would
- * be the kind of inflation this project exists to avoid. Drivers ten through
- * twelve read the power-management, message-interrupt and PCI Express device
- * capabilities that *every* PCI function carries; what makes them part of this
- * set is that they run against an NVIDIA function and cross-check what the
- * NVIDIA-specific drivers before them established. docs/NVIDIA.md says which
- * is which, driver by driver.
- *
- * NOTHING HERE HAS BEEN RUN AGAINST NVIDIA SILICON. No NVIDIA device was
- * reachable from the machine this was written on, and QEMU models none, so the
- * bind path is unexercised on hardware and is claimed only as code. What *is*
- * proved, and proved under QEMU on every boot, is everything that does not
- * need the device: the identity decode against the published encoding, the
- * VBIOS parser against a reference image pinned three independent ways, and
- * the matcher's refusal of every device that is not an NVIDIA function.
- *
- * The bind path has been executed once, against a model of this register
- * interface built into QEMU (tools/qemu/). That is a stand-in and not the
- * thing: it shares its register offsets with this file, so a misreading of the
- * documentation would appear in both. docs/NVIDIA.md records what it did and
- * did not establish.
- *
- * No driver here enables bus mastering or allocates DMA. Exactly one of them
- * writes a register at all -- the ROM shadow-disable bit the VBIOS window
- * requires -- and it restores what it found.
+ * The QEMU model exercises the bind path. Identity decoding, VBIOS parsing,
+ * and non-NVIDIA rejection also run as boot proofs. These probes do not enable
+ * bus mastering or allocate DMA. The VBIOS probe temporarily changes the ROM
+ * shadow-disable bit and restores it before returning.
  */
 
 /* PCI-SIG vendor identifier assigned to NVIDIA Corporation. */

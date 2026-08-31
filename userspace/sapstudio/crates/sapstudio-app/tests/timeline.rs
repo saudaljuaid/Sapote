@@ -45,12 +45,7 @@ struct Flat {
     looks: std::vec::Vec<(Digest, Look)>,
     /// Answer with `description` rather than with what was asked for.
     ///
-    /// A field rather than the default behaviour, which it used to be. A
-    /// source that ignores the description it is given is a *fault*, and one
-    /// test exists to prove the graph refuses it — but every other test then
-    /// depended on the fault by accident, and a graded layer, which is fetched
-    /// straight, could not render at all. The lie is deliberate now and only
-    /// where it is the subject.
+    /// Enabled only by tests that exercise a mismatched media response.
     answers_wrongly: bool,
 }
 
@@ -67,11 +62,7 @@ impl Library for Flat {
             .iter()
             .find(|(id, _)| *id == media)
             .map_or([0, 0, 0, 255], |(_, colour)| *colour);
-        // Answer the description that was asked for, unless this fixture is
-        // deliberately being the source that does not. It used to always
-        // ignore it, which was harmless only while every layer was fetched the
-        // same way — a graded layer is fetched straight, and a source that
-        // hands back something else has answered a different question.
+        // Normally return the requested description; mismatch tests opt out.
         let mut bytes = std::vec::Vec::new();
         for _ in 0..16 {
             bytes.extend_from_slice(&colour);
@@ -98,11 +89,7 @@ fn digest_of(project: &Project, id: MediaId) -> Digest {
     project.media().get(id).expect("an asset").digest()
 }
 
-/// A fresh pool for each render.
-///
-/// Deliberately not shared: most of these tests are about what a render
-/// produces, and a pool that outlived one call would let a stale frame answer
-/// for a changed graph. The caching test builds its own and keeps it.
+/// A fresh pool that prevents cache state from crossing render tests.
 fn pool() -> FramePool {
     FramePool::new(64, 1 << 20)
 }
@@ -569,12 +556,8 @@ fn rendering_one_instant_twice_gives_one_answer() {
 
 #[test]
 fn a_dissolve_cross_fades_in_linear_light() {
-    // The whole point of representing a dissolve as an opacity: `over` already
-    // computes `in x t + out x (1 - t)`, so a cross-fade needs no second
-    // operator — and it happens in light, like everything else.
-    //
-    // White dissolving to black over four frames. Every number below is worked
-    // out from the definitions rather than read off a run:
+    // A dissolve is opacity applied through linear-light `over`. For white to
+    // black over four frames, the expected values derive as follows:
     //
     //   the incoming clip's coverage at n/5 is round(255 x n/5),
     //   the result's light is dec(255) x (1 - coverage/255) = 1 - n/5,
@@ -585,15 +568,8 @@ fn a_dissolve_cross_fades_in_linear_light() {
     //   3/5 -> alpha 153 -> light 0.4 -> 170
     //   4/5 -> alpha 204 -> light 0.2 -> 124
     //
-    // A dissolve done in code values instead would step 255, 204, 153, 102,
-    // 51, 0 — evenly spaced numbers, and a visibly wrong fade that goes dark
-    // too fast in the middle. That is what these four values catch.
-    //
-    // What they do *not* catch is scaling a layer's coverage without scaling
-    // its colour, because the incoming clip here is black and black has no
-    // colour to scale. `a_dissolve_is_opaque_all_the_way_through` uses
-    // coloured clips and catches exactly that — a control confirmed the
-    // division of labour, so neither test is redundant.
+    // Code-value mixing would instead step 255, 204, 153, 102, 51, 0.
+    // The coloured-clip test separately covers premultiplied colour scaling.
     use sapstudio_model::Transition;
 
     let mut project = Project::new();
@@ -1538,9 +1514,7 @@ fn one_clip() -> (Project, SequenceId, MediaId) {
 
 #[test]
 fn a_clip_whose_media_is_missing_still_renders() {
-    // A project opens when the drive is not mounted. Failing the whole render
-    // because one source is unreachable is what makes an editor unusable on
-    // the day it matters most.
+    // Missing source media renders through the offline-media path.
     let (project, sequence, only) = one_clip();
     let digest = digest_of(&project, only);
     let mut library = Sometimes {
@@ -1939,20 +1913,8 @@ fn a_mask_stays_in_the_frame_while_the_clip_moves_through_it() {
 
 #[test]
 fn an_animated_clip_plans_the_graph_a_still_one_at_that_framing_plans() {
-    // M8.10 added animated framings and changed nothing in this crate or in
-    // the renderer, which is a claim worth a test rather than a sentence in a
-    // commit message. It holds because the layer stack hands out a *resolved*
-    // transform: by the time a frame is described, a motion has already become
-    // the framing it reads at that moment, so the renderer never learns that
-    // anything moves.
-    //
-    // Three renders, then. Two arrive at the same framing at frame five, one
-    // flatly and one by animating through it, and must agree node for node and
-    // byte for byte. The third is at a *different* framing, and is here
-    // because the first two would agree just as well if the framing were being
-    // dropped on the floor -- a flat colour scaled is the same flat colour, so
-    // the first fixture written for this passed without the transform doing
-    // anything at all.
+    // Static and animated clips that resolve to the same transform must build
+    // the same graph. A third transform confirms that framing affects output.
     use sapstudio_model::{Curve, Interpolation, Keyframe, Motion, Resampling, Transform};
 
     let ratio = |numerator, denominator| {
@@ -2104,10 +2066,6 @@ fn offline_slate(tag: u8) -> Frame {
 
 #[test]
 fn an_offline_slate_names_the_media_it_is_missing() {
-    // The sentence that stood in the risk section for three milestones:
-    // "offline media renders a slate but cannot say which media is missing --
-    // that is text on a frame, and text needs a font". There is a font now.
-    //
     // Two clips of two different pieces of media, both offline. The slates
     // must differ, and they can only differ in what they say, because the
     // stripes underneath are a pure function of the frame's size.

@@ -506,11 +506,7 @@ enum keyboard_status keyboard_read(struct keyboard_event *event)
         return KEYBOARD_STATUS_CONTROLLER_REFUSED;
     }
 
-    /*
-     * The queue is written from interrupt context and read from thread context,
-     * so the read is bracketed rather than trusted to be atomic. This is one
-     * processor; the day there is a second, this becomes a lock.
-     */
+    /* Serialize the single-core interrupt writer with the thread reader. */
     enabled = cpu_interrupts_enabled();
 
     if (enabled) {

@@ -913,15 +913,8 @@ fn a_track_with_no_automation_still_reads_its_static_fader() {
 
 #[test]
 fn a_muted_track_stays_muted_under_automation() {
-    // Mute is a switch, not a fader position, and automation drives the
-    // fader. A curve holds decibels and cannot reach the off detent at all —
-    // its floor is very quiet and is still a level. So a track turned off at
-    // the surface must not come back on because somebody drew a fade on it.
-    //
-    // This test exists because the first version did exactly that: `fader_at`
-    // read the curve and never looked at the static fader, so automation
-    // silently overrode mute. The name of a test written honestly is what
-    // found it.
+    // Mute remains authoritative over fader automation. The automation curve
+    // contains levels and cannot represent the mute switch.
     let rate = Timebase::FILM_24;
     let mut project = Project::new();
     let sequence = project.add_sequence(rate).expect("a sequence");

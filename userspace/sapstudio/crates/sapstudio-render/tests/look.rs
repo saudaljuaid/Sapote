@@ -311,8 +311,7 @@ fn to_black(size: usize) -> Lut3D {
 
 #[test]
 fn half_a_look_mixes_code_values_and_not_light() {
-    // The decision this milestone rests on, asserted as a number derived from
-    // the definition rather than read out of the code.
+    // Derive the expected value from the code-space mixing definition.
     //
     // A mid-grey of 128 through a table that takes everything to black, half
     // on. In *code values* the mix is `c + s(f(c) - c)` with `c = 128/255`,

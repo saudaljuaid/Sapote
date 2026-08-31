@@ -2,7 +2,7 @@
 
 # Rust in Sapote
 
-Rust has two deliberately separate roles in Sapote: validating selected byte
+Rust has two separate roles in Sapote: validating selected byte
 streams at the kernel boundary, and supporting freestanding native
 applications through the public ABI. C and x86_64 assembly continue to own
 hardware, page tables, interrupt entry, context switches, and kernel resource
@@ -67,7 +67,7 @@ kernel entry point.
 native entry shim, panic-to-exit behavior, a page-mapping global allocator,
 typed handle cleanup, and wrappers for files, monotonic time, sleeping,
 entropy, event waits, Redwood windows and surfaces, DNS, TCP, threads, futexes,
-and FS-base TLS control. It uses `alloc` but does not claim Rust `std` support.
+and FS-base TLS control. It uses `alloc` without a `std` runtime.
 
 `apps/native-rust` builds with Cargo's `x86_64-unknown-none` target in locked
 offline mode. Its static `ET_EXEC` image uses the same linker and manifest
@@ -86,16 +86,12 @@ sleeps to a monotonic deadline, and exits with a clean resource census.
 - Test both acceptance and deliberate corruption using host-side Rust tests and
   installed QEMU proofs.
 
-## Why not more Rust?
+## Boundary rule
 
 Rust cannot make port I/O, MMIO, page-table mutation, register programming, or
 context switching safe; those operations remain `unsafe` regardless of
-language. Rewriting proved C merely to increase the Rust percentage would add
-ABI and toolchain surface without reducing the underlying hardware risk.
-
-The boundary may grow when Sapote adds a genuinely untrusted structured stream,
-such as network packets or broader USB descriptors. It should not grow because
-a machine-facing subsystem happens to need new code.
+language. The Rust boundary is reserved for structured, untrusted input where
+checked parsing reduces risk. Machine-facing work stays in C and assembly.
 
 ## Adding a parser
 

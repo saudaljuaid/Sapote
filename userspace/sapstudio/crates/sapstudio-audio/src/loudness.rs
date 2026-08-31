@@ -1,38 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Loudness, as ITU-R BS.1770 and EBU R 128 define it.
+//! ITU-R BS.1770 and EBU R 128 loudness measurement.
 //!
-//! A peak meter says how close a signal came to the rails. It says almost
-//! nothing about how loud the programme sounds, which is why a quiet film and
-//! a loud advertisement can peak identically and one of them makes people
-//! reach for the remote. Loudness measurement is what delivery specifications
-//! are written in, and it is a different measurement with a different answer.
-//!
-//! The measurement is three things in order.
-//!
-//! **K-weighting.** Two biquads: a high shelf standing in for the way a head
-//! shadows and reinforces sound arriving from in front, then a high-pass that
-//! discards the rumble the ear largely ignores. The coefficients are the ones
-//! BS.1770-4 prints, held as exact decimals rather than as rounded binary.
-//!
-//! **Mean square, weighted and summed.** Each channel's weighted mean square
-//! is added, and the total becomes a level: `-0.691 + 10 log10(sum)`. That
-//! offset is not arbitrary — the K-weighting has about 0.698 dB of gain at
-//! 1 kHz, and the offset very nearly cancels it, so a 1 kHz tone reads at the
-//! level it was recorded at. The two together are why a −23 dBFS tone reads
-//! −23.0 LUFS, and that is the standard's own first compliance case.
-//!
-//! **Gating.** The programme is cut into 400-millisecond blocks overlapping by
-//! three quarters. Blocks quieter than −70 LUFS are discarded outright, then a
-//! second threshold is set ten units below what remains and the blocks below
-//! *that* are discarded too. Without gating, a minute of silence before the
-//! titles would drag a whole programme's measured loudness down, and the fix
-//! would be to trim the silence rather than to mix it better.
-//!
-//! Everything is integer arithmetic, at [`sapstudio_core::WIDE_BITS`]
-//! fractional bits inside the filter. A biquad is a feedback loop, so its
-//! precision is not a matter of taste: the high-pass has a pole at 0.995, and
-//! at thirty-two fractional bits the coefficient rounding alone would move it
-//! enough to matter.
+//! Audio passes through the standard K-weighting filters, then weighted channel
+//! mean squares are converted with `-0.691 + 10 log10(sum)`. Integrated
+//! loudness uses 400 ms blocks with 75% overlap, a -70 LUFS absolute gate, and
+//! a relative gate 10 LU below the ungated mean. Filter arithmetic uses
+//! [`sapstudio_core::WIDE_BITS`] fractional bits.
 
 use alloc::vec::Vec;
 

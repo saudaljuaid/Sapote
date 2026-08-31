@@ -132,16 +132,10 @@ fn a_flat_field_survives_every_scale() {
 fn halving_a_picture_averages_each_two_by_two_block() {
     // The defining case for area filtering, and the arithmetic is in *light*.
     //
-    // The values are 64 and 192 rather than black and white, and that is the
-    // whole point. Black and white are exactly where the transfer is the
-    // identity, so a checkerboard of them averages to 188 whether the
-    // averaging happens in light or in code values -- it cannot tell the two
-    // apart. The first version of this test used one, and the control that
-    // replaces the decode with a straight division passed against it.
+    // Values 64 and 192 distinguish linear-light averaging from code-value
+    // averaging. Black and white do not distinguish those paths.
     //
-    // At 64 and 192 the answers separate: the light mean encodes to **146**,
-    // and the mean of the code values is 128. Eighteen apart, in the
-    // direction that makes a picture *darker* every time it is reduced.
+    // The linear-light mean encodes to 146; the code-value mean is 128.
     let source = drawn(2, 2, |x, y| {
         if (x + y) % 2 == 0 {
             [192, 192, 192, 255]

@@ -1,39 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Writing a frame out as a PNG, so that a failure can be *looked at*.
+//! Minimal PNG output for visual render-test references.
 //!
-//! [`crate::sprw`] is the format this project keeps frames in. This is not
-//! that. A golden render test compares a digest, and when a digest changes the
-//! only thing it tells you is that something did — so
-//! [`docs/VERIFICATION.md`] requires a reference frame stored beside every
-//! golden hash, and until this existed there was nothing to store.
+//! The writer supports 8-bit grayscale, RGB, and RGBA without interlacing,
+//! palettes, ancillary chunks, or compression. It emits legal DEFLATE stored
+//! blocks so the output stays easy to inspect.
 //!
-//! # Deliberately minimal, and deliberately not the runtime's PNG
-//!
-//! Eight-bit greyscale, red-green-blue, and red-green-blue-alpha; no
-//! interlacing, no palette, no ancillary chunks, and no compression at all.
-//! The `IDAT` stream is a legal zlib stream made of DEFLATE *stored* blocks,
-//! which is the compression method that does nothing — so the file is a little
-//! larger than the pixels and every byte of it can be read by hand.
-//!
-//! [`docs/DEPENDENCIES.md`] plans to adopt the `png` crate for the runtime,
-//! and this does not pre-empt that. Decoding somebody else's PNG is a
-//! hostile-input problem with sixteen-bit channels, interlacing, palettes and
-//! a dozen ancillary chunks; writing one small picture of our own for a human
-//! to look at is a different job with none of those, and it needed no
-//! dependency and no import gate to exist today.
-//!
-//! # PNG's alpha is straight, and this refuses to guess
-//!
-//! A PNG stores non-premultiplied colour. A premultiplied frame written out as
-//! though it were straight is a picture darker than the one that was
-//! rendered — worst exactly where coverage is lowest, which is the edge
-//! somebody is usually looking at.
-//!
-//! Undoing the association here would be lossy, and lossy in a reference
-//! capture is worse than anywhere else: the whole point is to see what
-//! actually happened. So a premultiplied frame is refused by name, and
-//! [`sapstudio_render::unpremultiply`] is the caller's step to take and to
-//! know the cost of.
+//! PNG uses straight alpha. Premultiplied input is rejected; callers may use
+//! [`sapstudio_render::unpremultiply`] explicitly before writing.
 
 use alloc::vec::Vec;
 
@@ -62,7 +35,7 @@ const STORED_BLOCK: usize = 65_535;
 /// [`IoStatus::PngFormatUnsupported`] for a format that is not eight-bit grey,
 /// red-green-blue, or red-green-blue-alpha — a luma-chroma frame needs the
 /// matrix taken out of it first, which is a named step and
-/// [`sapstudio_render::convert`] is where it lives.
+/// [`sapstudio_render::convert()`] is where it lives.
 /// [`IoStatus::PngPremultiplied`] for premultiplied coverage.
 /// [`IoStatus::PayloadTooLarge`] past [`MAX_CAPTURE_BYTES`].
 pub fn encode(frame: &Frame) -> Result<Vec<u8>> {

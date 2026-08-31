@@ -179,18 +179,9 @@ fn look_at(project: &mut Project, sequence: sapstudio_model::SequenceId) {
         .expect("a strength");
 }
 
-/// Frame one clip and animate all four lanes of its framing.
+/// Animate all four framing lanes in the shared format fixture.
 ///
-/// The sweeps below run over `sample`, and until this existed **no motion was
-/// in the file they sweep at all** — the motion tests build their own project,
-/// so every byte of every lane was covered by a round trip and by nothing
-/// else. That is the gap this file's own note about fixtures describes, sitting
-/// in the file since M8.10 and found by asking where the turn's new lane would
-/// be swept.
-///
-/// All four lanes, with an ease among the keyframes, because an ease is the
-/// only interpolation that writes anything after its tag — and a format bug in
-/// a variable-length record reads the next field as part of this one.
+/// The ease keyframe gives the variable-length interpolation record payload.
 fn frame_up(project: &mut Project, sequence: sapstudio_model::SequenceId) {
     project
         .apply(
@@ -263,12 +254,8 @@ fn frame_up(project: &mut Project, sequence: sapstudio_model::SequenceId) {
 
 /// Put a curve on each automation lane.
 ///
-/// Separate from the fixture only because the fixture had grown past what one
-/// function should hold. Both lanes are animated, and that is the point: the
-/// sweeps below cover bytes that are actually written, so a lane left empty
-/// here is a lane the format could forget entirely without a test noticing.
-/// It did — the first version of this animated only the picture track, and
-/// dropping the level curve from the writer broke nothing at all.
+/// Both picture and sound lanes are populated so the byte sweeps cover every
+/// automation record written by the format.
 fn animate(project: &mut Project, sequence: sapstudio_model::SequenceId) {
     // An ease rather than a linear on at least one keyframe, because it is the
     // only interpolation that writes anything after its tag — and a format bug
@@ -1050,12 +1037,8 @@ fn a_file_whose_dissolve_the_model_would_refuse_is_refused() {
 
 #[test]
 fn a_wipe_survives_the_file_with_its_direction() {
-    // Version seven's whole reason. A transition used to be a boundary and a
-    // length, and reading one back could only produce a dissolve because that
-    // was the only kind there was. The tag says which, and the direction is
-    // written as two rationals rather than an angle, so a wipe drawn at a
-    // third of a turn is the same wipe when it comes back rather than a
-    // rounding of one.
+    // The transition tag preserves its kind. Two rational direction components
+    // preserve the wipe orientation without angle rounding.
     use sapstudio_model::{Transition, TransitionKind, Wipe};
 
     let mut project = Project::new();
@@ -2446,11 +2429,7 @@ fn a_speed_tag_this_build_does_not_read_is_refused() {
 
 #[test]
 fn a_file_holding_a_clip_stopped_at_no_speed_is_refused() {
-    // Through the model's own constructor, like everything else. The name of
-    // this test used to say "frozen", which stopped being right the day a
-    // freeze became a tag of its own: a still is `SPEED_FROZEN` and carries no
-    // number, and a *speed* of nought is a number that means nothing. Only the
-    // second is what this refuses.
+    // Frozen playback has its own tag; a numeric speed of zero is invalid.
     let project = retimed(Rational::new(1, 2).expect("a half"));
     let file = encode(&project).expect("an encoding");
     let mut wanted = std::vec::Vec::new();

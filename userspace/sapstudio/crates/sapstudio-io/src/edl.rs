@@ -1,11 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! CMX 3600: the edit decision list every system still speaks.
-//!
-//! It is a text file designed in the 1970s for a machine that drove tape
-//! decks, and it is still how a cut moves between two applications that agree
-//! on nothing else. Reading one is a parser problem; writing one is a
-//! discipline problem, because the format loses information and the only
-//! honest thing to do is lose it deliberately.
+//! Read and write CMX 3600 edit decision lists.
 //!
 //! ```text
 //! TITLE:   REEL ONE
@@ -14,29 +8,10 @@
 //! 002  AX       V     C        00:02:46:24 00:03:16:26 00:00:58:10 00:01:28:12
 //! ```
 //!
-//! Four things about it are traps, and each has a test named after it.
-//!
-//! **The out point is exclusive.** `00:00:10:00` as a source out means the
-//! last frame used is `00:00:09:23` at 24. An importer that treats it as
-//! inclusive makes every clip one frame too long, which is the single most
-//! common EDL bug in existence and is invisible until something goes to air.
-//!
-//! **`FCM` is stateful.** It applies to every event after it until the next
-//! one, so a file that switches modes halfway through has two kinds of
-//! timecode in it. A parser that reads the first `FCM` and forgets to watch
-//! for more mistimes the second half of the reel.
-//!
-//! **Drop-frame is punctuation.** A semicolon before the frames field means
-//! drop-frame, a colon means non-drop, and some systems write the semicolon
-//! and no `FCM` line at all. When the two disagree, this parser refuses
-//! rather than picking one (R-1.3): they are two statements about the same
-//! fact, and a file that makes both cannot be read without guessing.
-//!
-//! **A reel name is eight characters.** Not a path, not a filename — eight.
-//! Writing an EDL therefore *loses* the identity of the source, which is why
-//! the `FROM CLIP NAME` comment exists and why this writer emits it. It is a
-//! comment, so nothing is obliged to read it, and that is the format's
-//! problem rather than something to paper over.
+//! Source out points are exclusive. `FCM` state applies until replaced, and
+//! drop-frame punctuation must agree with it when both are present. Reel names
+//! are limited to eight characters, so the writer also emits a `FROM CLIP NAME`
+//! comment with the fuller source identity.
 
 use alloc::string::String;
 use alloc::vec::Vec;

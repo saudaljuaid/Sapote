@@ -1,60 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Three-dimensional colour lookup tables: the form a grade travels in.
+//! Three-dimensional colour lookup tables.
 //!
-//! A look — a film emulation, a show LUT, a camera's log-to-display
-//! transform — is a function from colour to colour that nobody can write down
-//! as an equation. So it is *sampled*: a cube of `size³` output colours, one
-//! at each lattice point of the input space, and everything between them is
-//! interpolated. Thirty-three to a side is the common case, which is 35,937
-//! samples for a function of three variables.
-//!
-//! # Why tetrahedral rather than trilinear
-//!
-//! Between eight surrounding samples there is more than one defensible answer,
-//! and the two in use are not equally good.
-//!
-//! **Trilinear** takes all eight corners of the cell, weighted by the
-//! fractional position. It is the obvious generalisation of a linear
-//! interpolation and it has a fault that shows on the one part of the picture
-//! everybody looks at: a grey.
-//!
-//! **Tetrahedral** cuts the cell into six tetrahedra along the plane
-//! diagonals, picks the one containing the sample by the *ordering* of the
-//! three fractions, and interpolates between its four vertices. On the neutral
-//! axis — where red, green and blue are equal — the four terms telescope and
-//! the result collapses to a straight interpolation between the two diagonal
-//! corners of the cell:
-//!
-//! ```text
-//! c000 + (c100-c000)f + (c110-c100)f + (c111-c110)f  =  c000 + (c111-c000)f
-//! ```
-//!
-//! So if the table is neutral along its own diagonal, **every grey stays
-//! grey** — exactly, and in this build even in fixed point, because all three
-//! channels then compute the identical expression and round identically.
-//! Trilinear on the same input mixes all eight corners and drifts off neutral
-//! wherever the table has any cross-channel content at all, which every real
-//! look does. A grade that tints the greys is the first thing a colourist
-//! notices and the last thing anybody wants to explain.
-//!
-//! Both are implemented here, and the trilinear one exists to be *failed*:
-//! `a_grey_stays_grey_only_under_tetrahedral` runs the same table through both
-//! and asserts the difference. A design decision with no test showing what the
-//! rejected option does is a preference rather than a decision.
-//!
-//! # Why fixed point rather than exact rationals
-//!
-//! A lookup table is a sampled function. The error from sampling a smooth
-//! transform at thirty-three points is orders of magnitude larger than
-//! anything [`Fixed`] loses, so exact rational arithmetic here would be
-//! precision spent where it cannot be observed — and paid for with a greatest
-//! common divisor on every operation, per pixel.
-//!
-//! Where exactness *is* observable it survives anyway, which is the part worth
-//! checking rather than asserting. A sample exactly on a lattice point comes
-//! back as that point's value untouched, because every weight is nought or one
-//! and nothing is multiplied. And a neutral input stays neutral, because the
-//! three channels evaluate the same expression.
+//! A table stores `size³` colour samples and interpolates between them. Both
+//! trilinear and tetrahedral interpolation are available. Tetrahedral
+//! interpolation follows four vertices and preserves a neutral table's grey
+//! axis exactly. Fixed-point arithmetic is sufficient for the sampled data and
+//! keeps lattice points unchanged.
 
 use alloc::vec::Vec;
 

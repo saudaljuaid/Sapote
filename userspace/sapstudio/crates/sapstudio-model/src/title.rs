@@ -1,49 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! A picture the program makes out of words.
+//! Generated title media.
 //!
-//! ## A title is media
-//!
-//! Not a new kind of item, and not a property of a clip. It is a media asset
-//! like any other, and a clip cuts from it like any other — which is the whole
-//! point. Trimming, rolling, sliding, dissolving, masking, grading, moving and
-//! animating a title all work already and none of them had to be told what a
-//! title is. A title that were its own kind of item would need every one of
-//! those written again, and would get one of them subtly wrong.
-//!
-//! What separates it from recorded media is only where the frames come from:
-//! a recording is bytes somewhere and this is a description the program can
-//! draw. That difference lives in [`crate::media::MediaSource`], and the
-//! *planner* is what acts on it — the same place the offline fallback lives,
-//! and for the same reason: a graph node that decided for itself whether to
-//! fetch or to draw would be a node whose cache key did not say which it did.
-//!
-//! ## Named by what it says
-//!
-//! A title's digest is the digest of its own description. That is not a
-//! convenience, it is what content addressing already meant: the same title in
-//! two projects is the same title, two clips of it share a cached frame, and
-//! changing a word makes a different asset rather than quietly changing what
-//! every clip of it shows.
-//!
-//! It also means a title cannot be *relinked*, and does not need to be. There
-//! is nothing to find.
-//!
-//! ## Its colour is named in light
-//!
-//! A title was white for two milestones, and the reason given was a good one:
-//! three bytes in a model that has never held a colour would be three bytes in
-//! *which encoding*, and answering that is the colour pipeline's job with a
-//! name on it rather than a silent assumption in a struct (R-8.3).
-//!
-//! The way out is not to store bytes. An [`Ink`] is three fractions of **full
-//! light**, which is the domain the compositor already works in and the domain
-//! every transfer table converts to and from. A colour named that way means
-//! the same thing in sRGB, in Rec. 709 and in a linear working space; the
-//! encoding happens once, at the frame, through that frame's own table.
-//!
-//! Grading a title still works and is still the right tool for a *look*. It is
-//! the wrong tool for "make this caption yellow", which needed a lookup table
-//! authored in an encoding and a file on disk to say one thing about one card.
+//! Titles are media assets, so normal clip edits, transitions, masks, grades,
+//! and transforms apply without a separate item type. Their digest covers the
+//! complete description, which makes identical titles shareable and changed
+//! text a new asset. [`Ink`] stores colour as fractions of full light; encoding
+//! happens when the title is rendered into a frame.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -138,10 +100,7 @@ impl Ink {
         [self.red, self.green, self.blue]
     }
 
-    /// Whether this is full light in every channel.
-    ///
-    /// Worth asking for the reason a still transform is: a title nobody has
-    /// coloured should cost nothing to say so, in the file and in the digest.
+    /// Whether every channel is at full intensity.
     #[must_use]
     pub fn is_white(&self) -> bool {
         *self == Self::WHITE
@@ -160,21 +119,15 @@ pub struct Title {
 }
 
 impl Title {
-    /// A line of type, at a size and a place, in fractions of the frame.
+    /// Create title text with frame-relative size and position.
     ///
-    /// `size` is the em as a fraction of the frame's **height**, and `across`
-    /// and `down` are where the middle of the line sits as fractions of the
-    /// width and the height. Fractions rather than pixels, for the reason a
-    /// transform's move is: a title laid out on a proxy is the same title on
-    /// the finish, rather than a pixel count that stopped meaning the same
-    /// thing when the picture got bigger.
+    /// `size` is an em relative to frame height. `across` and `down` locate the
+    /// line center relative to frame width and height.
     ///
     /// # Errors
     ///
-    /// [`ModelStatus::EmptyTitle`] if every line is empty — a card that says
-    /// nothing is a gap, and saying so is better than holding a picture that
-    /// draws nothing and claims to be a title. One *blank line among others*
-    /// is fine and is how a card puts air between two stanzas.
+    /// [`ModelStatus::EmptyTitle`] if every line is empty. Blank lines are
+    /// allowed between non-empty lines.
     /// [`ModelStatus::TitleTooLong`] past [`MAX_TITLE_TEXT`] on any line or
     /// [`MAX_TITLE_LINES`] lines.
     /// [`ModelStatus::TypeNotPositive`] for type at or below no size.
@@ -209,12 +162,7 @@ impl Title {
         })
     }
 
-    /// The same card in a different colour.
-    ///
-    /// A separate call rather than a seventh argument to [`Title::new`],
-    /// because a title's colour is the one thing about it that has a right
-    /// answer when nobody chooses: white is what type has always been here,
-    /// and every card written before this existed still means what it said.
+    /// Return this title in another color. New titles default to white.
     #[must_use]
     pub fn with_ink(&self, ink: Ink) -> Self {
         Self {

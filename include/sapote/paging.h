@@ -112,13 +112,8 @@
 #define PAGING_PROBE_ADDRESS UINT64_C(0x0000000200000000)
 
 /*
- * How much of a firmware-declared PCI Express configuration window Sapote makes
- * uncacheable and therefore readable as configuration space. One 2 MiB region,
- * because that is the unit the identity map is carved in: a device window is a
- * whole such region turned into 4 KiB pages, and one region is two buses of
- * configuration space, which is every bus any machine Sapote is tested on
- * populates. Reaching further needs the window mapped somewhere of its own, and
- * that is a later increment; src/kernel/pci.c reads no further than this.
+ * Map one 2 MiB ECAM region uncached, covering two PCI buses. This matches the
+ * identity-map carving unit and the range used by src/kernel/pci.c.
  */
 #define PAGING_ECAM_WINDOW_SIZE PAGING_HUGE_PAGE_SIZE
 
@@ -219,10 +214,7 @@ enum paging_device_window_kind {
     PAGING_DEVICE_WINDOW_KIND_COUNT
 };
 
-/*
- * Device access is semantic too. Execute and user access are deliberately not
- * representable, so neither can enter the hierarchy through this registry.
- */
+/* Device windows can be read-only or writable, but never executable or user-accessible. */
 enum paging_device_window_permissions {
     PAGING_DEVICE_WINDOW_READ = 0U,
     PAGING_DEVICE_WINDOW_WRITE = 1U << 0

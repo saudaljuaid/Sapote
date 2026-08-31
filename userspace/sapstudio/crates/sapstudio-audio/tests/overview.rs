@@ -1,14 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! What a waveform drawing is allowed to claim.
+//! Waveform overview tests using deterministic, uneven sample data.
 //!
-//! The fixtures here are deliberately not tones. A summary's job is to survive
-//! the awkward material — a single click in near silence, a signal that leans
-//! one way, a clip whose last block is a third full — and a sine is symmetric,
-//! dense, and the same in every block, which is to say it exercises almost
-//! none of it.
-//!
-//! Every generator here is an integer recurrence, so the fixtures are
-//! bit-identical on every machine without shipping a file.
+//! The fixtures cover isolated peaks, asymmetric signals, and partial blocks.
 
 use sapstudio_audio::MAX_SAMPLES;
 use sapstudio_audio::overview::{FANOUT, MAX_BUCKET, MIN_BUCKET, Overview};
@@ -420,11 +413,7 @@ fn a_width_cannot_run_off_the_end_of_a_usize() {
     // largest buffer this crate accepts, and it is nowhere near the end of a
     // `usize`.
     //
-    // This is a test rather than a branch inside the function because the
-    // branch could not be reached, and an unreachable branch is a claim
-    // nothing checks. If somebody later raises `MAX_SAMPLES` or `MAX_BUCKET`
-    // past what a `usize` holds, this fails and says so, where the branch
-    // would have wrapped a block width to nought and drawn silence.
+    // Keep the policy bounds representable by `usize` at every overview level.
     let deepest = MAX_SAMPLES.div_ceil(MIN_BUCKET);
     let mut levels = 1;
     let mut count = deepest;

@@ -198,9 +198,9 @@ embedded-key fallback.
 
 The existing `install-system` command writes the legacy FAT32 System image and
 therefore refuses version 3 after authenticating it. The bounded guest
-`package_manager.c` parser now admits these bytes through caller-supplied trust
-callbacks and binds them to signed repository metadata; it does not yet have an
-in-kernel Ed25519 provider, extract files, commit an installed generation, or
-expose a package CLI. The ELF shared-library loader consumes the older installed
+`package_manager.c` parser admits these bytes through caller-supplied trust
+callbacks and binds them to signed repository metadata. Ed25519 provisioning,
+extraction, generation commits, and client commands are separate package-service
+operations. The ELF shared-library loader consumes the older installed
 System package/catalog profile independently. See
 [`PACKAGE_MANAGER.md`](PACKAGE_MANAGER.md).

@@ -34,9 +34,8 @@
   validator and device-model tests.
 - Increased the QEMU suite to 101 scenarios.
 
-The process layer does not yet provide `fork`, `exec`, signals, process IDs,
-IPC, or preemptive user scheduling. HD Audio does not stream samples. The
-NVIDIA layer does not perform graphics acceleration or mode setting.
+This release omitted `fork`, `exec`, signals, process IDs, IPC, preemptive user
+scheduling, HD Audio streaming, NVIDIA graphics acceleration, and mode setting.
 
 ## 2.1.0
 

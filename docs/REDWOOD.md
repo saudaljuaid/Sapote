@@ -61,8 +61,8 @@ Camera has a preview, connection status, and shutter. A double-buffered RGB888
 provider publishes complete 320×180 frames; capture writes the next available
 `PHOTO00.BMP` through `PHOTO99.BMP` to the data volume.
 
-The standard QEMU configuration has no webcam and xHCI does not yet provide a
-UVC streaming transport. Camera therefore reports `No camera connected`.
+The standard QEMU profile has no webcam or UVC transport, so Camera reports
+`No camera connected`.
 
 ### Canvas
 
@@ -91,9 +91,8 @@ volume, trim and save a project, and export the selected frame as a 24-bit BMP
 up to 320×180.
 
 The vendored editor foundation contains the project model, timecode, render
-graph, compositing, audio, LUT, EDL, mask, transition, and freestanding-image
-code. Compressed video decoding, timed playback, audio output, and rendered
-video export are not yet connected to Redwood.
+graph, compositing, audio, LUT, EDL, mask, transition, and freestanding image.
+Redwood's integrated workspace exposes the BMP workflow described above.
 
 ## Demo capture
 
@@ -108,8 +107,7 @@ checks the retained data image after shutdown.
 
 ## Limits
 
-Redwood has six fixed applications, six windows, one supported display
-geometry, printable-ASCII text, and no general graphical application ABI. It
-does not yet provide physical camera streaming, accessibility services,
-international text shaping, compressed media, timed video playback, audio
-playback, or rendered video export.
+Redwood has six integrated applications, six windows, one supported display
+geometry, and printable-ASCII text. Its integrated Camera and SapStudio
+workspaces use the bounded capture and BMP workflows described above. Native
+applications use the separate window and input ABI.

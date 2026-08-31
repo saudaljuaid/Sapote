@@ -2,7 +2,7 @@
 
 # UTC wall clock
 
-Sapote exposes two clocks with deliberately different contracts:
+Sapote exposes two clocks with different contracts:
 
 - `clock_monotonic_ns()` is elapsed nanoseconds since boot and remains the only
   source for deadlines, sleeps, cancellation, retry budgets, and animation.

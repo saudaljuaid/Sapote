@@ -1,33 +1,11 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /*
- * Five bounded drivers for the register contracts an NVIDIA board publishes.
+ * Bounded NVIDIA PCI, MMIO, timer, and video-BIOS identification probes.
+ * Register definitions come from envytools, Nouveau, NVK, NVIDIA's open
+ * modules, and the PCI specifications listed in docs/NVIDIA.md.
  *
- * Sapote has thirteen bounded drivers already, and every one of them was
- * written the same way: read the registers the vendor's own document says
- * carry the device's identity, check what came back against a property that
- * document guarantees, and refuse the device rather than report whatever was
- * found. NVIDIA publishes no such document for its graphics parts. What exists
- * instead is a body of public material that is, in aggregate, better evidence
- * than a datasheet: the envytools project's reverse-engineered register
- * database, the Nouveau driver that has run on this silicon in the Linux tree
- * for fifteen years, Mesa's NVK back end, and NVIDIA's own open GPU kernel
- * modules and published headers. Every offset and every rule below comes from
- * that material, and the comment above each one says which part of it.
- *
- * The honest limit, stated once here and again in docs/NVIDIA.md: none of this
- * has touched NVIDIA silicon. No such device was reachable from the machine
- * this was written on, and QEMU models none, so the bind path is code that has
- * never run against the hardware it describes. What is proved on every boot is
- * everything that does not need the device -- the identity decode against the
- * published encoding, the VBIOS parser against a reference image pinned three
- * independent ways, the refusal of every function that is not NVIDIA's, and a
- * resource census that is identical afterwards.
- *
- * No driver here enables bus mastering or allocates DMA, so none of them can
- * reach memory: without an IOMMU that is the difference between a driver that
- * cannot corrupt the kernel and one that is merely not expected to. Exactly
- * one of them writes a register -- the ROM shadow-disable bit the PROM window
- * requires -- and it restores what it found and reads it back to prove it.
+ * Bus mastering stays disabled and no probe allocates DMA. The video-BIOS
+ * probe temporarily changes the ROM shadow bit and restores it before return.
  */
 #include <stdbool.h>
 #include <stddef.h>
@@ -1059,15 +1037,7 @@ static enum nvidia_status probe_express_link(
     return NVIDIA_STATUS_OK;
 }
 
-/*
- * Driver nine. Configuration space only, like driver eight, and the last fact
- * about the part that is not about the chip: which board it is on. NVIDIA
- * sells this silicon to add-in-board partners, so a card's subsystem vendor is
- * theirs rather than NVIDIA's, and the subsystem device is the model of card.
- *
- * Sapote already drives xHCI properly, so the USB host controller such a board
- * also carries is deliberately not a second, lesser driver here.
- */
+/* Driver nine: validate the add-in board's subsystem identity. */
 static enum nvidia_status probe_board_identity(
     const struct nvidia_driver_record *record,
     const struct pci_function *function,
@@ -1090,11 +1060,7 @@ static enum nvidia_status probe_board_identity(
     }
     probe->identity = subsystem;
     probe->detail = identity;
-    /*
-     * A board that reports no subsystem at all, or an open bus, has not
-     * answered. Every other value is a real partner identifier and this kernel
-     * has no business having opinions about which ones exist.
-     */
+    /* Reject absent and open-bus subsystem identifiers. */
     if (subsystem == 0U || subsystem == UINT32_MAX ||
         (subsystem & UINT32_C(0xFFFF)) == 0U ||
         (subsystem & UINT32_C(0xFFFF)) == UINT32_C(0xFFFF)) {
@@ -1107,20 +1073,7 @@ static enum nvidia_status probe_board_identity(
     return NVIDIA_STATUS_OK;
 }
 
-/*
- * Driver ten, and the first of three in a row that read a capability every PCI
- * function carries rather than anything NVIDIA-specific. Driver eight is a
- * fourth of that kind. Their place in a set of NVIDIA drivers is as
- * cross-checks and not as vendor knowledge, which docs/NVIDIA.md says outright
- * rather than counting them as expertise they are not.
- *
- * This one asks the function what power state it is in, and the only answer
- * consistent with drivers zero through seven having just read its
- * memory-mapped registers is D0, because every lower state turns that decoder
- * off. A function that says otherwise is one whose configuration space and
- * whose register window disagree about what it is doing, and that is worth
- * refusing over.
- */
+/* Driver ten: require a valid power-management capability in D0. */
 static enum nvidia_status probe_power_management(
     const struct nvidia_driver_record *record,
     const struct pci_function *function,
@@ -1227,22 +1180,8 @@ static enum nvidia_status probe_message_interrupts(
 }
 
 /*
- * Driver twelve. Configuration space only, and the other half of the Express
- * capability driver eight reads: what kind of port this is, and how large a
- * transaction it agreed to accept.
- *
- * A graphics function is an endpoint, and the specification gives endpoints
- * three encodings rather than one: a plain endpoint behind a root port or a
- * switch, a legacy endpoint, and a root complex integrated endpoint for a part
- * that hangs off the root complex with no port above it. All three are
- * accepted here. What is refused is everything that is not an endpoint at all
- * -- a root port, either kind of switch port, either kind of bridge, an event
- * collector -- because a function answering to the display class while
- * describing itself as a port is not the thing this kernel went looking for.
- *
- * And a function programmed to accept a payload larger than it says it
- * supports has been misconfigured by whatever ran before this kernel, which is
- * worth knowing before anything is asked of it.
+ * Driver twelve: accept PCIe endpoint encodings and verify that the configured
+ * payload size does not exceed the advertised maximum.
  */
 static enum nvidia_status probe_express_device(
     const struct nvidia_driver_record *record,

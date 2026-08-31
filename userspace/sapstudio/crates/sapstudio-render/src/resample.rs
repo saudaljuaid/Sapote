@@ -1,56 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Moving a picture: scaling, positioning, and the arithmetic in between.
+//! Scale and position frames.
 //!
-//! Scaling a clip is the most-used operation in an editor after cutting, and
-//! it is the one where "looks about right" hides the most. Two decisions
-//! decide whether it is right, and both are the same shape as the ones
-//! [`crate::composite`] already made.
-//!
-//! ## In what space?
-//!
-//! **Linear light.** A resampled pixel is a *weighted average of what was
-//! there*, and an average is only meaningful over quantities that add — which
-//! light does and code values do not. Averaging gamma-encoded values makes a
-//! reduced picture darker than the one it came from, most visibly on fine
-//! bright detail against dark: the highlights lose more than they should
-//! because they were compressed before being averaged. So every sample is
-//! decoded, weighted, summed and encoded back, exactly as `over` does.
-//!
-//! ## Straight or premultiplied?
-//!
-//! **Premultiplied, and nothing else.** Averaging straight samples across an
-//! edge mixes the colour of pixels that are barely there with the colour of
-//! pixels that are fully there, at equal weight — so a title over black picks
-//! up a dark fringe from the transparent pixels beyond its edge, which held
-//! whatever colour happened to be in the buffer. In premultiplied form a
-//! transparent pixel contributes nothing to the colour sum because its colour
-//! *is* nothing, which is the whole reason the form exists.
-//!
-//! ## The map runs backwards
-//!
-//! A caller says what they want — twice the size, shifted right — and that is
-//! a **forward** map from source to destination. A resampler needs the
-//! opposite: for each destination pixel, which part of the source landed on
-//! it. So [`Mapping::new`] takes the forward map and inverts it, exactly,
-//! because a rational two-by-two inverse is a determinant and four divisions.
-//! A map that squashes the picture to a line has no inverse and is refused.
-//!
-//! ## Two filters, and what each is for
-//!
-//! [`Filter::Area`] gives every destination pixel the **exact area-weighted
-//! average** of the source it covers. That is the correct answer for
-//! *reduction*: a destination pixel really is standing in for a region, and
-//! this is that region's mean. Point sampling instead is what makes a reduced
-//! picture shimmer, because which source pixel each destination pixel happens
-//! to land on changes as the picture moves.
-//!
-//! It is also, honestly, a poor filter for *enlargement*: a destination pixel
-//! that falls entirely inside one source pixel gets that pixel's value and
-//! nothing else, which is nearest-neighbour with extra arithmetic. That is
-//! what [`Filter::Bilinear`] is for, and choosing between them is the
-//! caller's rather than a heuristic's, because a heuristic that switched on a
-//! scale factor would change a picture's look at the moment somebody dragged
-//! past 100%.
+//! Resampling works on premultiplied samples in linear light. [`Mapping::new`]
+//! inverts the caller's source-to-destination transform so each destination
+//! pixel can find its source region. Singular transforms are rejected.
+//! [`Filter::Area`] is intended for reduction; [`Filter::Bilinear`] is intended
+//! for enlargement. The caller selects the filter explicitly.
 
 use alloc::vec::Vec;
 
@@ -163,36 +118,12 @@ impl Mapping {
         Self::new([across, Rational::ZERO, Rational::ZERO, down], offset)
     }
 
-    /// A dimensionless map about a point of a picture, with a move in
-    /// fractions of it.
+    /// Build a frame-relative transform about an anchor.
     ///
-    /// This is the shape a *transform* has, as opposed to the raw pixel-space
-    /// map [`Mapping::new`] takes: the linear part means the same thing at
-    /// every resolution, the move is a fraction rather than a pixel count, and
-    /// it acts about a named point rather than about the corner. Scaling about
-    /// the corner is what the arithmetic does if nobody decides otherwise, and
-    /// it sends the picture sliding off to the lower right the moment somebody
-    /// drags a scale slider.
-    ///
-    /// The anchor is in **fractions** of the picture, so a half and a half is
-    /// the middle and nought is the top-left corner. It is not required to be
-    /// inside the picture.
-    ///
-    /// ## Why the anchor cannot be folded into the offset
-    ///
-    /// It looks as though it could. Acting about `a` rather than about the
-    /// centre `c` contributes `(a − c) − M(a − c)`, which is a translation,
-    /// and the caller already passes one — so a model could add the two and
-    /// this function would never need to know.
-    ///
-    /// That is true in **pixels** and false in **fractions**, which is the
-    /// only place the model could do it. The vector from the centre to the
-    /// anchor is `(W·Δx, H·Δy)`, and `M` mixes the two components; dividing
-    /// the result back by `(W, H)` per axis does not undo that unless `M` is
-    /// diagonal. So the folding is exact for a scale, exact for a move, and
-    /// **wrong for every rotation** — which is to say, wrong for the case the
-    /// anchor was added for. The anchor therefore arrives here, where the
-    /// pixel dimensions are known and the arithmetic is done once.
+    /// The linear part is dimensionless; offset and anchor are fractions of
+    /// the picture. The anchor may lie outside the frame. It is converted to
+    /// pixels here because folding a fractional anchor into the offset is not
+    /// correct for rotations on non-square frames.
     ///
     /// # Errors
     ///

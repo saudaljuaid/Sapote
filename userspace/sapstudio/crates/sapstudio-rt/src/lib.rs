@@ -40,12 +40,7 @@ unsafe extern "C" {
     static mut __bss_end: u8;
 }
 
-/// Zero the `.bss` section.
-///
-/// Sapote's loader maps a fresh frame for every writable page, and a fresh
-/// frame is zeroed. This does it anyway, because "the loader will have done
-/// it" is exactly the kind of assumption that survives until the day it does
-/// not, and clearing memory the program is about to own costs microseconds.
+/// Zero the `.bss` section without relying on loader page initialization.
 ///
 /// # Safety
 ///

@@ -1,28 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! A mask that animates: an iris, a vignette that breathes, a shape that
-//! sweeps a card on.
+//! Mask animation for irises, vignettes, and reveals.
 //!
-//! The framing has animated since M8.10 and the shape has not, which made
-//! "reveal this from behind an edge" a thing this model could describe only at
-//! a cut, as a wipe. A wipe is between two clips; this is about one.
-//!
-//! ## A uniform scale and a move, not the corners
-//!
-//! The same shape of answer M8.10 gave for the framing, and here the argument
-//! is sharper. A corner that moves on its own can turn a convex outline
-//! **concave** part way through, and this build computes an exact area only
-//! for a convex one — so per-corner animation would mean a refusal arriving at
-//! a *frame* rather than at the edit that caused it. A positive scale and a
-//! translation are a similarity: convex in, convex out, wound the same way,
-//! for every value the curves can take.
-//!
-//! ## About the mask's own centroid
-//!
-//! Not the frame's centre, which is right for a transform because a transform
-//! moves the whole picture and the picture's middle *is* the frame's. A mask
-//! is a shape somebody put somewhere, and scaling it about the frame's middle
-//! would slide it toward the middle while it grew — which reads as a bug in
-//! the animation rather than as a decision about which point is the middle.
+//! Animation uses positive scale and translation around the mask centroid, so
+//! convex masks remain convex throughout the move.
 
 use sapstudio_core::{Digest, Duration, Instant, Rational, Timebase};
 use sapstudio_model::{
@@ -270,10 +250,8 @@ fn the_layer_stack_hands_out_the_resolved_shape() {
 
 #[test]
 fn a_shape_can_sweep_a_card_on_from_its_left_edge() {
-    // What an animated mask is *for*, and the reason this milestone exists:
-    // a text reveal. A mask growing about its own centroid grows both ways, so
-    // a sweep is a scale and a move together -- which is exactly why the two
-    // lanes are separate rather than one "size" that has to mean both.
+    // A left-to-right reveal combines mask scale and translation because
+    // scaling about the centroid alone grows in both directions.
     //
     // A strip from nought to a quarter, scaled by `s` about its middle at 1/8,
     // has its left edge at `1/8 - s/8`. Moving it right by `(s - 1)/8` puts

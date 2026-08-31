@@ -1,78 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Conforming: a sequence becomes an edit decision list, and comes back.
+//! Convert between SapStudio sequences and edit decision lists.
 //!
-//! [`crate::edl`] reads and writes the file. This reads and writes the *cut*
-//! — it is the layer that knows a track from a channel, a clip from an event,
-//! and a dissolve centred on a cut from one written as a frame count beside
-//! an incoming source.
+//! [`crate::edl`] handles the text format. This module maps tracks, clips, and
+//! transitions to its records. A lossless export must survive
+//! export/write/parse/import with full [`Sequence`] equality.
 //!
-//! The whole of it is one claim, and it is stated as a theorem rather than as
-//! a hope:
+//! [`LeftBehind`] reports decorations that EDL cannot represent, such as
+//! grades and automation. Structural changes, including extra picture tracks,
+//! are rejected because they would describe a different edit.
 //!
-//! > If [`export`] leaves nothing behind, then writing its list, parsing it,
-//! > and [`import`]ing the result produces a sequence **equal** to the one
-//! > that went in.
+//! Reel names contain the first eight characters of the source digest, while
+//! `FROM CLIP NAME` carries the complete digest. Import requires both values to
+//! agree and resolves the digest through the project media library.
 //!
-//! Equal by `PartialEq` on the whole `Sequence` value — not a hand-written
-//! comparison of the fields somebody remembered to check. That is what makes
-//! [`LeftBehind`] load-bearing: it is the complete list of the ways the claim
-//! can fail to apply, so every field on it has a test showing that a sequence
-//! carrying that feature really does come back different.
-//!
-//! ## What is lost, and what is refused
-//!
-//! The two are different and the line between them is the one decision this
-//! module makes. **A grade, a fader, an automation curve — those decorate a
-//! cut that is still correct without them.** They are reported in
-//! [`LeftBehind`] and the list is still written. **A second picture track is
-//! not a decoration**: written to the format's one video channel, it would
-//! describe a *different* programme, so it is refused.
-//!
-//! The test of it: after a lossy export, the frames are in the right order at
-//! the right times and only look wrong. After a refused one, they would not
-//! have been.
-//!
-//! ## The reel name is the source digest
-//!
-//! Eight characters is what the format holds, so this writes the first eight
-//! of the media's content digest and puts the whole sixty-four in the
-//! `FROM CLIP NAME` comment. Two things follow.
-//!
-//! The comment is how [`import`] knows what a source *is*: without it there is
-//! nothing to look up, so it refuses rather than inventing an identity. That
-//! means this imports lists **this application wrote**. A list from another
-//! system parses fine — that is [`crate::edl::parse`]'s job — but conforming
-//! it needs a step that matches its reel names against a media library by
-//! hand, which is a question for a person and not for arithmetic.
-//!
-//! And the reel and the comment are then two statements about one fact, so
-//! when they disagree the list is refused — the same rule the parser already
-//! applies to drop-frame being stated by both the `FCM` line and the
-//! punctuation.
-//!
-//! ## Where the rate comes from
-//!
-//! Nowhere in the file. A CMX timecode has two digits for frames and says
-//! nothing about what it counts in, so both directions here are *told*: the
-//! timebase and the record start are arguments. Guessing the hour is the same
-//! mistake as guessing the rate — a list that begins at `01:00:00:00` is a
-//! programme starting at zero on a tape that starts at an hour, and reading it
-//! as an absolute position puts an hour of black at the head of the cut.
-//!
-//! Which means a label that arrives from [`crate::edl::parse`] carries a rate
-//! that is a *placeholder*: the parser labels everything at thirty, because it
-//! will not invent one either. [`import`] therefore relabels every timecode at
-//! the rate it was told before asking it for a frame number. Reading them as
-//! they stand counts a twenty-four frame cut at thirty and stretches the
-//! programme by a quarter — which this module did, on its first run, and which
-//! only the tests that go through the *text* could see. A round trip that
-//! hands the exported list straight back is not a round trip; it is a
-//! comparison of a value with itself, and it passed.
-//!
-//! There is one backstop, and it is not in the file. Told the wrong rate, the
-//! cut is built out of media the library knows the rate of, so a film cut
-//! conformed as PAL is refused by the model rather than accepted as a
-//! programme four per cent longer. The file cannot catch it; the project can.
+//! CMX does not encode a frame rate or record origin. Callers supply both, and
+//! import relabels parsed timecodes before converting them to frame numbers.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -601,17 +543,9 @@ fn resolve(project: &Project, list: &EditDecisionList) -> Result<Vec<MediaId>> {
     Ok(out)
 }
 
-/// The frame a label names, counted at the rate this import was told.
+/// Convert a parsed label using the frame rate supplied for this import.
 ///
-/// The parser labels every timecode at thirty, because the file does not say
-/// and it will not invent one — so the label that arrives here is four numbers
-/// and a rate that is a placeholder. Reading its frame number as it stands
-/// would count a twenty-four frame cut at thirty and stretch the programme by
-/// a quarter, which is the single mistake this whole module exists to avoid.
-///
-/// Relabelling refuses rather than wrapping: a frames field of `27` cannot
-/// count at twenty-four, so a list said to be a film cut and holding that
-/// label is not one, and `Timecode::new` says so.
+/// Relabeling also validates that the frame field fits the supplied rate.
 fn recount(label: Timecode, nominal: u32) -> Result<i64> {
     Timecode::new(
         label.hours(),
@@ -619,8 +553,7 @@ fn recount(label: Timecode, nominal: u32) -> Result<i64> {
         label.seconds(),
         label.frames(),
         nominal,
-        // Drop-frame is the one thing about counting the file *does* state,
-        // twice over, so it is kept rather than re-derived.
+        // Drop-frame mode is encoded by the file and remains unchanged.
         label.is_drop_frame(),
     )
     .map_err(IoStatus::Time)?

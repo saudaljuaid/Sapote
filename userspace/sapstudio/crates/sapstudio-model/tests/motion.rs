@@ -1,17 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Motion: a framing that changes over the length of the clip it is on.
+//! Clip-local framing animation.
 //!
-//! M4.6 named "a scale that pushes in" in its opening line and then gave lanes
-//! to opacity and to level only. Its State line said why: a curve on an item
-//! would need "a name for a keyframe that survives its item being renumbered".
-//!
-//! These tests are of the answer that worry has — putting the curve *on the
-//! clip*, measured from the clip's own start — and most of them exist because
-//! that answer has consequences a renumbering never had. A cut through an
-//! animated clip has to re-base the tail. A join has to put it back. A scale
-//! that keyframes positive can still pass through nothing on an overshooting
-//! ease. None of those are properties of the curve; they are properties of
-//! *where the curve is measured from*, which is the decision under test.
+//! Splits rebase animation onto the tail, joins restore the original curve,
+//! and scale remains positive throughout interpolation.
 
 use sapstudio_core::{Digest, Duration, Instant, Rational, Timebase};
 use sapstudio_model::{

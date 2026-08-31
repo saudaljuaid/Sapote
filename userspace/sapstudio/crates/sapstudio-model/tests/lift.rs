@@ -132,8 +132,7 @@ fn a_lift_leaves_a_hole_and_moves_nothing() {
 
 #[test]
 fn an_extract_is_the_other_edit_and_still_is() {
-    // The comparison the milestone rests on, asserted rather than described:
-    // the same index, the two edits, two different programmes.
+    // The same index produces different programmes for lift and extract.
     let (mut lifted, sequence) = project();
     let mut extracted = lifted.clone();
 
@@ -290,15 +289,9 @@ fn an_item_a_transition_touches_cannot_be_lifted() {
 
 #[test]
 fn a_dissolve_later_in_the_programme_does_not_refuse_a_lift_at_its_head() {
-    // The half the *coarser* check would refuse, and the reason the narrower
-    // one exists. `Track::transition_from` asks whether a transition sits at
-    // or after a boundary, which is right for a split -- it renumbers every
-    // boundary after it -- and far too broad for a lift, which renumbers
-    // nothing.
-    //
-    // The first version of this file did not have this case. It lifted an item
-    // *after* the dissolve, where both checks give the same answer, so the
-    // control that swapped one for the other changed nothing at all.
+    // Lift checks only transitions touching the item. Track::transition_from
+    // is intentionally broader for edits such as split that renumber later
+    // boundaries.
     let (mut project, sequence) = project();
     project
         .apply(

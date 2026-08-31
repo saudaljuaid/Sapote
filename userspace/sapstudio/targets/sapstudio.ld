@@ -43,9 +43,9 @@ SECTIONS
         *(.data.rel.ro .data.rel.ro.*)
 
         /*
-         * A fixed-address image has no business owning a global offset table.
-         * These are named so the linker cannot place them somewhere of its
-         * choosing, and asserted empty below so that anything needing one is a
+         * A fixed-address image must not contain a global offset table. These
+         * sections are named so the linker cannot place them elsewhere, and
+         * asserted empty below so that anything needing one is a
          * link error rather than a silent indirection.
          */
         __got_start = .;

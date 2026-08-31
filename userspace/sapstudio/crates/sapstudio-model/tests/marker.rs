@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Notes left on the timeline.
-//!
-//! `ARCHITECTURE.md` has listed markers as planned since its first version,
-//! next to nested sequences, "so the shape is decided before the pressure to
-//! compromise it arrives". A marker is the one thing in this model that exists
-//! purely for the person editing: nothing renders it, nothing composites it,
-//! and no clip is affected by one.
+//! Timeline marker behavior. Markers are editing metadata: they do not render,
+//! composite, or alter clips.
 
 use sapstudio_core::{Digest, Duration, Instant, Timebase};
 use sapstudio_model::{

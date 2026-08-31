@@ -1,36 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Compositing: putting one picture over another.
+//! Premultiplied alpha compositing in linear light.
 //!
-//! Two decisions have to be made before a single sample is touched, and
-//! getting either wrong produces a picture that looks nearly right, which is
-//! the worst kind of wrong.
-//!
-//! **In what space?** Alpha is coverage: the fraction of a pixel the top layer
-//! actually occupies. What reaches the eye is that fraction of the top layer's
-//! light plus the rest of the bottom layer's light, and that sentence is only
-//! true of *light*. Adding gamma-encoded code values instead produces edges
-//! that are too bright, which is why a white title over black looks like it
-//! has a halo in one application and not another. So every sample here is
-//! decoded to linear light, composited, and encoded back — regardless of what
-//! the frames are encoded in. Nothing is refused for being sRGB; it is simply
-//! not added in sRGB.
-//!
-//! **Straight or premultiplied?** `over` is only correct — and only
-//! associative — on premultiplied values. Compositing straight samples as
-//! though they were premultiplied is the dark fringe around every badly keyed
-//! title: the edge pixels are half-covered, their colour is still full
-//! strength, and adding the background underneath them makes them too dark.
-//! A frame here says which kind it holds ([`AlphaState`]), and the two are not
-//! interchangeable.
-//!
-//! SapStudio premultiplies **in linear light**. A premultiplied sample is the
-//! encoding of `light × coverage`, not the encoded value scaled by coverage.
-//! Both conventions exist in the wild and they disagree, so this one is
-//! written down here and enforced by [`checked_premultiplied`] rather than
-//! assumed.
-//!
-//! Only [`PixelFormat::Rgba8`] can be composited, because it is the only
-//! format with an alpha channel. There is nothing to composite without one.
+//! Colour samples are decoded before compositing and encoded afterward. Alpha
+//! remains a linear coverage value. Premultiplication means
+//! `encode(light × coverage)`, not `encode(light) × coverage`, and
+//! [`checked_premultiplied`] validates that contract. Compositing is limited to
+//! [`PixelFormat::Rgba8`], the supported format with alpha.
 
 use alloc::vec::Vec;
 
@@ -129,19 +104,13 @@ fn ceiling_table(table: &TransferTable, coverage: &[Fixed; LEVELS]) -> [u8; LEVE
     ceiling
 }
 
-/// Check that a frame calling itself premultiplied actually is.
-///
-/// A frame whose colour is brighter than its coverage has not been
-/// premultiplied, whatever its description says — the straight samples were
-/// simply relabelled. That is the dark-fringe bug arriving with a note saying
-/// it is not one, so it is caught here rather than composited.
+/// Validate that a frame's samples are premultiplied by alpha.
 ///
 /// # Errors
 ///
 /// [`RenderStatus::AlphaRequired`] for a format with no alpha channel,
-/// [`RenderStatus::WrongAlphaState`] for a frame that does not claim to be
-/// premultiplied, and [`RenderStatus::NotPremultiplied`] for one that claims
-/// it and is not.
+/// [`RenderStatus::WrongAlphaState`] for a frame not marked as premultiplied,
+/// and [`RenderStatus::NotPremultiplied`] when its samples violate that state.
 pub fn checked_premultiplied(frame: &Frame) -> Result<()> {
     let described = require(frame, AlphaState::Premultiplied)?;
     let table = TransferTable::build(described.colour())?;
@@ -238,7 +207,7 @@ pub fn unpremultiply(frame: &Frame) -> Result<Frame> {
 /// ([`checked_premultiplied`]), and must share a description exactly. Two
 /// frames with different colour descriptions are not two layers of one picture
 /// — they are two pictures, and adding them means deciding which one's
-/// primaries the answer is in. That is [`crate::convert`]'s decision to make,
+/// primaries the answer is in. That is [`crate::convert()`]'s decision to make,
 /// with a name on it, not a silent assumption here (R-8.3).
 ///
 /// # Errors
@@ -346,32 +315,12 @@ fn reserved(bytes: usize) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// A premultiplied frame at a fraction of its opacity.
+/// Scale a premultiplied frame to a fraction of its opacity.
 ///
-/// Every channel, coverage included. In premultiplied form the colour has
-/// already been multiplied by the coverage, so halving the coverage means
-/// halving the colour too — anything else would leave a frame claiming more
-/// colour than its coverage allows, which [`over`] refuses and is right to.
-///
-/// The **colour** is scaled in linear light and the **coverage** is scaled in
-/// its stored value, and those are two different things because only one of
-/// them is light. This is the correction of a real bug: the first version
-/// scaled both in code values and defended it in a comment — "coverage is not
-/// light, and a premultiplied colour sample is a coverage-weighted quantity"
-/// — which is true of the coverage and false of the colour. A premultiplied
-/// sample stores `encode(colour x coverage)`, and `encode(c) x t` is not
-/// `encode(c x t)` for any transfer curve that bends.
-///
-/// What it cost: a dissolve between two *identical* pictures dipped by as much
-/// as twenty-eight code values in the middle, which is a visible sag in the
-/// middle of every dissolve between two shots of anything. Every test the
-/// project had faded a layer that was **black**, where nought times anything
-/// is nought and the two arithmetics agree — the third time that particular
-/// blind spot has cost something here.
-///
-/// This is what makes a dissolve need no operator of its own: fade the
-/// incoming layer and put it `over` the outgoing one, and the result is
-/// `in x t + out x (1 - t)` — which is now true rather than nearly true.
+/// Colour is decoded and scaled in linear light; stored alpha is scaled
+/// directly. Both must change together to preserve premultiplication. This also
+/// makes a dissolve equivalent to fading the incoming frame over the outgoing
+/// frame.
 ///
 /// # Errors
 ///

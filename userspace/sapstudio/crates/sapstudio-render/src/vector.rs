@@ -1,35 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! The vectorscope: hue and saturation, counted.
+//! Count frame chroma into a vectorscope.
 //!
-//! A waveform answers "how bright"; a vectorscope answers "what colour, and how
-//! much of it". It plots each sample's chroma as a point — blue-difference
-//! across, red-difference up — so hue becomes an angle and saturation becomes a
-//! distance from the middle. It is the instrument a colourist uses to say a
-//! shot is warmer than the one before it, and to see that the neutrals are
-//! neutral.
-//!
-//! Two things about it are exact, and both are properties rather than pinned
-//! numbers.
-//!
-//! **Neutral is the origin.** Any sample with equal red, green and blue has
-//! zero chroma in both axes, at every brightness and under every matrix. That
-//! is what makes the middle of the graticule mean "no colour" — and it is
-//! derived here, not asserted, so a matrix that got it wrong could not hide.
-//!
-//! **The primaries land on the axes.** Full red has a red-difference of
-//! exactly one half, cyan exactly minus one half, full blue a blue-difference
-//! of exactly one half and yellow exactly minus one half — in BT.601, BT.709
-//! and BT.2020 alike, because `Cr = (R' - Y')/2(1 - Kr)` and full red makes
-//! `Y' = Kr`, so the coefficient cancels itself out. Those four points are the
-//! graticule's fixed marks and they are the same on every vectorscope ever
-//! built. The other two corners — green and magenta — depend on the matrix,
-//! which is exactly why a colourist can tell BT.601 material from BT.709 by
-//! looking at where the green box lands.
-//!
-//! Chroma is computed from **gamma-encoded** samples, not from linear light.
-//! That is not an oversight: `Y'CbCr` is defined on the encoded signal, the
-//! primes in its name are the whole point, and a scope that decoded first
-//! would put every box in the wrong place.
+//! Blue difference is the horizontal axis and red difference is the vertical
+//! axis. Neutral samples land at the origin. Red/cyan and blue/yellow land at
+//! fixed half-range axes across BT.601, BT.709, and BT.2020; green and magenta
+//! depend on the selected matrix. Chroma is calculated from encoded samples as
+//! required by Y'CbCr, not from linear-light values.
 
 use alloc::vec::Vec;
 
