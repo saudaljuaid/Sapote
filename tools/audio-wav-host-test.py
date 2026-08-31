@@ -134,12 +134,14 @@ def nonzero_runs(payload: bytes) -> list[bytes]:
     return runs
 
 
-def match_sdl_run(payload: bytes, chunks: list[bytes]) -> int:
+def match_sdl_run(payload: bytes, chunks: list[bytes],
+                  first_segment: int, maximum_segments: int) -> set[int]:
     frame_bytes = CHANNELS * SAMPLE_BYTES
     positions = {0}
+    matches: set[int] = set()
 
-    for segment in range(SDL_CHUNKS * SDL_PROOF_RUNS):
-        chunk = chunks[segment % SDL_CHUNKS]
+    for count in range(1, maximum_segments + 1):
+        chunk = chunks[(first_segment + count - 1) % SDL_CHUNKS]
         next_positions: set[int] = set()
         for position in positions:
             remaining_frames = (len(payload) - position) // frame_bytes
@@ -155,11 +157,11 @@ def match_sdl_run(payload: bytes, chunks: list[bytes]) -> int:
             for frames in range(MIN_CAPTURE_FRAMES, matched + 1):
                 next_positions.add(position + frames * frame_bytes)
         positions = next_positions
-        if len(payload) in positions and (segment + 1) % SDL_CHUNKS == 0:
-            return segment + 1
+        if len(payload) in positions:
+            matches.add(count)
         if not positions:
             break
-    return 0
+    return matches
 
 
 def verify_sdl(frames: int, payload: bytes) -> dict[str, int | str]:
@@ -171,14 +173,20 @@ def verify_sdl(frames: int, payload: bytes) -> dict[str, int | str]:
               for offset in range(0, len(expected),
                                   CHUNK_FRAMES * CHANNELS * SAMPLE_BYTES)]
     runs = nonzero_runs(payload)
-    segment_counts = [match_sdl_run(run, chunks) for run in runs]
-    if not runs or any(count == 0 for count in segment_counts):
-        raise VerificationError("unrecognized SDL non-silent run")
-    segments = sum(segment_counts)
     required = SDL_CHUNKS * SDL_PROOF_RUNS
-    if segments != required:
-        raise VerificationError(
-            f"SDL waveform segments {segments}, expected {required}")
+    admitted = {0}
+    for run in runs:
+        next_admitted: set[int] = set()
+        for first_segment in admitted:
+            for count in match_sdl_run(
+                    run, chunks, first_segment, required - first_segment):
+                next_admitted.add(first_segment + count)
+        admitted = next_admitted
+        if not admitted:
+            break
+    if not runs or required not in admitted:
+        raise VerificationError("unrecognized SDL non-silent run")
+    segments = required
     matched = b"".join(runs)
     nonzero = sum(sample != 0 for (sample,) in
                   struct.iter_unpack("<h", matched))
@@ -289,6 +297,21 @@ def self_test() -> None:
         if sdl_report["segments"] != SDL_CHUNKS * SDL_PROOF_RUNS or \
                 sdl_report["runs"] != SDL_PROOF_RUNS:
             raise VerificationError("SDL fixture geometry changed")
+        fragmented_fixture = root / "sdl-fragmented.wav"
+        fragmented_payload = bytes(29 * CHANNELS * SAMPLE_BYTES)
+        for index, frames in enumerate(prefixes):
+            fragmented_payload += chunks[index % SDL_CHUNKS][:
+                frames * CHANNELS * SAMPLE_BYTES]
+            fragmented_payload += bytes((index + 3) * CHANNELS * SAMPLE_BYTES)
+        with wave.open(str(fragmented_fixture), "wb") as output:
+            output.setnchannels(CHANNELS)
+            output.setsampwidth(SAMPLE_BYTES)
+            output.setframerate(RATE)
+            output.writeframes(fragmented_payload)
+        fragmented_report = verify(fragmented_fixture, "sdl")
+        if fragmented_report["segments"] != SDL_CHUNKS * SDL_PROOF_RUNS or \
+                fragmented_report["runs"] != SDL_CHUNKS * SDL_PROOF_RUNS:
+            raise VerificationError("fragmented SDL fixture geometry changed")
         try:
             verify(sdl_fixture, "native-audio")
         except VerificationError:

@@ -293,6 +293,8 @@ def main():
                         wait_count(second_serial, b"sap> ",
                             prompt_count + 1, 5.0)
                         send_line(qmp, "read projects/notes.txt")
+                        wait_count(second_serial, b"first cut", 1, 5.0)
+                        wait_count(second_serial, b"second line", 1, 5.0)
                     action_index += 1
                 frame = temp / f"frame-{index:04d}.ppm"
                 screendump(qmp, frame)
