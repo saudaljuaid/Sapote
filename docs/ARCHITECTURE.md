@@ -81,6 +81,10 @@ The current device boundaries are deliberately small:
   generation-authenticated 512- or 4096-byte synchronous read/write sessions;
 - FAT32: separate immutable-system and writable-data mounts with bounded
   handles, a four-sector cache, and clean-sync persistence;
+- VFS: bounded mount, vnode, file-description, and streaming-directory tables
+  with mount/vnode/handle generations and backend-owned cookies;
+- ext4: exact-profile, metadata-checksummed, read-only lookup, 64-bit stat/read,
+  symlink/hardlink identity, and directory enumeration through pinned ext4plus;
 - FAT16: retained read-only compatibility proofs for historical releases;
 - PS/2: keyboard and three-byte pointer input for the shell and Sapote Redwood.
 
@@ -99,9 +103,11 @@ while they still belong to the kernel, and it is withdrawn only after the
 engines are stopped and the controller is back in reset - before the memory is
 reclaimed, never after. See [`AUDIO.md`](AUDIO.md).
 
-There is no Unix VFS, journal, hotplug framework, physical-device passthrough,
-or general USB class stack. The exact FAT32 design and limits are in
-[`FAT32.md`](FAT32.md).
+This is a small kernel VFS, not a Unix compatibility layer: it has no mount
+namespaces, dentry cache, advisory locks, mmap, or general pathname ABI. FAT32
+remains the writable backend. Ext4 mutations and sync return `EROFS` because no
+JBD2 writer or crash-recovery proof exists. The exact storage designs and limits
+are in [`FAT32.md`](FAT32.md) and [`EXT4.md`](EXT4.md).
 
 `nvidia.c` is fifteen bounded drivers for the register and configuration
 contracts an NVIDIA board publishes, written from envytools, Nouveau, Mesa/NVK
@@ -241,7 +247,7 @@ keeping development diaries in the active documentation set.
 ## Current limits
 
 Sapote has no SMP, IPv6, transport TLS, firewall, routing, Wi-Fi, IOMMU,
-general VFS, journaled crash recovery, dynamic linker, signals, ambient Unix
+general Unix VFS, journaled crash recovery, dynamic linker, signals, ambient Unix
 descriptor table, broad hardware support, or browser. Native ABI v1 is stable
 within its documented static-application profile, not a POSIX personality.
 There is no fork, exec, process identifier space or inter-process

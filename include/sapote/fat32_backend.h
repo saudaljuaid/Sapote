@@ -25,6 +25,13 @@ enum sapfs_status fat32_backend_read(
     size_t capacity,
     size_t *read_bytes
 );
+enum sapfs_status fat32_backend_pread(
+    sapfs_handle handle,
+    uint8_t *destination,
+    size_t capacity,
+    uint64_t offset,
+    size_t *read_bytes
+);
 enum sapfs_status fat32_backend_write(
     sapfs_handle handle,
     const uint8_t *source,
@@ -35,7 +42,7 @@ enum sapfs_status fat32_backend_seek(
     sapfs_handle handle,
     int64_t offset,
     enum sapfs_seek_origin origin,
-    uint32_t *position
+    uint64_t *position
 );
 enum sapfs_status fat32_backend_stat_path(
     enum sapfs_volume volume,
@@ -56,7 +63,7 @@ enum sapfs_status fat32_backend_create(
 enum sapfs_status fat32_backend_truncate(
     enum sapfs_volume volume,
     const char *path,
-    uint32_t size
+    uint64_t size
 );
 enum sapfs_status fat32_backend_mkdir(
     enum sapfs_volume volume,
@@ -74,6 +81,11 @@ enum sapfs_status fat32_backend_unlink(
 enum sapfs_status fat32_backend_rmdir(
     enum sapfs_volume volume,
     const char *path
+);
+enum sapfs_status fat32_backend_link(
+    enum sapfs_volume volume,
+    const char *source,
+    const char *destination
 );
 
 #endif

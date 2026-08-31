@@ -18,6 +18,7 @@ extern _Thread_local int errno;
 #define EISDIR 21
 #define EINVAL 22
 #define ENOSPC 28
+#define EROFS 30
 #define EMFILE 24
 #define EPIPE 32
 #define ERANGE 34

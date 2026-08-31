@@ -12,6 +12,7 @@
 #define SAPFS_MAX_HANDLES 64U
 #define SAPFS_CACHE_ENTRIES 4U
 #define SAPFS_MAX_PATH FAT32_PATH_BYTES
+#define SAPFS_MAX_COMPONENT_BYTES 256U
 #define SAPFS_MAX_DEPTH 16U
 #define SAPFS_MAX_FILE_BYTES UINT32_C(16777216)
 #define SAPFS_MAX_LIST_ENTRIES 64U
@@ -66,17 +67,24 @@ typedef uint64_t sapfs_handle;
 typedef uint64_t sapfs_directory_handle;
 
 struct sapfs_stat {
-    uint32_t size;
+    uint64_t size;
+    uint64_t object_id;
     uint32_t first_cluster;
     uint32_t cluster_count;
+    uint32_t uid;
+    uint32_t gid;
+    uint16_t mode;
+    uint16_t links;
     uint8_t attributes;
     bool directory;
     bool read_only;
 };
 
 struct sapfs_list_entry {
-    char name[13];
-    uint32_t size;
+    char name[SAPFS_MAX_COMPONENT_BYTES];
+    uint64_t size;
+    uint64_t object_id;
+    uint16_t mode;
     uint8_t attributes;
     bool directory;
 };
@@ -112,6 +120,13 @@ enum sapfs_status sapfs_read(
     size_t capacity,
     size_t *read_bytes
 );
+enum sapfs_status sapfs_pread(
+    sapfs_handle handle,
+    uint8_t *destination,
+    size_t capacity,
+    uint64_t offset,
+    size_t *read_bytes
+);
 enum sapfs_status sapfs_write(
     sapfs_handle handle,
     const uint8_t *source,
@@ -122,7 +137,7 @@ enum sapfs_status sapfs_seek(
     sapfs_handle handle,
     int64_t offset,
     enum sapfs_seek_origin origin,
-    uint32_t *position
+    uint64_t *position
 );
 enum sapfs_status sapfs_stat_path(
     enum sapfs_volume volume,
@@ -151,7 +166,7 @@ enum sapfs_status sapfs_create(enum sapfs_volume volume, const char *path);
 enum sapfs_status sapfs_truncate(
     enum sapfs_volume volume,
     const char *path,
-    uint32_t size
+    uint64_t size
 );
 enum sapfs_status sapfs_mkdir(enum sapfs_volume volume, const char *path);
 enum sapfs_status sapfs_rename(
@@ -161,6 +176,11 @@ enum sapfs_status sapfs_rename(
 );
 enum sapfs_status sapfs_unlink(enum sapfs_volume volume, const char *path);
 enum sapfs_status sapfs_rmdir(enum sapfs_volume volume, const char *path);
+enum sapfs_status sapfs_link(
+    enum sapfs_volume volume,
+    const char *source,
+    const char *destination
+);
 const char *sapfs_status_string(enum sapfs_status status);
 
 #endif

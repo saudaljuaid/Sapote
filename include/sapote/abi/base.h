@@ -27,6 +27,7 @@ enum sapote_errno {
     SAPOTE_EISDIR = 21,
     SAPOTE_EINVAL = 22,
     SAPOTE_ENOSPC = 28,
+    SAPOTE_EROFS = 30,
     SAPOTE_EPIPE = 32,
     SAPOTE_ENAMETOOLONG = 36,
     SAPOTE_ENOSYS = 38,

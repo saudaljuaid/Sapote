@@ -2,8 +2,15 @@
 #ifndef SAPOTE_EXT4_FS_H
 #define SAPOTE_EXT4_FS_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#include <sapote/fat32_fs.h>
+
+#define SAPOTE_EXT4_FILE_REGULAR 1U
+#define SAPOTE_EXT4_FILE_DIRECTORY 2U
+#define SAPOTE_EXT4_FILE_SYMLINK 3U
 
 enum sapote_ext4_status {
     SAPOTE_EXT4_STATUS_OK = 0,
@@ -11,7 +18,30 @@ enum sapote_ext4_status {
     SAPOTE_EXT4_STATUS_VOLUME,
     SAPOTE_EXT4_STATUS_IO,
     SAPOTE_EXT4_STATUS_INVALID,
+    SAPOTE_EXT4_STATUS_NOT_FOUND,
+    SAPOTE_EXT4_STATUS_NOT_DIRECTORY,
+    SAPOTE_EXT4_STATUS_IS_DIRECTORY,
+    SAPOTE_EXT4_STATUS_RANGE,
+    SAPOTE_EXT4_STATUS_SPECIAL,
     SAPOTE_EXT4_STATUS_COUNT
+};
+
+struct sapote_ext4_metadata {
+    uint64_t inode;
+    uint64_t size;
+    uint32_t uid;
+    uint32_t gid;
+    uint16_t mode;
+    uint16_t links;
+    uint8_t file_type;
+    uint8_t reserved[7];
+};
+
+struct sapote_ext4_directory_entry {
+    struct sapote_ext4_metadata metadata;
+    uint16_t name_length;
+    uint8_t name[255];
+    uint8_t reserved;
 };
 
 struct sapote_ext4_identity {
@@ -19,7 +49,7 @@ struct sapote_ext4_identity {
     uint8_t uuid[16];
 };
 
-/* Private Rust/C reader callback; valid only during a synchronous probe. */
+/* Private Rust/C reader callback; valid only during a backend operation. */
 int32_t sapote_ext4_block_read(
     uintptr_t context,
     uint64_t start_byte,
@@ -27,9 +57,47 @@ int32_t sapote_ext4_block_read(
     size_t length
 );
 
-enum sapote_ext4_status sapote_ext4_probe_volume(
-    uint32_t controller_index,
-    struct sapote_ext4_identity *identity
-);
+void ext4_backend_initialize(void);
+enum sapfs_status ext4_backend_mount(enum sapfs_volume volume);
+enum sapfs_status ext4_backend_unmount(enum sapfs_volume volume);
+enum sapfs_status ext4_backend_sync(enum sapfs_volume volume);
+struct sapfs_drive_info ext4_backend_drive(enum sapfs_volume volume);
+uint64_t ext4_backend_completion_count(enum sapfs_volume volume);
+enum sapfs_status ext4_backend_open(enum sapfs_volume volume,
+    const char *path, enum sapfs_access access, sapfs_handle *handle);
+enum sapfs_status ext4_backend_close(sapfs_handle handle);
+enum sapfs_status ext4_backend_read(sapfs_handle handle,
+    uint8_t *destination, size_t capacity, size_t *read_bytes);
+enum sapfs_status ext4_backend_pread(sapfs_handle handle,
+    uint8_t *destination, size_t capacity, uint64_t offset,
+    size_t *read_bytes);
+enum sapfs_status ext4_backend_write(sapfs_handle handle,
+    const uint8_t *source, size_t source_bytes, size_t *written_bytes);
+enum sapfs_status ext4_backend_seek(sapfs_handle handle, int64_t offset,
+    enum sapfs_seek_origin origin, uint64_t *position);
+enum sapfs_status ext4_backend_stat_path(enum sapfs_volume volume,
+    const char *path, struct sapfs_stat *stat);
+enum sapfs_status ext4_backend_list(enum sapfs_volume volume,
+    const char *path, struct sapfs_list_entry *entries, size_t capacity,
+    size_t *entry_count);
+enum sapfs_status ext4_backend_directory_open(enum sapfs_volume volume,
+    const char *path, sapfs_handle *handle);
+enum sapfs_status ext4_backend_directory_read(sapfs_handle handle,
+    struct sapfs_list_entry *entry, bool *present);
+enum sapfs_status ext4_backend_directory_close(sapfs_handle handle);
+enum sapfs_status ext4_backend_create(enum sapfs_volume volume,
+    const char *path);
+enum sapfs_status ext4_backend_truncate(enum sapfs_volume volume,
+    const char *path, uint64_t size);
+enum sapfs_status ext4_backend_mkdir(enum sapfs_volume volume,
+    const char *path);
+enum sapfs_status ext4_backend_rename(enum sapfs_volume volume,
+    const char *source, const char *destination);
+enum sapfs_status ext4_backend_unlink(enum sapfs_volume volume,
+    const char *path);
+enum sapfs_status ext4_backend_rmdir(enum sapfs_volume volume,
+    const char *path);
+enum sapfs_status ext4_backend_link(enum sapfs_volume volume,
+    const char *source, const char *destination);
 
 #endif

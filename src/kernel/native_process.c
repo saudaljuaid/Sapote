@@ -492,6 +492,7 @@ static int64_t filesystem_error(enum sapfs_status status)
     case SAPFS_STATUS_EXISTS:
         return -SAPOTE_EEXIST;
     case SAPFS_STATUS_READ_ONLY:
+        return -SAPOTE_EROFS;
     case SAPFS_STATUS_ACCESS:
         return -SAPOTE_EACCES;
     case SAPFS_STATUS_NOT_DIRECTORY:
@@ -1761,10 +1762,10 @@ static int64_t syscall_file_io(
     if (!validate_user_range(process, request.buffer, request.length, !write)) {
         return -SAPOTE_EFAULT;
     }
-    if (request.offset != UINT64_MAX) {
-        uint32_t position;
+    if (write && request.offset != UINT64_MAX) {
+        uint64_t position;
 
-        if (request.offset > UINT32_MAX) {
+        if (request.offset > INT64_MAX) {
             return -SAPOTE_EINVAL;
         }
         cpu_interrupt_enable();
@@ -1789,10 +1790,21 @@ static int64_t syscall_file_io(
             return completed == 0U ? -SAPOTE_EFAULT : (int64_t)completed;
         }
         cpu_interrupt_enable();
-        status = write ? sapfs_write((sapfs_handle)resource->words[0],
-                process->transfer, chunk, &transferred) :
-            sapfs_read((sapfs_handle)resource->words[0], process->transfer,
-                chunk, &transferred);
+        if (write) {
+            status = sapfs_write((sapfs_handle)resource->words[0],
+                process->transfer, chunk, &transferred);
+        } else if (request.offset != UINT64_MAX) {
+            if (completed > UINT64_MAX - request.offset) {
+                cpu_interrupt_disable();
+                return completed == 0U ? -SAPOTE_EINVAL : (int64_t)completed;
+            }
+            status = sapfs_pread((sapfs_handle)resource->words[0],
+                process->transfer, chunk, request.offset + completed,
+                &transferred);
+        } else {
+            status = sapfs_read((sapfs_handle)resource->words[0],
+                process->transfer, chunk, &transferred);
+        }
         cpu_interrupt_disable();
         if (status != SAPFS_STATUS_OK) {
             return completed == 0U ? filesystem_error(status) :
@@ -1819,7 +1831,7 @@ static int64_t syscall_file_seek(
     struct sapote_seek_request request;
     struct native_resource *resource;
     enum sapfs_seek_origin origin;
-    uint32_t position;
+    uint64_t position;
     enum sapfs_status status;
 
     if (!copy_from_user(process, &request, request_address,
@@ -2024,8 +2036,7 @@ static int64_t syscall_single_path_mutation(
     if (number == SAPOTE_SYS_PATH_MKDIR) {
         status = sapfs_mkdir(volume, path);
     } else if (number == SAPOTE_SYS_PATH_TRUNCATE) {
-        status = value > UINT32_MAX ? SAPFS_STATUS_RANGE :
-            sapfs_truncate(volume, path, (uint32_t)value);
+        status = sapfs_truncate(volume, path, value);
     } else {
         status = sapfs_stat_path(volume, path, &stat);
         if (status == SAPFS_STATUS_OK) {

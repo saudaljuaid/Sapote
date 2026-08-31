@@ -695,7 +695,7 @@ static void command_write_line(const char *arguments, bool append)
         opened = status == SAPFS_STATUS_OK;
     }
     if (status == SAPFS_STATUS_OK && append) {
-        uint32_t position;
+        uint64_t position;
 
         status = sapfs_seek(handle, 0, SAPFS_SEEK_END, &position);
     }
@@ -723,7 +723,7 @@ static void command_write_at(const char *arguments)
     size_t content_bytes;
     size_t written = 0U;
     uint32_t offset;
-    uint32_t position = 0U;
+    uint64_t position = 0U;
     sapfs_handle handle;
     bool opened = false;
     enum sapfs_status status;

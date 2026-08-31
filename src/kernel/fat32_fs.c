@@ -1884,7 +1884,7 @@ enum sapfs_status fat32_backend_seek(
     sapfs_handle handle,
     int64_t offset,
     enum sapfs_seek_origin origin,
-    uint32_t *position
+    uint64_t *position
 )
 {
     struct sapfs_handle_state *state;
@@ -1998,6 +1998,31 @@ enum sapfs_status fat32_backend_read(
         return status;
     }
     return close_status;
+}
+
+enum sapfs_status fat32_backend_pread(
+    sapfs_handle handle,
+    uint8_t *destination,
+    size_t capacity,
+    uint64_t offset,
+    size_t *read_bytes
+)
+{
+    struct sapfs_handle_state *state;
+    uint32_t saved;
+    enum sapfs_status status = handle_state(handle, &state);
+
+    if (status != SAPFS_STATUS_OK) {
+        return status;
+    }
+    if (offset > SAPFS_MAX_FILE_BYTES) {
+        return SAPFS_STATUS_RANGE;
+    }
+    saved = state->offset;
+    state->offset = (uint32_t)offset;
+    status = fat32_backend_read(handle, destination, capacity, read_bytes);
+    state->offset = saved;
+    return status;
 }
 
 static enum sapfs_status handle_location(
@@ -2536,7 +2561,7 @@ enum sapfs_status fat32_backend_rmdir(
 enum sapfs_status fat32_backend_truncate(
     enum sapfs_volume volume,
     const char *path,
-    uint32_t size
+    uint64_t size
 )
 {
     struct sapfs_operation operation;
@@ -2548,10 +2573,12 @@ enum sapfs_status fat32_backend_truncate(
     uint32_t old_size;
     enum sapfs_status status;
     enum sapfs_status close_status;
+    uint32_t checked_size;
 
     if (size > SAPFS_MAX_FILE_BYTES) {
         return SAPFS_STATUS_RANGE;
     }
+    checked_size = (uint32_t)size;
     status = begin_operation(volume, true, &operation);
     if (status != SAPFS_STATUS_OK) {
         return status;
@@ -2566,7 +2593,8 @@ enum sapfs_status fat32_backend_truncate(
     }
     first = status == SAPFS_STATUS_OK ? location.entry.first_cluster : 0U;
     old_size = status == SAPFS_STATUS_OK ? location.entry.size : 0U;
-    required = (size + SAPFS_SECTOR_BYTES - 1U) / SAPFS_SECTOR_BYTES;
+    required = (checked_size + SAPFS_SECTOR_BYTES - 1U) /
+        SAPFS_SECTOR_BYTES;
     if (status == SAPFS_STATUS_OK) {
         status = count_chain(&operation, first, &old_count, &old_last);
         (void)old_last;
@@ -2574,10 +2602,12 @@ enum sapfs_status fat32_backend_truncate(
     if (status == SAPFS_STATUS_OK && required > old_count) {
         status = ensure_chain(&operation, first, required, &first);
         if (status == SAPFS_STATUS_OK) {
-            status = zero_chain_bytes(&operation, first, old_size, size);
+            status = zero_chain_bytes(&operation, first, old_size,
+                checked_size);
         }
         if (status == SAPFS_STATUS_OK) {
-            status = update_location(&operation, &location, first, size);
+            status = update_location(&operation, &location, first,
+                checked_size);
         }
     } else if (status == SAPFS_STATUS_OK && required == 0U) {
         status = update_location(&operation, &location, 0U, 0U);
@@ -2597,11 +2627,12 @@ enum sapfs_status fat32_backend_truncate(
             status = SAPFS_STATUS_CORRUPT;
         }
         if (status == SAPFS_STATUS_OK) {
-            status = zero_chain_bytes(&operation, first, size,
+            status = zero_chain_bytes(&operation, first, checked_size,
                 required * SAPFS_SECTOR_BYTES);
         }
         if (status == SAPFS_STATUS_OK) {
-            status = update_location(&operation, &location, first, size);
+            status = update_location(&operation, &location, first,
+                checked_size);
         }
         if (status == SAPFS_STATUS_OK) {
             status = set_fat(&operation, kept, FAT32_EOC);
@@ -2610,16 +2641,29 @@ enum sapfs_status fat32_backend_truncate(
             status = release_chain(&operation, tail);
         }
     } else if (status == SAPFS_STATUS_OK) {
-        status = size >= old_size ?
-            zero_chain_bytes(&operation, first, old_size, size) :
-            zero_chain_bytes(&operation, first, size,
+        status = checked_size >= old_size ?
+            zero_chain_bytes(&operation, first, old_size, checked_size) :
+            zero_chain_bytes(&operation, first, checked_size,
                 required * SAPFS_SECTOR_BYTES);
         if (status == SAPFS_STATUS_OK) {
-            status = update_location(&operation, &location, first, size);
+            status = update_location(&operation, &location, first,
+                checked_size);
         }
     }
     close_status = end_operation(&operation, status == SAPFS_STATUS_OK);
     return status != SAPFS_STATUS_OK ? status : close_status;
+}
+
+enum sapfs_status fat32_backend_link(
+    enum sapfs_volume volume,
+    const char *source,
+    const char *destination
+)
+{
+    (void)volume;
+    (void)source;
+    (void)destination;
+    return SAPFS_STATUS_ACCESS;
 }
 
 static enum sapfs_status destination_inside_directory(

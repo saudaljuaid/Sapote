@@ -3180,7 +3180,7 @@ static enum sapfs_status studio_load_preview(const char *path)
             height - 1U - source_y;
         const uint64_t row_offset = (uint64_t)pixel_offset +
             (uint64_t)stored_y * row_stride;
-        uint32_t position = 0U;
+        uint64_t position = 0U;
 
         status = sapfs_seek(handle, (int64_t)row_offset, SAPFS_SEEK_START,
             &position);

@@ -10,6 +10,7 @@
 
 #include <sapote/fat32_backend.h>
 #include <sapote/fat32_fs.h>
+#include <sapote/ext4_fs.h>
 #include <sapote/vfs_backend.h>
 
 #define VFS_MAX_VNODES 128U
@@ -48,11 +49,14 @@ struct vfs_open_file_state {
 
 struct vfs_directory_state {
     struct sapfs_list_entry entries[SAPFS_MAX_LIST_ENTRIES];
+    const struct vfs_backend_ops *backend;
+    sapfs_handle backend_handle;
     uint64_t generation;
     uint64_t vnode_generation;
     size_t count;
     size_t cursor;
     uint16_t vnode_index;
+    bool streaming;
     bool active;
 };
 
@@ -75,16 +79,49 @@ static const struct vfs_backend_ops fat32_backend_ops = {
     .open = fat32_backend_open,
     .close = fat32_backend_close,
     .read = fat32_backend_read,
+    .pread = fat32_backend_pread,
     .write = fat32_backend_write,
     .seek = fat32_backend_seek,
     .stat_path = fat32_backend_stat_path,
     .list = fat32_backend_list,
+    .directory_open = NULL,
+    .directory_read = NULL,
+    .directory_close = NULL,
     .create = fat32_backend_create,
     .truncate = fat32_backend_truncate,
     .mkdir = fat32_backend_mkdir,
     .rename = fat32_backend_rename,
     .unlink = fat32_backend_unlink,
     .rmdir = fat32_backend_rmdir,
+    .link = fat32_backend_link,
+    .case_sensitive = false,
+};
+
+static const struct vfs_backend_ops ext4_backend_ops = {
+    .mount = ext4_backend_mount,
+    .unmount = ext4_backend_unmount,
+    .sync = ext4_backend_sync,
+    .drive = ext4_backend_drive,
+    .completion_count = ext4_backend_completion_count,
+    .open = ext4_backend_open,
+    .close = ext4_backend_close,
+    .read = ext4_backend_read,
+    .pread = ext4_backend_pread,
+    .write = ext4_backend_write,
+    .seek = ext4_backend_seek,
+    .stat_path = ext4_backend_stat_path,
+    .list = ext4_backend_list,
+    .directory_open = ext4_backend_directory_open,
+    .directory_read = ext4_backend_directory_read,
+    .directory_close = ext4_backend_directory_close,
+    .create = ext4_backend_create,
+    .truncate = ext4_backend_truncate,
+    .mkdir = ext4_backend_mkdir,
+    .rename = ext4_backend_rename,
+    .unlink = ext4_backend_unlink,
+    .rmdir = ext4_backend_rmdir,
+    .link = ext4_backend_link,
+    .case_sensitive = true,
 };
 
 static const struct vfs_backend_ops *volume_backends[SAPFS_VOLUME_COUNT];
@@ -164,6 +201,7 @@ static uint64_t next_generation(uint64_t *counter, uint64_t maximum)
 
 static enum sapfs_status canonicalize_path(
     const char *path,
+    bool case_sensitive,
     char canonical[SAPFS_MAX_PATH]
 )
 {
@@ -220,7 +258,7 @@ static enum sapfs_status canonicalize_path(
             for (size_t offset = 0U; offset < component_length; ++offset) {
                 char byte = path[start + offset];
 
-                if (byte >= 'a' && byte <= 'z') {
+                if (!case_sensitive && byte >= 'a' && byte <= 'z') {
                     byte = (char)(byte - 'a' + 'A');
                 }
                 canonical[used++] = byte;
@@ -241,11 +279,17 @@ static enum sapfs_status canonicalize_path(
     return SAPFS_STATUS_OK;
 }
 
-static size_t vnode_bucket(enum sapfs_volume volume, const char *path)
+static size_t vnode_bucket(enum sapfs_volume volume, const char *path,
+    uint64_t object_id)
 {
     uint64_t hash = UINT64_C(1469598103934665603) ^ (uint64_t)volume;
 
-    for (size_t index = 0U; path[index] != '\0'; ++index) {
+    if (object_id != 0U) {
+        for (size_t byte = 0U; byte < sizeof(object_id); ++byte) {
+            hash ^= (uint8_t)(object_id >> (byte * 8U));
+            hash *= UINT64_C(1099511628211);
+        }
+    } else for (size_t index = 0U; path[index] != '\0'; ++index) {
         hash ^= (uint8_t)path[index];
         hash *= UINT64_C(1099511628211);
     }
@@ -255,7 +299,8 @@ static size_t vnode_bucket(enum sapfs_volume volume, const char *path)
 static void vnode_remove_from_bucket(size_t vnode_index)
 {
     struct vfs_vnode_state *vnode = &vnodes[vnode_index];
-    const size_t bucket = vnode_bucket(vnode->volume, vnode->path);
+    const size_t bucket = vnode_bucket(vnode->volume, vnode->path,
+        vnode->stat.object_id);
     uint16_t *link = &vnode_buckets[bucket];
 
     for (size_t steps = 0U; steps < VFS_MAX_VNODES &&
@@ -275,7 +320,7 @@ static enum sapfs_status vnode_retain(
     size_t *vnode_index
 )
 {
-    const size_t bucket = vnode_bucket(volume, canonical);
+    size_t bucket;
     uint16_t current;
     size_t free_index = VFS_MAX_VNODES;
 
@@ -283,6 +328,7 @@ static enum sapfs_status vnode_retain(
         !mounts[volume].active) {
         return SAPFS_STATUS_NOT_MOUNTED;
     }
+    bucket = vnode_bucket(volume, canonical, stat->object_id);
     current = vnode_buckets[bucket];
     for (size_t steps = 0U; steps < VFS_MAX_VNODES &&
          current != VFS_NO_INDEX; ++steps) {
@@ -290,7 +336,9 @@ static enum sapfs_status vnode_retain(
 
         if (vnode->active && vnode->volume == volume &&
             vnode->mount_generation == mounts[volume].generation &&
-            text_equal(vnode->path, canonical)) {
+            ((stat->object_id != 0U &&
+                vnode->stat.object_id == stat->object_id) ||
+             (stat->object_id == 0U && text_equal(vnode->path, canonical)))) {
             if (vnode->references == SIZE_MAX) {
                 return SAPFS_STATUS_BUSY;
             }
@@ -367,7 +415,8 @@ static enum sapfs_status resolve_path(
         !mounts[volume].active) {
         return SAPFS_STATUS_NOT_MOUNTED;
     }
-    status = canonicalize_path(path, canonical);
+    status = canonicalize_path(path, mounts[volume].backend->case_sensitive,
+        canonical);
     if (status != SAPFS_STATUS_OK) {
         return status;
     }
@@ -408,7 +457,9 @@ static enum sapfs_status resolve_parent(
     char resolved_parent[SAPFS_MAX_PATH];
     size_t vnode_index;
     size_t split = SIZE_MAX;
-    enum sapfs_status status = canonicalize_path(path, canonical);
+    enum sapfs_status status = valid_volume(volume) && mounts[volume].active ?
+        canonicalize_path(path, mounts[volume].backend->case_sensitive,
+            canonical) : SAPFS_STATUS_NOT_MOUNTED;
 
     if (status != SAPFS_STATUS_OK) {
         return status;
@@ -524,13 +575,17 @@ void sapfs_initialize(void)
     for (size_t index = 0U; index < VFS_VNODE_BUCKETS; ++index) {
         vnode_buckets[index] = VFS_NO_INDEX;
     }
-    for (enum sapfs_volume volume = SAPFS_VOLUME_SYSTEM;
-         volume < SAPFS_VOLUME_COUNT; ++volume) {
-        volume_backends[volume] = &fat32_backend_ops;
-    }
     fat32_backend_initialize();
+    ext4_backend_initialize();
     for (enum sapfs_volume volume = SAPFS_VOLUME_SYSTEM;
          volume < SAPFS_VOLUME_COUNT; ++volume) {
+        if (fat32_backend_drive(volume).mounted) {
+            volume_backends[volume] = &fat32_backend_ops;
+        } else if (ext4_backend_mount(volume) == SAPFS_STATUS_OK) {
+            volume_backends[volume] = &ext4_backend_ops;
+        } else {
+            volume_backends[volume] = &fat32_backend_ops;
+        }
         install_mount(volume, volume_backends[volume]);
     }
 }
@@ -690,6 +745,22 @@ enum sapfs_status sapfs_read(
         state->backend_handle, destination, capacity, read_bytes) : status;
 }
 
+enum sapfs_status sapfs_pread(
+    sapfs_handle handle,
+    uint8_t *destination,
+    size_t capacity,
+    uint64_t offset,
+    size_t *read_bytes
+)
+{
+    struct vfs_open_file_state *state;
+    enum sapfs_status status = open_file_state(handle, &state);
+
+    return status == SAPFS_STATUS_OK ? state->backend->pread(
+        state->backend_handle, destination, capacity, offset, read_bytes) :
+        status;
+}
+
 enum sapfs_status sapfs_write(
     sapfs_handle handle,
     const uint8_t *source,
@@ -708,7 +779,7 @@ enum sapfs_status sapfs_seek(
     sapfs_handle handle,
     int64_t offset,
     enum sapfs_seek_origin origin,
-    uint32_t *position
+    uint64_t *position
 )
 {
     struct vfs_open_file_state *state;
@@ -801,9 +872,19 @@ enum sapfs_status sapfs_directory_open(
         return SAPFS_STATUS_NO_HANDLES;
     }
     zero_bytes(&directories[slot], sizeof(directories[slot]));
-    status = mounts[volume].backend->list(volume, canonical,
-        directories[slot].entries, SAPFS_MAX_LIST_ENTRIES,
-        &directories[slot].count);
+    directories[slot].backend = mounts[volume].backend;
+    directories[slot].streaming =
+        mounts[volume].backend->directory_open != NULL &&
+        mounts[volume].backend->directory_read != NULL &&
+        mounts[volume].backend->directory_close != NULL;
+    if (directories[slot].streaming) {
+        status = mounts[volume].backend->directory_open(volume, canonical,
+            &directories[slot].backend_handle);
+    } else {
+        status = mounts[volume].backend->list(volume, canonical,
+            directories[slot].entries, SAPFS_MAX_LIST_ENTRIES,
+            &directories[slot].count);
+    }
     if (status != SAPFS_STATUS_OK) {
         vnode_release(vnode_index, vnodes[vnode_index].generation);
         return status;
@@ -835,6 +916,10 @@ enum sapfs_status sapfs_directory_read(
     if (status != SAPFS_STATUS_OK) {
         return status;
     }
+    if (state->streaming) {
+        return state->backend->directory_read(state->backend_handle, entry,
+            present);
+    }
     if (state->cursor == state->count) {
         return SAPFS_STATUS_OK;
     }
@@ -858,9 +943,12 @@ enum sapfs_status sapfs_directory_close(sapfs_directory_handle handle)
     }
     vnode_generation = state->vnode_generation;
     vnode_index = state->vnode_index;
+    if (state->streaming) {
+        status = state->backend->directory_close(state->backend_handle);
+    }
     state->active = false;
     vnode_release(vnode_index, vnode_generation);
-    return SAPFS_STATUS_OK;
+    return status;
 }
 
 enum sapfs_status sapfs_create(enum sapfs_volume volume, const char *path)
@@ -875,7 +963,7 @@ enum sapfs_status sapfs_create(enum sapfs_volume volume, const char *path)
 enum sapfs_status sapfs_truncate(
     enum sapfs_volume volume,
     const char *path,
-    uint32_t size
+    uint64_t size
 )
 {
     char canonical[SAPFS_MAX_PATH];
@@ -960,4 +1048,25 @@ enum sapfs_status sapfs_rmdir(enum sapfs_volume volume, const char *path)
     vnode_release(vnode_index, vnodes[vnode_index].generation);
     return status == SAPFS_STATUS_OK ?
         mounts[volume].backend->rmdir(volume, canonical) : status;
+}
+
+enum sapfs_status sapfs_link(
+    enum sapfs_volume volume,
+    const char *source,
+    const char *destination
+)
+{
+    char source_canonical[SAPFS_MAX_PATH];
+    char destination_canonical[SAPFS_MAX_PATH];
+    size_t vnode_index;
+    enum sapfs_status status = resolve_path(
+        volume, source, source_canonical, &vnode_index);
+
+    if (status != SAPFS_STATUS_OK) {
+        return status;
+    }
+    status = resolve_parent(volume, destination, destination_canonical);
+    vnode_release(vnode_index, vnodes[vnode_index].generation);
+    return status == SAPFS_STATUS_OK ? mounts[volume].backend->link(volume,
+        source_canonical, destination_canonical) : status;
 }

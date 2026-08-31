@@ -11,6 +11,8 @@
 //! where results are written back through validated C pointers. Each one states
 //! the condition the caller has to meet.
 
+extern crate alloc;
+
 use crate::elf64;
 use crate::ext4;
 use crate::fat16;
@@ -23,6 +25,7 @@ use crate::native_image;
 use crate::nvbios;
 use crate::wallpaper;
 use crate::ui_font;
+use alloc::boxed::Box;
 use core::alloc::{GlobalAlloc, Layout};
 use core::ffi::c_void;
 use core::ptr::null_mut;
@@ -101,6 +104,13 @@ pub(crate) fn ext4_block_read(
 }
 
 const _: () = {
+    assert!(core::mem::size_of::<ext4::Identity>() == 32);
+    assert!(core::mem::size_of::<ext4::Metadata>() == 40);
+    assert!(core::mem::align_of::<ext4::Metadata>() == 8);
+    assert!(core::mem::offset_of!(ext4::Metadata, file_type) == 28);
+    assert!(core::mem::size_of::<ext4::DirectoryEntry>() == 304);
+    assert!(core::mem::offset_of!(ext4::DirectoryEntry, name) == 42);
+
     assert!(fat32::Status::Count as i32 == 37);
     assert!(core::mem::size_of::<fat32::Geometry>() == 96);
     assert!(core::mem::align_of::<fat32::Geometry>() == 8);
@@ -187,27 +197,156 @@ pub(crate) fn panic() -> ! {
     unsafe { console_panic(c"Rust panicked".as_ptr() as *const u8) }
 }
 
-/// Validate the ext4 volume behind a temporary native block-I/O context.
+/// Load and validate a supported read-only ext4 volume.
 ///
 /// # Safety
-/// `identity` must point to writable storage for one [`ext4::Identity`]. The
-/// context must remain valid for the duration of this synchronous call.
+/// Both outputs must name complete writable values. `context` remains owned by
+/// C and must outlive the returned opaque mount.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn sapote_ext4_probe(
+pub(crate) unsafe extern "C" fn sapote_ext4_mount(
     context: usize,
+    media_bytes: u64,
     identity: *mut ext4::Identity,
+    mounted_out: *mut usize,
 ) -> i32 {
-    if context == 0 || identity.is_null() {
-        return 1;
+    if context == 0 || identity.is_null() || mounted_out.is_null() {
+        return ext4::Status::NullArgument as i32;
     }
-    match ext4::probe(context) {
-        Ok(value) => {
-            // SAFETY: the checked pointer is the function contract.
-            unsafe { *identity = value };
-            0
+    // SAFETY: both outputs are non-null and writable by contract.
+    unsafe {
+        *identity = ext4::Identity::default();
+        *mounted_out = 0;
+    }
+    match ext4::mount(context, media_bytes) {
+        Ok((mounted, value)) => {
+            // SAFETY: both outputs are still valid; Box ownership crosses to C.
+            unsafe {
+                *identity = value;
+                *mounted_out = Box::into_raw(mounted) as usize;
+            }
+            ext4::Status::Ok as i32
         }
-        Err(ext4::ProbeError::Io) => 3,
-        Err(ext4::ProbeError::Invalid) => 4,
+        Err(status) => status as i32,
+    }
+}
+
+/// Drop one opaque ext4 mount returned by [`sapote_ext4_mount`].
+///
+/// # Safety
+/// `mounted` must be a live, uniquely owned value returned by one successful
+/// mount call and must not be used again.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn sapote_ext4_unmount(mounted: usize) -> i32 {
+    if mounted == 0 {
+        return ext4::Status::NullArgument as i32;
+    }
+    // SAFETY: uniqueness and provenance are the function contract.
+    drop(unsafe { Box::from_raw(mounted as *mut ext4::Mounted) });
+    ext4::Status::Ok as i32
+}
+
+/// Resolve one mount-relative ext4 path.
+///
+/// # Safety
+/// `mounted` must be live, `path` must name `path_length` readable bytes, and
+/// `metadata` must name one writable result. Ranges must not overlap.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn sapote_ext4_stat(
+    mounted: usize,
+    path: *const u8,
+    path_length: usize,
+    metadata: *mut ext4::Metadata,
+) -> i32 {
+    if mounted == 0 || path.is_null() || metadata.is_null() {
+        return ext4::Status::NullArgument as i32;
+    }
+    // SAFETY: all ranges are complete and non-overlapping by contract.
+    let (filesystem, bytes) = unsafe {
+        (
+            &*(mounted as *const ext4::Mounted),
+            core::slice::from_raw_parts(path, path_length),
+        )
+    };
+    match ext4::stat(filesystem, bytes) {
+        Ok(value) => {
+            // SAFETY: the caller supplied one writable result.
+            unsafe { *metadata = value };
+            ext4::Status::Ok as i32
+        }
+        Err(status) => status as i32,
+    }
+}
+
+/// Read a checked byte range without changing a file cursor.
+///
+/// # Safety
+/// The mount and input path must be readable and live; `destination` must name
+/// `capacity` writable bytes and `read_out` one writable `usize`.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn sapote_ext4_pread(
+    mounted: usize,
+    path: *const u8,
+    path_length: usize,
+    offset: u64,
+    destination: *mut u8,
+    capacity: usize,
+    read_out: *mut usize,
+) -> i32 {
+    if mounted == 0 || path.is_null() || destination.is_null() || read_out.is_null() {
+        return ext4::Status::NullArgument as i32;
+    }
+    // SAFETY: all complete ranges and non-aliasing are the function contract.
+    let (filesystem, bytes, output) = unsafe {
+        (
+            &*(mounted as *const ext4::Mounted),
+            core::slice::from_raw_parts(path, path_length),
+            core::slice::from_raw_parts_mut(destination, capacity),
+        )
+    };
+    match ext4::pread(filesystem, bytes, offset, output) {
+        Ok(read) => {
+            // SAFETY: the caller supplied one writable result.
+            unsafe { *read_out = read };
+            ext4::Status::Ok as i32
+        }
+        Err(status) => status as i32,
+    }
+}
+
+/// Return one directory entry by stable enumeration index.
+///
+/// # Safety
+/// The mount/path inputs must be live and readable, `entry` one writable value,
+/// and `present` one writable byte. The ranges must not overlap.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn sapote_ext4_directory_entry(
+    mounted: usize,
+    path: *const u8,
+    path_length: usize,
+    index: u64,
+    entry: *mut ext4::DirectoryEntry,
+    present: *mut bool,
+) -> i32 {
+    if mounted == 0 || path.is_null() || entry.is_null() || present.is_null() {
+        return ext4::Status::NullArgument as i32;
+    }
+    // SAFETY: inputs are complete readable values by contract.
+    let (filesystem, bytes) = unsafe {
+        (
+            &*(mounted as *const ext4::Mounted),
+            core::slice::from_raw_parts(path, path_length),
+        )
+    };
+    match ext4::directory_entry(filesystem, bytes, index) {
+        Ok(value) => {
+            // SAFETY: both outputs were checked and are writable by contract.
+            unsafe {
+                *present = value.is_some();
+                *entry = value.unwrap_or_default();
+            }
+            ext4::Status::Ok as i32
+        }
+        Err(status) => status as i32,
     }
 }
 
