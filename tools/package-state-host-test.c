@@ -272,10 +272,24 @@ static int test_sha256(void)
         0xb4U, 0x10U, 0xffU, 0x61U, 0xf2U, 0x00U, 0x15U, 0xadU
     };
     uint8_t digest[PACKAGE_STATE_SHA256_BYTES];
+    struct package_state_sha256_context context;
 
     CHECK(package_state_sha256((const uint8_t *)"abc", 3U, digest) ==
         PACKAGE_STATE_STATUS_OK, 1);
     CHECK(same_bytes(digest, expected, sizeof(expected)), 2);
+    CHECK(package_state_sha256_initialize(&context) ==
+        PACKAGE_STATE_STATUS_OK &&
+        package_state_sha256_update(&context, (const uint8_t *)"a", 1U) ==
+            PACKAGE_STATE_STATUS_OK &&
+        package_state_sha256_update(&context, (const uint8_t *)"bc", 2U) ==
+            PACKAGE_STATE_STATUS_OK &&
+        package_state_sha256_finish(&context, digest) ==
+            PACKAGE_STATE_STATUS_OK &&
+        same_bytes(digest, expected, sizeof(expected)), 3);
+    CHECK(package_state_sha256_update(&context, NULL, 0U) ==
+        PACKAGE_STATE_STATUS_SEQUENCE, 4);
+    CHECK(package_state_sha256_finish(&context, digest) ==
+        PACKAGE_STATE_STATUS_SEQUENCE, 5);
     return 0;
 }
 

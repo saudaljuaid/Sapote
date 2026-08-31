@@ -39,7 +39,16 @@ enum package_state_status {
     PACKAGE_STATE_STATUS_JOURNAL,
     PACKAGE_STATE_STATUS_MISMATCH,
     PACKAGE_STATE_STATUS_INCOMPLETE,
+    PACKAGE_STATE_STATUS_SEQUENCE,
     PACKAGE_STATE_STATUS_COUNT
+};
+
+struct package_state_sha256_context {
+    uint32_t state[8];
+    uint64_t byte_count;
+    uint8_t block[64];
+    size_t block_bytes;
+    bool finished;
 };
 
 struct package_state_database_view {
@@ -103,6 +112,21 @@ struct package_state_recovery_result {
 enum package_state_status package_state_sha256(
     const uint8_t *bytes,
     size_t byte_count,
+    uint8_t digest[PACKAGE_STATE_SHA256_BYTES]
+);
+
+enum package_state_status package_state_sha256_initialize(
+    struct package_state_sha256_context *context
+);
+
+enum package_state_status package_state_sha256_update(
+    struct package_state_sha256_context *context,
+    const uint8_t *bytes,
+    size_t byte_count
+);
+
+enum package_state_status package_state_sha256_finish(
+    struct package_state_sha256_context *context,
     uint8_t digest[PACKAGE_STATE_SHA256_BYTES]
 );
 

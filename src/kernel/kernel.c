@@ -11,6 +11,7 @@
 #include <sapote/console.h>
 #include <sapote/fat32_fs.h>
 #include <sapote/native_process.h>
+#include <sapote/package_service.h>
 #include <sapote/shell.h>
 #include <sapote/test.h>
 #include <sapote/ui.h>
@@ -24,6 +25,41 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information);
  */
 static struct boot_context installed_context;
 static struct boot_ledger installed_ledger;
+
+static void recover_package_state(void)
+{
+    enum sapfs_status filesystem_status = sapfs_mount(SAPFS_VOLUME_DATA);
+
+    if (filesystem_status != SAPFS_STATUS_OK &&
+        filesystem_status != SAPFS_STATUS_ALREADY_MOUNTED) {
+        console_write("Sapote: package recovery unavailable: ");
+        console_write(sapfs_status_string(filesystem_status));
+        console_putc('\n');
+        return;
+    }
+    struct package_service_report report;
+    enum package_service_status status = package_service_recover(&report);
+
+    if (status == PACKAGE_SERVICE_STATUS_ABSENT) {
+        console_write("Sapote: package transaction state absent\n");
+        return;
+    }
+    if (status != PACKAGE_SERVICE_STATUS_OK) {
+        console_write("Sapote: package recovery refused: ");
+        console_write(package_service_status_string(status));
+        console_write("; state ");
+        console_write(package_state_status_string(report.state_status));
+        console_write("; filesystem ");
+        console_write(sapfs_status_string(report.filesystem_status));
+        console_putc('\n');
+        console_panic("unsafe package transaction state");
+    }
+    console_write("Sapote: package generation ");
+    console_write_u64(report.generation);
+    console_write(" verified files ");
+    console_write_u64(report.files_verified);
+    console_write(" resources released\n");
+}
 
 static void report_ledger_refusal(
     const struct boot_ledger *ledger,
@@ -100,6 +136,9 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     console_write_u64(filesystem_tests);
     console_write("/6 passed\n");
     sapfs_initialize();
+    if (installed_context.test_scenario == KERNEL_TEST_NORMAL) {
+        recover_package_state();
+    }
     if (!native_process_self_test(&native_process_tests)) {
         console_panic("native userspace foundation self-test failed");
     }

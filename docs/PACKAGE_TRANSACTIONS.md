@@ -8,11 +8,12 @@ deterministic in-memory reference model for package state transitions. The model
 exercises staging, commit recovery, rollback, removal, dependency retention,
 integrity verification, and repair.
 
-This is format and reference groundwork. It does not write a host System image,
-install a package into Sapote, or provide a guest package service. No guest code
-currently reads these bytes. A future service must connect this contract to
-authenticated package-v3 bytes, the signed repository lock, bounded filesystem
-operations, durability barriers, and the guest CLI.
+The host tool remains format/reference groundwork and does not write a host
+System image or install a package into Sapote. The guest now has a privileged,
+VFS-backed recovery service for already staged generations. It deliberately does
+not authenticate downloads, stage an install, resolve dependencies, or expose a
+package CLI. Those operations still need to connect authenticated package-v3
+bytes and a signed repository lock to this transaction contract.
 
 ## Trust and namespace boundary
 
@@ -202,7 +203,7 @@ some old files with some new metadata. Cancellation is permitted only while the
 base authority is still selected; afterward normal recovery is required.
 
 `include/sapote/package_state.h` and `src/kernel/package_state.c` provide the
-first guest-consumable part of this contract. They are freestanding and
+allocation-free parsing and decision core. They are freestanding and
 allocation-free: all untrusted integers are decoded from checked little-endian
 byte fields, SHA-256 is computed incrementally in fixed storage, dependency
 cycle/reachability state is bounded by the 256-package maximum, and no on-disk
@@ -211,20 +212,80 @@ locations, counts, record sizes, canonical text and SemVer grammars, package-v3
 per-package limits, unique sorting, provider existence, file ownership, modes,
 SONAMEs, zero reserved bytes, and both content and envelope digests.
 
+The SHA-256 context API is public so the filesystem service can hash immutable
+files in bounded chunks; update-after-finish, finish-twice, and counter overflow
+are refused.
+
 The C recovery core accepts two database candidates and one explicit
 `owned_files_complete` proof per candidate. That proof is deliberately not
-inferred from a database checksum: a future privileged service must iterate the
-owned-file records, open the immutable generation without following unsafe
-links, bound every read, and verify exact length and SHA-256 before setting it.
+inferred from a database checksum. `include/sapote/package_service.h` and
+`src/kernel/package_service.c` now produce it by enumerating the immutable root,
+refusing extra files and multiply linked files, then checking each declared
+file's type, exposed mode, stable object identity, exact length, EOF, and SHA-256
+through 4 KiB reads. A missing or changed file leaves that candidate incomplete.
 The core then re-parses and re-hashes both databases itself, binds them to the
 journal, and selects only the complete base or authoritative complete target.
 An authority generation, database length, or database digest unrelated to the
 prepared journal is refused as a state mismatch. With no journal, exactly one
 complete candidate must match authority.
 
-This remains a decision core, not filesystem recovery. It returns which complete
-generation is safe; it does not rename authority, delete staging, install files,
-or mutate user data.
+## Guest filesystem recovery service
+
+The service uses the data volume and this 8.3-safe metadata layout. Generation
+numbers are fixed-width lowercase hexadecimal, split into high and low 32-bit
+directory components:
+
+```text
+pkgstate/auth.bin
+pkgstate/auth.new
+pkgstate/auth.old
+pkgstate/txn.bin
+pkgstate/gen/00000000/00000001/state.db
+pkgstate/gen/00000000/00000001/root/<database-owned path>
+```
+
+The privileged call is
+`package_service_recover(struct package_service_report *)`. The heap and data
+volume must already be online, and package-owned executables must not be opened
+until it returns `PACKAGE_SERVICE_STATUS_OK`. The source is picked up by the
+kernel's existing `src/kernel/*.c` rule without another kernel source list; the
+Makefile additions are the focused host target and its `verify` dependency.
+On a normal (non-test-scenario) boot, `kernel_main` initializes the VFS, mounts
+the data volume, and calls this entry point before native-process self-tests or
+the shell. An absent data volume or entirely absent transaction state is
+reported and leaves the package subsystem unavailable. Once any transaction
+envelope exists, malformed or incomplete state is a boot refusal rather than a
+fallback into package-owned execution. Focused host verification is wired as
+`make package-service-tests`. There is intentionally no shell command or native
+ABI endpoint that could report installation success.
+
+With a prepared journal, the service loads the exact base and target database
+lengths named by the journal, validates both candidates, and calls the recovery
+decision core. A guest-specific 4 MiB database cap keeps two candidates, the
+directory scratch list, and existing kernel allocations within the 16 MiB heap;
+larger format-valid databases are refused as a resource bound. Each directory
+is limited by the VFS list bound of 64 entries, each tree walk by 8,192 entries,
+and path depth by the VFS depth bound. Candidate buffers, scratch storage, and
+file handles are counted in the returned report and released on every exit.
+
+When authority must be repaired, recovery writes and closes `auth.new`, syncs,
+moves an existing `auth.bin` to `auth.old`, syncs that fallback, moves
+`auth.new` to `auth.bin`, and syncs the selection. Only then may it recursively
+remove the discarded fixed generation. The journal and authority fallback are
+removed last and another sync makes cleanup durable. A cleanup or sync failure
+leaves the journal present so a later recovery can retry; it is never converted
+to success. If a crash leaves `auth.bin` absent, a canonical `auth.old` is an
+eligible conservative fallback and is rewritten through the same protocol.
+Malformed journals are never discarded automatically.
+
+Cleanup is confined to the computed discarded generation directory and the
+three fixed transaction envelope paths. Mutable user data remains outside
+`pkgstate/gen/.../root` and is never traversed. The recovery service does not
+create package files, accept package payload bytes, or modify dependency state.
+On the short-name FAT backend, metadata paths work, but a database path whose
+components cannot be represented by that backend will be observed as incomplete
+and refused; ext4 or future long-name support is required for general package-v3
+paths.
 
 ## Removal, references, and repair
 
@@ -259,6 +320,11 @@ gcc -std=c11 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude \
     tools/package-state-host-test.c src/kernel/package_state.c \
     -o build/package-state-host-test
 build/package-state-host-test
+
+gcc -std=c11 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude \
+    tools/package-service-host-test.c src/kernel/package_service.c \
+    src/kernel/package_state.c -o build/package-service-host-test
+build/package-service-host-test
 ```
 
 The test creates only in-memory reference stores. It covers deterministic
@@ -267,16 +333,22 @@ replacement, incomplete-new fallback, update rollback, transactional removal,
 shared dependency retention, ownership collision, cancellation cleanup,
 low-space refusal, verify/repair, and preserved user data.
 
-The C host test independently constructs canonical empty-base and two-package
+The parser C host test independently constructs canonical empty-base and two-package
 target byte fixtures, then mutates reserved fields, table bounds, canonical
 package text, provider bindings, ownership paths, content digests, authority,
 and journal records. It exercises recovery before and after the authority switch,
 incomplete-new fallback, absent-journal selection, corrupt-authority fallback,
 and unrelated-authority refusal under `-Werror`.
 
+The service host test links the real service against a bounded in-memory VFS and
+heap. It covers no-journal verification, pre-authority rollback,
+post-authority completion, exact file digest tamper, an unowned extra file,
+authority repair ordering, recursive cleanup, no-complete-generation refusal,
+durability failure with journal retention, and zero live handle/allocation
+census on every exit.
+
 Guest integration still requires authenticated download/cache plumbing,
-filesystem generation directories or equivalent immutable storage, bounded I/O
-and cancellation points, fsync/flush and atomic-replace guarantees, boot-time
-recovery invocation, service authorization, CLI presentation, and end-to-end
-power-failure tests. Until those exist, this tool must not be described as a
-host installer or Sapote's guest package manager.
+generation staging and cancellation, service authorization, CLI presentation,
+backend-specific atomic-rename evidence, and end-to-end power-cut tests on real
+FAT32/ext4/NVMe images. Until those exist, this recovery infrastructure must not
+be described as a host installer or Sapote's package manager.

@@ -21,13 +21,6 @@ struct byte_field {
     size_t length;
 };
 
-struct sha256_context {
-    uint32_t state[8];
-    uint64_t byte_count;
-    uint8_t block[64];
-    size_t block_bytes;
-};
-
 static const uint32_t sha256_initial[8] = {
     UINT32_C(0x6a09e667), UINT32_C(0xbb67ae85),
     UINT32_C(0x3c6ef372), UINT32_C(0xa54ff53a),
@@ -130,7 +123,10 @@ static uint32_t rotate_right(uint32_t value, uint32_t amount)
     return value >> amount | value << (32U - amount);
 }
 
-static void sha256_transform(struct sha256_context *context, const uint8_t *block)
+static void sha256_transform(
+    struct package_state_sha256_context *context,
+    const uint8_t *block
+)
 {
     uint32_t words[64];
     uint32_t a;
@@ -197,24 +193,40 @@ static void sha256_transform(struct sha256_context *context, const uint8_t *bloc
     context->state[7] += h;
 }
 
-static void sha256_initialize(struct sha256_context *context)
+enum package_state_status package_state_sha256_initialize(
+    struct package_state_sha256_context *context
+)
 {
+    if (context == NULL) {
+        return PACKAGE_STATE_STATUS_NULL_ARGUMENT;
+    }
     for (size_t index = 0U; index < 8U; ++index) {
         context->state[index] = sha256_initial[index];
     }
     context->byte_count = 0U;
     context->block_bytes = 0U;
+    context->finished = false;
+    return PACKAGE_STATE_STATUS_OK;
 }
 
-static bool sha256_update(
-    struct sha256_context *context,
+enum package_state_status package_state_sha256_update(
+    struct package_state_sha256_context *context,
     const uint8_t *bytes,
-    size_t count
+    size_t byte_count
 )
 {
+    size_t count = byte_count;
+
     if (context == NULL || (bytes == NULL && count != 0U) ||
-        count > UINT64_MAX - context->byte_count) {
-        return false;
+        (context != NULL &&
+            (context->byte_count > UINT64_MAX / UINT64_C(8) ||
+                (uint64_t)count > UINT64_MAX / UINT64_C(8) -
+                    context->byte_count))) {
+        return context == NULL || (bytes == NULL && count != 0U) ?
+            PACKAGE_STATE_STATUS_NULL_ARGUMENT : PACKAGE_STATE_STATUS_OVERFLOW;
+    }
+    if (context->finished) {
+        return PACKAGE_STATE_STATUS_SEQUENCE;
     }
     context->byte_count += count;
     while (count != 0U) {
@@ -229,14 +241,20 @@ static bool sha256_update(
             context->block_bytes = 0U;
         }
     }
-    return true;
+    return PACKAGE_STATE_STATUS_OK;
 }
 
-static void sha256_finish(
-    struct sha256_context *context,
+enum package_state_status package_state_sha256_finish(
+    struct package_state_sha256_context *context,
     uint8_t digest[PACKAGE_STATE_SHA256_BYTES]
 )
 {
+    if (context == NULL || digest == NULL) {
+        return PACKAGE_STATE_STATUS_NULL_ARGUMENT;
+    }
+    if (context->finished) {
+        return PACKAGE_STATE_STATUS_SEQUENCE;
+    }
     const uint64_t bit_count = context->byte_count * UINT64_C(8);
 
     context->block[context->block_bytes++] = UINT8_C(0x80);
@@ -260,6 +278,8 @@ static void sha256_finish(
         digest[index * 4U + 2U] = (uint8_t)(context->state[index] >> 8U);
         digest[index * 4U + 3U] = (uint8_t)context->state[index];
     }
+    context->finished = true;
+    return PACKAGE_STATE_STATUS_OK;
 }
 
 enum package_state_status package_state_sha256(
@@ -268,7 +288,7 @@ enum package_state_status package_state_sha256(
     uint8_t digest[PACKAGE_STATE_SHA256_BYTES]
 )
 {
-    struct sha256_context context;
+    struct package_state_sha256_context context;
 
     if (digest == NULL || (bytes == NULL && byte_count != 0U)) {
         return PACKAGE_STATE_STATUS_NULL_ARGUMENT;
@@ -276,12 +296,12 @@ enum package_state_status package_state_sha256(
     if ((uint64_t)byte_count > UINT64_MAX / UINT64_C(8)) {
         return PACKAGE_STATE_STATUS_OVERFLOW;
     }
-    sha256_initialize(&context);
-    if (!sha256_update(&context, bytes, byte_count)) {
-        return PACKAGE_STATE_STATUS_OVERFLOW;
+    enum package_state_status status = package_state_sha256_initialize(&context);
+    if (status == PACKAGE_STATE_STATUS_OK) {
+        status = package_state_sha256_update(&context, bytes, byte_count);
     }
-    sha256_finish(&context, digest);
-    return PACKAGE_STATE_STATUS_OK;
+    return status == PACKAGE_STATE_STATUS_OK ?
+        package_state_sha256_finish(&context, digest) : status;
 }
 
 static enum package_state_status fixed_text(
@@ -970,7 +990,7 @@ enum package_state_status package_state_journal_parse(
         'S', 'A', 'P', 'T', 'X', 'N', '0', '1'
     };
     static const uint8_t zero_digest[PACKAGE_STATE_SHA256_BYTES] = { 0U };
-    struct sha256_context context;
+    struct package_state_sha256_context context;
     struct byte_field target;
     uint8_t digest[PACKAGE_STATE_SHA256_BYTES];
     uint16_t operation;
@@ -1009,14 +1029,25 @@ enum package_state_status package_state_journal_parse(
         (target.length != 0U && !package_identifier(&target))) {
         return PACKAGE_STATE_STATUS_TEXT;
     }
-    sha256_initialize(&context);
-    if (!sha256_update(&context, bytes, 128U) ||
-        !sha256_update(&context, zero_digest, sizeof(zero_digest)) ||
-        !sha256_update(&context, bytes + 160U,
-            PACKAGE_STATE_JOURNAL_BYTES - 160U)) {
-        return PACKAGE_STATE_STATUS_OVERFLOW;
+    enum package_state_status status = package_state_sha256_initialize(&context);
+    if (status == PACKAGE_STATE_STATUS_OK) {
+        status = package_state_sha256_update(&context, bytes, 128U);
     }
-    sha256_finish(&context, digest);
+    if (status == PACKAGE_STATE_STATUS_OK) {
+        status = package_state_sha256_update(&context, zero_digest,
+            sizeof(zero_digest));
+    }
+    if (status == PACKAGE_STATE_STATUS_OK) {
+        status = package_state_sha256_update(&context, bytes + 160U,
+            PACKAGE_STATE_JOURNAL_BYTES - 160U);
+    }
+    if (status != PACKAGE_STATE_STATUS_OK) {
+        return status;
+    }
+    status = package_state_sha256_finish(&context, digest);
+    if (status != PACKAGE_STATE_STATUS_OK) {
+        return status;
+    }
     if (!equal_bytes(digest, bytes + 128U, sizeof(digest))) {
         return PACKAGE_STATE_STATUS_DIGEST;
     }
@@ -1191,7 +1222,8 @@ const char *package_state_status_string(enum package_state_status status)
         "invalid authority record",
         "invalid journal record",
         "state mismatch",
-        "no complete generation"
+        "no complete generation",
+        "invalid hash sequence"
     };
 
     _Static_assert(sizeof(names) / sizeof(names[0]) ==

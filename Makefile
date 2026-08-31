@@ -71,6 +71,7 @@ RUST_NATIVE_IMAGE_TEST := $(BUILD_DIR)/native-image-tests
 WALL_CLOCK_HOST_TEST := $(TEST_BUILD_DIR)/wall-clock-host-test
 SDK_TIME_HOST_TEST := $(TEST_BUILD_DIR)/sdk-time-host-test
 PACKAGE_STATE_HOST_TEST := $(TEST_BUILD_DIR)/package-state-host-test
+PACKAGE_SERVICE_HOST_TEST := $(TEST_BUILD_DIR)/package-service-host-test
 TLS_HOST_TEST := $(TEST_BUILD_DIR)/tls-client-host-test
 TLS_HOST_OBJECT := $(TEST_BUILD_DIR)/tls-client.o
 TLS_HOST_WRAPPER_OBJECT := $(TEST_BUILD_DIR)/tls-wrapper.o
@@ -325,7 +326,7 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d)
 # They never create a file of their own name, so they rerun regardless.
 .PHONY: all audio-wav-tests capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios dynamic-elf-tests ext4-images ext4-tests fat32-images hooks \
 	iso kernel lint native-apps native-audio-proof port-tests qemu-port-tests reproducible-sdk run \
-	package-repository-tests package-state-tests package-transaction-tests screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests zlib-tests
+	package-repository-tests package-service-tests package-state-tests package-transaction-tests screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests zlib-tests
 
 all: kernel
 
@@ -934,6 +935,20 @@ $(PACKAGE_STATE_HOST_TEST): tools/package-state-host-test.c \
 package-state-tests: $(PACKAGE_STATE_HOST_TEST)
 	$(PACKAGE_STATE_HOST_TEST)
 
+$(PACKAGE_SERVICE_HOST_TEST): tools/package-service-host-test.c \
+		tools/package-state-host-test.c src/kernel/package_service.c \
+		src/kernel/package_state.c include/sapote/package_service.h \
+		include/sapote/package_state.h include/sapote/fat32_fs.h \
+		include/sapote/heap.h
+	mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -Wshadow \
+		-Wundef -Wstrict-prototypes -Wmissing-prototypes -Iinclude \
+		tools/package-service-host-test.c src/kernel/package_service.c \
+		src/kernel/package_state.c -o $@
+
+package-service-tests: $(PACKAGE_SERVICE_HOST_TEST)
+	$(PACKAGE_SERVICE_HOST_TEST)
+
 $(ZLIB_HOST_TEST): tools/zlib-host-test.c sdk/src/zlib.c \
 		sdk/include/sapote/zlib.h $(ZLIB_SOURCE) $(ZLIB_HEADERS)
 	mkdir -p $(dir $@)
@@ -987,7 +1002,8 @@ verify: toolchain lint
 	$(MAKE) clean
 	$(MAKE) kernel
 	$(MAKE) wall-clock-tests ext4-tests package-repository-tests \
-		package-transaction-tests package-state-tests dynamic-elf-tests \
+		package-transaction-tests package-state-tests package-service-tests \
+		dynamic-elf-tests \
 		tls-tests zlib-tests
 	$(PYTHON) tools/verify-ui-assets.py
 	@test '$(LOGO_MAX_DIMENSION)' -eq 280
