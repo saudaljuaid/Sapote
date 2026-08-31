@@ -940,6 +940,8 @@ wall-clock-tests: $(WALL_CLOCK_HOST_TEST) $(SDK_TIME_HOST_TEST)
 
 ext4-tests: tools/ext4_image.py tools/ext4_host_test.py
 	$(PYTHON) -u tools/ext4_host_test.py
+	$(CARGO) test --manifest-path vendor/ext4plus/Cargo.toml \
+		--no-default-features --features sync --locked --offline
 
 package-repository-tests: tools/sapote-repository.py \
 		tools/sapote_repository_host_test.py tools/sapote-package.py

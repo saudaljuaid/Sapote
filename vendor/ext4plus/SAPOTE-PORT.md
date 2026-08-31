@@ -17,9 +17,21 @@ the port adds an ordered, checksummed JBD2 writer over Sapote's explicit NVMe
 Flush fence and passes deliberate power-loss tests. Read-only mount admission
 may be integrated before that point.
 
+Sapote's first local journaling delta is intentionally below that admission
+line. `src/journal/transaction.rs` builds one bounded checksum-v3 descriptor,
+metadata set, and commit record and returns an ordered-data operation plan with
+explicit data, journal-payload, commit, and checkpoint flush barriers. It also
+validates a complete transaction for replay and has corruption and every-cut
+unit controls. It does not allocate the journal ring, emit revokes, update the
+journal superblock, bind a barrier to platform I/O, or redirect ext4 mutation
+methods away from their upstream home-block writes. Those gaps keep the Sapote
+backend read-only.
+
 Sapote-specific changes stay in reviewable commits and are summarized here as
 they land. The intended port configuration is `--no-default-features
 --features sync`; the asynchronous and hosted `std` surfaces are out of scope.
+The standalone lockfile is generated from the repository's committed offline
+crate mirror and matches the dependency versions in `src/rust/Cargo.lock`.
 The vendored manifest replaces workspace-inherited edition/license fields and
 removes upstream-only `xtask`/dev dependencies because those sources and test
 fixtures are deliberately outside the runtime vendor boundary.

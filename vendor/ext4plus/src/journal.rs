@@ -12,6 +12,7 @@ mod commit_block;
 mod descriptor_block;
 mod revocation_block;
 mod superblock;
+pub(crate) mod transaction;
 
 use crate::Ext4;
 use crate::block_index::FsBlockIndex;

@@ -74,3 +74,47 @@ in the same implementation:
 This gate prevents a home-block writer from being mistaken for crash-consistent
 ext4. The vendored port record in `vendor/ext4plus/SAPOTE-PORT.md` tracks the
 delta from the exact upstream commit.
+
+## Ordered transaction foundation
+
+The vendored crate now contains a lower-level, no-std transaction primitive;
+this does **not** open the read-write admission gate. `JournalTransaction`
+accepts only complete 4 KiB block images, rejects duplicate or out-of-range
+home blocks, bounds ordered-data and metadata sets to 64 blocks each, and
+refuses metadata that would require the unsupported JBD2 magic-escape rule. A
+transaction serializes one checksum-v3/64-bit descriptor, its checksummed
+metadata images, and one checksummed commit block. The serializer feeds the
+same descriptor-tag and commit validators used by the existing replay reader.
+
+The caller must supply a distinct physical journal block for the descriptor,
+each metadata image, and the commit. The resulting operation list has one legal
+order:
+
+```text
+ordered file-data home writes
+Flush(OrderedData)
+descriptor and metadata journal writes
+Flush(JournalPayload)
+commit journal write
+Flush(Commit)
+metadata home-block checkpoint writes
+Flush(Checkpoint)
+```
+
+There is no metadata home-block operation before `Flush(Commit)`. A complete,
+checksummed commit is required before `replay_committed_transaction()` returns
+any home image. Pure tests cut the operation list at every boundary and verify
+that every pre-commit prefix is non-replayable and has no durable home metadata;
+they also corrupt descriptor, data, and commit bytes independently.
+`make ext4-tests` runs those vendored-crate controls in the admitted
+`--no-default-features --features sync` profile as well as the existing hostile
+image suite, using only the committed Cargo source mirror.
+
+Sapote's NVMe layer already exposes the required `nvme_volume_flush()` fence,
+but the ext4 backend deliberately does not bind the plan to it yet. The missing
+work is not a small wrapper: it needs journal-inode ring allocation and wrap,
+head/tail and sequence updates, revoke records for block reuse, checkpoint/log
+reclamation, allocation rollback, a writable Rust/C volume lease, and VFS-level
+mutation/handle coherency. Until all of those are integrated and power-cut in
+QEMU, `ext4_backend_drive().read_only` remains true and create, write,
+truncate, rename, unlink, and sync remain `EROFS`.

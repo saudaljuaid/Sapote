@@ -14,16 +14,18 @@ The sole ext4 implementation candidate is the official
 [`arihant2math/ext4plus`](https://github.com/arihant2math/ext4plus) repository at
 commit `ec7e8443e474376977bb752cde370762226a5a50`, Git tree
 `a4aea888632546b2bbfbefa97b43ca6c8f945fc8`. The exact `no_std` source tree,
-manifest, lockfile, README, MIT license, and Apache-2.0 license are retained
-under `vendor/ext4plus/`. Sapote selects the MIT terms for GPL-3.0-only
-distribution; both upstream notices remain available.
+README, MIT license, and Apache-2.0 license are retained under
+`vendor/ext4plus/`. Sapote selects the MIT terms for GPL-3.0-only distribution;
+both upstream notices remain available.
 
 The local manifest removes workspace inheritance and development-only inputs;
-the implementation source is otherwise pinned to the recorded tree. The
-accepted runtime profile is currently read-only. Upstream does not implement a
-journaled write path, so vendoring it does not establish crash-consistent ext4
-writes. `vendor/ext4plus/SAPOTE-PORT.md` records that boundary and the exact
-feature configuration.
+the local lock resolves that manifest to the repository's exact offline Cargo
+mirror, matching the kernel lock. The implementation source is otherwise
+pinned to the recorded tree apart from reviewable Sapote deltas. The accepted
+runtime profile is currently read-only. Upstream does not implement a journaled
+write path, so vendoring it does not establish crash-consistent ext4 writes.
+`vendor/ext4plus/SAPOTE-PORT.md` records that boundary and the exact feature
+configuration.
 
 ## BearSSL
 
