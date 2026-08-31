@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import struct
 import sys
 from typing import Any
@@ -20,6 +21,29 @@ RESOURCE_HEADER_BYTES = 32
 MAX_PACKAGE_RESOURCES = 13
 PACKAGE_MAGIC = b"SAPOSPK1"
 MANIFEST_MAGIC = b"SAPOTEA1"
+V3_HEADER_BYTES = 512
+V3_FILE_RECORD_BYTES = 256
+V3_RELATION_RECORD_BYTES = 128
+V3_MAX_PACKAGE_BYTES = 256 * 1024 * 1024
+V3_MAX_FILE_BYTES = 64 * 1024 * 1024
+V3_MAX_FILES = 256
+V3_MAX_RELATIONS = 64
+V3_SIGNATURE_OFFSET = 440
+V3_SIGNATURE_BYTES = 64
+V3_SIGNATURE_ALGORITHM_ED25519 = 1
+V3_ARCHITECTURES = {"x86_64"}
+V3_FILE_KINDS = {
+    "executable": 1,
+    "library": 2,
+    "resource": 3,
+    "icon": 4,
+}
+V3_FILE_KIND_NAMES = {value: key for key, value in V3_FILE_KINDS.items()}
+SEMVER_RE = re.compile(
+    r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+    r"(?:-(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?")
 CAPABILITIES = {
     "console": 1 << 0,
     "system-read": 1 << 1,
@@ -42,6 +66,18 @@ def read_regular(path: Path) -> bytes:
     if not path.is_file() or path.is_symlink():
         raise PackageError(f"not an ordinary input file: {path}")
     return path.read_bytes()
+
+
+def read_regular_bounded(path: Path, maximum: int, field: str) -> bytes:
+    if not path.is_file() or path.is_symlink():
+        raise PackageError(f"not an ordinary input file: {path}")
+    size = path.stat().st_size
+    if not 0 < size <= maximum:
+        raise PackageError(f"{field} is empty or exceeds {maximum} bytes: {path}")
+    data = path.read_bytes()
+    if len(data) != size or len(data) > maximum:
+        raise PackageError(f"{field} changed while it was read: {path}")
+    return data
 
 
 def atomic_write(path: Path, data: bytes) -> None:
@@ -93,6 +129,144 @@ def short_path(value: Any, field: str, *, required: bool) -> str:
         raise PackageError(f"{field} must be a string")
     fat32_image.short_name_bytes(value)
     return value.upper()
+
+
+def canonical_printable(value: Any, width: int, field: str) -> str:
+    encoded = text_field(value, width, field, required=True)
+    end = encoded.index(0)
+    if any(byte < 0x20 or byte > 0x7e for byte in encoded[:end]):
+        raise PackageError(f"{field} must contain printable ASCII")
+    return encoded[:end].decode("ascii")
+
+
+def package_identifier(value: Any, field: str) -> str:
+    value = canonical_printable(value, 64, field)
+    if value != value.lower() or not re.fullmatch(
+            r"[a-z0-9]+(?:[.-][a-z0-9]+)*", value):
+        raise PackageError(
+            f"{field} must be a canonical lowercase dotted identifier")
+    return value
+
+
+def semantic_version(value: Any, field: str) -> str:
+    value = canonical_printable(value, 64, field)
+    if SEMVER_RE.fullmatch(value) is None:
+        raise PackageError(f"{field} must be a canonical SemVer 2.0.0 version")
+    return value
+
+
+def version_constraint(value: Any, field: str) -> str:
+    value = canonical_printable(value, 56, field)
+    if value == "*":
+        return value
+    canonical: list[str] = []
+    for index, clause in enumerate(value.split(",")):
+        clause = clause.strip()
+        match = re.fullmatch(r"(=|>=|>|<=|<|\^|~)?(.+)", clause)
+        if match is None:
+            raise PackageError(f"{field}[{index}] is invalid")
+        operator = match.group(1) or "="
+        canonical.append(operator + semantic_version(
+            match.group(2), f"{field}[{index}].version"))
+    return ",".join(canonical)
+
+
+def package_path(value: Any, field: str) -> str:
+    value = canonical_printable(value, 128, field)
+    if value.startswith("/") or value.endswith("/") or "\\" in value:
+        raise PackageError(f"{field} must be a package-root-relative POSIX path")
+    pieces = value.split("/")
+    if any(piece in ("", ".", "..") for piece in pieces) or re.fullmatch(
+            r"[0-9A-Za-z._+/-]+", value) is None:
+        raise PackageError(f"{field} is not a canonical package path")
+    return value
+
+
+def soname(value: Any, field: str) -> str:
+    value = canonical_printable(value, 64, field)
+    if "/" in value or "\\" in value or re.fullmatch(
+            r"[0-9A-Za-z._+-]+", value) is None:
+        raise PackageError(f"{field} must be a canonical library basename")
+    return value
+
+
+def _capability_bits(value: Any) -> int:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise PackageError("capabilities must be a list of names")
+    if len(value) != len(set(value)):
+        raise PackageError("capabilities must not contain duplicates")
+    unknown = sorted(set(value) - CAPABILITIES.keys())
+    if unknown:
+        raise PackageError(f"unknown capabilities: {', '.join(unknown)}")
+    result = 0
+    for name in value:
+        result |= CAPABILITIES[name]
+    return result
+
+
+def _ed25519_modules() -> tuple[Any, Any, Any]:
+    try:
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+            Ed25519PrivateKey, Ed25519PublicKey)
+    except (ImportError, OSError) as error:
+        raise PackageError(
+            "real Ed25519 support is unavailable; install Python cryptography") from error
+    return serialization, Ed25519PrivateKey, Ed25519PublicKey
+
+
+def ed25519_available() -> bool:
+    try:
+        _ed25519_modules()
+    except PackageError:
+        return False
+    return True
+
+
+def _ed25519_private(value: bytes) -> Any:
+    serialization, private_type, _ = _ed25519_modules()
+    try:
+        key = (private_type.from_private_bytes(value) if len(value) == 32 else
+               serialization.load_pem_private_key(value, password=None))
+    except (TypeError, ValueError) as error:
+        raise PackageError("Ed25519 private key must be a raw 32-byte seed or PEM") from error
+    if not isinstance(key, private_type):
+        raise PackageError("private key is not Ed25519")
+    return key
+
+
+def _ed25519_public_bytes_from_private(value: bytes) -> bytes:
+    serialization, _, _ = _ed25519_modules()
+    return _ed25519_private(value).public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw)
+
+
+def _ed25519_public(value: bytes) -> tuple[Any, bytes]:
+    serialization, _, public_type = _ed25519_modules()
+    try:
+        key = (public_type.from_public_bytes(value) if len(value) == 32 else
+               serialization.load_pem_public_key(value))
+    except (TypeError, ValueError) as error:
+        raise PackageError("Ed25519 public key must be 32 raw bytes or PEM") from error
+    if not isinstance(key, public_type):
+        raise PackageError("trusted key is not Ed25519")
+    raw = key.public_bytes(encoding=serialization.Encoding.Raw,
+                           format=serialization.PublicFormat.Raw)
+    return key, raw
+
+
+def trusted_ed25519_keys(paths: list[str] | None) -> dict[str, bytes]:
+    result: dict[str, bytes] = {}
+    for path_value in paths or []:
+        material = read_regular_bounded(Path(path_value), 64 * 1024,
+                                        "Ed25519 public key")
+        _, raw = _ed25519_public(material)
+        key_id = hashlib.sha256(raw).hexdigest()
+        if key_id in result:
+            raise PackageError(f"duplicate trusted Ed25519 key: {key_id}")
+        result[key_id] = material
+    return result
 
 
 def encode_manifest(spec: dict[str, Any], executable: bytes) -> bytes:
@@ -249,7 +423,160 @@ def build_package(spec: dict[str, Any], executable: bytes,
     return bytes(header) + body
 
 
-def parse_package(package: bytes) -> tuple[
+def _v3_relation_records(value: Any, field: str) -> tuple[bytes, list[dict[str, str]]]:
+    if not isinstance(value, list) or len(value) > V3_MAX_RELATIONS:
+        raise PackageError(f"{field} must be a list of at most {V3_MAX_RELATIONS} entries")
+    relations: list[tuple[str, str]] = []
+    for index, relation in enumerate(value):
+        if not isinstance(relation, dict) or set(relation) != {"identifier", "constraint"}:
+            raise PackageError(
+                f"{field}[{index}] must contain only identifier and constraint")
+        relations.append((
+            package_identifier(relation["identifier"], f"{field}[{index}].identifier"),
+            version_constraint(relation["constraint"], f"{field}[{index}].constraint")))
+    relations.sort()
+    if len({identifier_value for identifier_value, _ in relations}) != len(relations):
+        raise PackageError(f"{field} contains a duplicate package identifier")
+    encoded = bytearray()
+    report: list[dict[str, str]] = []
+    for identifier_value, constraint in relations:
+        record = bytearray(V3_RELATION_RECORD_BYTES)
+        record[:64] = text_field(identifier_value, 64, field, required=True)
+        record[64:120] = text_field(constraint, 56, field, required=True)
+        encoded.extend(record)
+        report.append({"identifier": identifier_value, "constraint": constraint})
+    return bytes(encoded), report
+
+
+def _v3_file_records(files: tuple[dict[str, Any], ...],
+                     payload_offset: int) -> tuple[bytes, bytes, list[dict[str, Any]]]:
+    if not files or len(files) > V3_MAX_FILES:
+        raise PackageError(f"files must contain 1-{V3_MAX_FILES} entries")
+    normalized: list[tuple[str, str, int, str, bytes]] = []
+    for index, file_value in enumerate(files):
+        if not isinstance(file_value, dict):
+            raise PackageError(f"files[{index}] must be an object")
+        allowed = {"path", "kind", "mode", "soname", "payload"}
+        if set(file_value) - allowed or not {"path", "kind", "payload"} <= set(file_value):
+            raise PackageError(
+                f"files[{index}] has missing or unknown file metadata")
+        path = package_path(file_value["path"], f"files[{index}].path")
+        kind = file_value["kind"]
+        if not isinstance(kind, str) or kind not in V3_FILE_KINDS:
+            raise PackageError(f"files[{index}].kind is invalid")
+        payload = file_value["payload"]
+        if not isinstance(payload, bytes) or not payload or len(payload) > V3_MAX_FILE_BYTES:
+            raise PackageError(
+                f"files[{index}].payload is empty or exceeds {V3_MAX_FILE_BYTES} bytes")
+        default_mode = 0o555 if kind == "executable" else 0o444
+        mode = file_value.get("mode", default_mode)
+        if mode not in (0o444, 0o555) or (kind == "executable" and mode != 0o555):
+            raise PackageError(f"files[{index}].mode is not a supported canonical mode")
+        soname_value = file_value.get("soname", "")
+        if kind == "library":
+            soname_value = soname(soname_value, f"files[{index}].soname")
+        elif soname_value:
+            raise PackageError(f"files[{index}].soname is only valid for libraries")
+        normalized.append((path, kind, mode, soname_value, payload))
+    normalized.sort(key=lambda item: item[0].encode("ascii"))
+    if len({item[0] for item in normalized}) != len(normalized):
+        raise PackageError("files contains a duplicate path")
+
+    records = bytearray()
+    payloads = bytearray()
+    report: list[dict[str, Any]] = []
+    cursor = payload_offset
+    for path, kind, mode, soname_value, payload in normalized:
+        digest = hashlib.sha256(payload).digest()
+        record = bytearray(V3_FILE_RECORD_BYTES)
+        record[:128] = text_field(path, 128, "file path", required=True)
+        struct.pack_into("<HHIQQ", record, 128, V3_FILE_KINDS[kind], 0, mode,
+                         cursor, len(payload))
+        record[152:184] = digest
+        record[184:248] = text_field(soname_value, 64, "soname", required=False)
+        records.extend(record)
+        payloads.extend(payload)
+        report.append({"path": path, "kind": kind, "mode": mode,
+                       "soname": soname_value, "bytes": len(payload),
+                       "sha256": digest.hex().upper()})
+        cursor += len(payload)
+    return bytes(records), bytes(payloads), report
+
+
+def build_package_v3(spec: dict[str, Any], files: tuple[dict[str, Any], ...],
+                     signing_key: bytes) -> bytes:
+    """Build a canonical format-v3 package signed with a real Ed25519 key."""
+    if spec.get("format", 3) != 3:
+        raise PackageError("format-v3 specification has a conflicting format value")
+    architecture = canonical_printable(
+        spec.get("architecture"), 16, "architecture")
+    if architecture not in V3_ARCHITECTURES:
+        raise PackageError("architecture must be x86_64")
+    abi_min = spec.get("abi_min")
+    abi_max = spec.get("abi_max")
+    if type(abi_min) is not int or type(abi_max) is not int \
+            or not 1 <= abi_min <= abi_max <= 0xffffffff:
+        raise PackageError("abi_min and abi_max must be an ordered positive uint32 range")
+    identifier_value = package_identifier(spec.get("identifier"), "identifier")
+    name = canonical_printable(spec.get("name"), 64, "name")
+    version = semantic_version(spec.get("version"), "version")
+    publisher = canonical_printable(spec.get("publisher"), 64, "publisher")
+    capability_bits = _capability_bits(spec.get("capabilities", []))
+    dependency_records, dependencies = _v3_relation_records(
+        spec.get("dependencies", []), "dependencies")
+    conflict_records, conflicts = _v3_relation_records(
+        spec.get("conflicts", []), "conflicts")
+    if ({item["identifier"] for item in dependencies} &
+            {item["identifier"] for item in conflicts}):
+        raise PackageError("a package cannot be both a dependency and a conflict")
+
+    file_table_offset = V3_HEADER_BYTES
+    dependency_table_offset = file_table_offset + len(files) * V3_FILE_RECORD_BYTES
+    conflict_table_offset = dependency_table_offset + len(dependency_records)
+    payload_offset = conflict_table_offset + len(conflict_records)
+    file_records, payloads, _ = _v3_file_records(files, payload_offset)
+    total_bytes = payload_offset + len(payloads)
+    if total_bytes > V3_MAX_PACKAGE_BYTES:
+        raise PackageError("format-v3 package exceeds its 256 MiB bound")
+
+    public_key = _ed25519_public_bytes_from_private(signing_key)
+    key_id = hashlib.sha256(public_key).digest()
+    declared_key_id = spec.get("publisher_key_id")
+    if declared_key_id is not None:
+        if not isinstance(declared_key_id, str) or declared_key_id.lower() != key_id.hex():
+            raise PackageError("publisher_key_id does not match the Ed25519 public key")
+
+    tables_and_payload = file_records + dependency_records + conflict_records + payloads
+    header = bytearray(V3_HEADER_BYTES)
+    header[:8] = PACKAGE_MAGIC
+    struct.pack_into("<HHI", header, 8, 3, V3_HEADER_BYTES, 0)
+    struct.pack_into("<QQII", header, 16, total_bytes, file_table_offset,
+                     len(files), V3_FILE_RECORD_BYTES)
+    struct.pack_into("<QII", header, 40, dependency_table_offset,
+                     len(dependencies), V3_RELATION_RECORD_BYTES)
+    struct.pack_into("<QII", header, 56, conflict_table_offset,
+                     len(conflicts), V3_RELATION_RECORD_BYTES)
+    struct.pack_into("<QQII", header, 72, payload_offset, len(payloads),
+                     abi_min, abi_max)
+    header[96:112] = text_field(architecture, 16, "architecture", required=True)
+    header[112:176] = text_field(identifier_value, 64, "identifier", required=True)
+    header[176:240] = text_field(name, 64, "name", required=True)
+    header[240:304] = text_field(version, 64, "version", required=True)
+    header[304:368] = text_field(publisher, 64, "publisher", required=True)
+    struct.pack_into("<Q", header, 368, capability_bits)
+    header[376:408] = hashlib.sha256(tables_and_payload).digest()
+    header[408:440] = key_id
+    struct.pack_into("<HH", header, 504, V3_SIGNATURE_ALGORITHM_ED25519,
+                     V3_SIGNATURE_BYTES)
+    unsigned = bytes(header) + tables_and_payload
+    signature = _ed25519_private(signing_key).sign(unsigned)
+    if len(signature) != V3_SIGNATURE_BYTES:
+        raise PackageError("Ed25519 backend returned an invalid signature length")
+    header[V3_SIGNATURE_OFFSET:V3_SIGNATURE_OFFSET + V3_SIGNATURE_BYTES] = signature
+    return bytes(header) + tables_and_payload
+
+
+def _parse_legacy_package(package: bytes) -> tuple[
         bytes, bytes, tuple[tuple[str, bytes], ...], dict[str, Any]]:
     if len(package) < PACKAGE_HEADER_BYTES + MANIFEST_BYTES or package[:8] != PACKAGE_MAGIC:
         raise PackageError("package is truncated or has invalid magic")
@@ -307,35 +634,296 @@ def parse_package(package: bytes) -> tuple[
     return manifest, executable, tuple(resources), report
 
 
+def _v3_decode_relation_records(package: bytes, offset: int, count: int,
+                                field: str) -> list[dict[str, str]]:
+    result: list[dict[str, str]] = []
+    previous: tuple[str, str] | None = None
+    identifiers: set[str] = set()
+    for index in range(count):
+        start = offset + index * V3_RELATION_RECORD_BYTES
+        record = package[start:start + V3_RELATION_RECORD_BYTES]
+        identifier_value = decode_text(record[:64], f"{field}[{index}].identifier")
+        constraint = decode_text(record[64:120], f"{field}[{index}].constraint")
+        if package_identifier(identifier_value, f"{field}[{index}].identifier") \
+                != identifier_value or version_constraint(
+                    constraint, f"{field}[{index}].constraint") != constraint:
+            raise PackageError(f"{field}[{index}] is not canonical")
+        if any(record[120:]) or identifier_value in identifiers:
+            raise PackageError(f"{field}[{index}] has nonzero reserved bytes or duplicates")
+        key = (identifier_value, constraint)
+        if previous is not None and key <= previous:
+            raise PackageError(f"{field} records are not in canonical order")
+        previous = key
+        identifiers.add(identifier_value)
+        result.append({"identifier": identifier_value, "constraint": constraint})
+    return result
+
+
+def _v3_trusted_key(key_id: bytes, trusted_keys: dict[str, bytes] | None) -> Any:
+    if not trusted_keys:
+        raise PackageError(
+            f"format-v3 package requires trusted Ed25519 key {key_id.hex().upper()}")
+    normalized: dict[bytes, Any] = {}
+    for supplied_id, material in trusted_keys.items():
+        if not isinstance(supplied_id, str) or not isinstance(material, bytes):
+            raise PackageError("trusted keys must map hexadecimal key IDs to key bytes")
+        try:
+            supplied = bytes.fromhex(supplied_id)
+        except ValueError as error:
+            raise PackageError("trusted Ed25519 key ID is not hexadecimal") from error
+        if len(supplied) != 32:
+            raise PackageError("trusted Ed25519 key ID must be 32 bytes")
+        key, raw = _ed25519_public(material)
+        derived = hashlib.sha256(raw).digest()
+        if supplied != derived:
+            raise PackageError("trusted Ed25519 key ID does not match its public key")
+        if supplied in normalized:
+            raise PackageError("duplicate trusted Ed25519 key ID")
+        normalized[supplied] = key
+    if key_id not in normalized:
+        raise PackageError(f"untrusted Ed25519 key ID: {key_id.hex().upper()}")
+    return normalized[key_id]
+
+
+def _parse_package_v3(package: bytes, trusted_keys: dict[str, bytes] | None) -> tuple[
+        bytes, bytes, tuple[tuple[str, bytes], ...], dict[str, Any]]:
+    if len(package) < V3_HEADER_BYTES or len(package) > V3_MAX_PACKAGE_BYTES:
+        raise PackageError("format-v3 package is truncated or exceeds 256 MiB")
+    version, header_bytes, flags = struct.unpack_from("<HHI", package, 8)
+    total_bytes, file_table_offset, file_count, file_record_bytes = struct.unpack_from(
+        "<QQII", package, 16)
+    dependency_table_offset, dependency_count, dependency_record_bytes = struct.unpack_from(
+        "<QII", package, 40)
+    conflict_table_offset, conflict_count, conflict_record_bytes = struct.unpack_from(
+        "<QII", package, 56)
+    payload_offset, payload_bytes, abi_min, abi_max = struct.unpack_from(
+        "<QQII", package, 72)
+    if version != 3 or header_bytes != V3_HEADER_BYTES or flags != 0 \
+            or total_bytes != len(package):
+        raise PackageError("format-v3 header version, size, flags, or total length is invalid")
+    if not 1 <= file_count <= V3_MAX_FILES \
+            or dependency_count > V3_MAX_RELATIONS \
+            or conflict_count > V3_MAX_RELATIONS:
+        raise PackageError("format-v3 table count exceeds its bound")
+    if file_record_bytes != V3_FILE_RECORD_BYTES \
+            or dependency_record_bytes != V3_RELATION_RECORD_BYTES \
+            or conflict_record_bytes != V3_RELATION_RECORD_BYTES:
+        raise PackageError("format-v3 record size is invalid")
+    expected_dependency = V3_HEADER_BYTES + file_count * V3_FILE_RECORD_BYTES
+    expected_conflict = expected_dependency + dependency_count * V3_RELATION_RECORD_BYTES
+    expected_payload = expected_conflict + conflict_count * V3_RELATION_RECORD_BYTES
+    if (file_table_offset, dependency_table_offset, conflict_table_offset,
+            payload_offset) != (V3_HEADER_BYTES, expected_dependency,
+                                expected_conflict, expected_payload):
+        raise PackageError("format-v3 tables are not canonically contiguous")
+    if payload_bytes != len(package) - payload_offset:
+        raise PackageError("format-v3 payload length is invalid")
+    if not 1 <= abi_min <= abi_max <= 0xffffffff:
+        raise PackageError("format-v3 ABI range is invalid")
+    signature_algorithm, signature_bytes = struct.unpack_from("<HH", package, 504)
+    if signature_algorithm != V3_SIGNATURE_ALGORITHM_ED25519 \
+            or signature_bytes != V3_SIGNATURE_BYTES or any(package[508:512]):
+        raise PackageError(
+            "format-v3 signature algorithm, length, or reserved bytes are invalid")
+
+    architecture = decode_text(package[96:112], "architecture")
+    if architecture not in V3_ARCHITECTURES:
+        raise PackageError("format-v3 architecture is invalid")
+    identifier_value = decode_text(package[112:176], "identifier")
+    if package_identifier(identifier_value, "identifier") != identifier_value:
+        raise PackageError("format-v3 identifier is not canonical")
+    name = decode_argument(package[176:240], "name")
+    canonical_printable(name, 64, "name")
+    version_value = decode_text(package[240:304], "version")
+    if semantic_version(version_value, "version") != version_value:
+        raise PackageError("format-v3 version is not canonical")
+    publisher = decode_argument(package[304:368], "publisher")
+    canonical_printable(publisher, 64, "publisher")
+    capabilities = struct.unpack_from("<Q", package, 368)[0]
+    if capabilities & ~sum(CAPABILITIES.values()):
+        raise PackageError("format-v3 capability bits are invalid")
+    if package[376:408] != hashlib.sha256(package[V3_HEADER_BYTES:]).digest():
+        raise PackageError("format-v3 content SHA-256 mismatch")
+
+    dependencies = _v3_decode_relation_records(
+        package, dependency_table_offset, dependency_count, "dependencies")
+    conflicts = _v3_decode_relation_records(
+        package, conflict_table_offset, conflict_count, "conflicts")
+    if ({item["identifier"] for item in dependencies} &
+            {item["identifier"] for item in conflicts}):
+        raise PackageError("format-v3 dependency and conflict sets overlap")
+
+    files: list[dict[str, Any]] = []
+    previous_path: bytes | None = None
+    paths: set[str] = set()
+    expected_file_payload = payload_offset
+    for index in range(file_count):
+        start = file_table_offset + index * V3_FILE_RECORD_BYTES
+        record = package[start:start + V3_FILE_RECORD_BYTES]
+        path = decode_text(record[:128], f"files[{index}].path")
+        if package_path(path, f"files[{index}].path") != path:
+            raise PackageError(f"files[{index}].path is not canonical")
+        path_bytes = path.encode("ascii")
+        if previous_path is not None and path_bytes <= previous_path or path in paths:
+            raise PackageError("format-v3 file records are not uniquely sorted")
+        previous_path = path_bytes
+        paths.add(path)
+        kind_value, file_flags, mode, offset, length = struct.unpack_from(
+            "<HHIQQ", record, 128)
+        if kind_value not in V3_FILE_KIND_NAMES or file_flags != 0 \
+                or mode not in (0o444, 0o555) or length == 0 \
+                or length > V3_MAX_FILE_BYTES or offset != expected_file_payload \
+                or offset + length > len(package):
+            raise PackageError(f"files[{index}] metadata or payload range is invalid")
+        kind = V3_FILE_KIND_NAMES[kind_value]
+        if kind == "executable" and mode != 0o555:
+            raise PackageError(f"files[{index}] executable mode is invalid")
+        digest = record[152:184]
+        file_payload = package[offset:offset + length]
+        if digest != hashlib.sha256(file_payload).digest():
+            raise PackageError(f"files[{index}] SHA-256 mismatch")
+        soname_value = decode_text(record[184:248], f"files[{index}].soname")
+        if kind == "library":
+            if soname(soname_value, f"files[{index}].soname") != soname_value:
+                raise PackageError(f"files[{index}].soname is not canonical")
+        elif soname_value:
+            raise PackageError(f"files[{index}] non-library SONAME is nonempty")
+        if any(record[248:]):
+            raise PackageError(f"files[{index}] reserved bytes are nonzero")
+        files.append({"path": path, "kind": kind, "mode": mode,
+                      "soname": soname_value, "bytes": length,
+                      "sha256": digest.hex().upper()})
+        expected_file_payload += length
+    if expected_file_payload != len(package):
+        raise PackageError("format-v3 file payloads do not consume the package")
+
+    signature = package[V3_SIGNATURE_OFFSET:V3_SIGNATURE_OFFSET + V3_SIGNATURE_BYTES]
+    if not any(signature):
+        raise PackageError("format-v3 Ed25519 signature is missing")
+    key_id = package[408:440]
+    trusted_key = _v3_trusted_key(key_id, trusted_keys)
+    signed = bytearray(package)
+    signed[V3_SIGNATURE_OFFSET:V3_SIGNATURE_OFFSET + V3_SIGNATURE_BYTES] = bytes(
+        V3_SIGNATURE_BYTES)
+    try:
+        trusted_key.verify(signature, bytes(signed))
+    except Exception as error:
+        raise PackageError("format-v3 Ed25519 signature verification failed") from error
+
+    names = [capability for capability, bit in CAPABILITIES.items()
+             if capabilities & bit]
+    report = {
+        "package_format": 3,
+        "architecture": architecture,
+        "abi_min": abi_min,
+        "abi_max": abi_max,
+        "identifier": identifier_value,
+        "name": name,
+        "version": version_value,
+        "publisher": publisher,
+        "capabilities": names,
+        "dependencies": dependencies,
+        "conflicts": conflicts,
+        "files": files,
+        "content_sha256": package[376:408].hex().upper(),
+        "signature": {"algorithm": "Ed25519", "verified": True,
+                      "key_id": key_id.hex().upper()},
+    }
+    return b"", b"", (), report
+
+
+def parse_package(package: bytes, *, trusted_keys: dict[str, bytes] | None = None) -> tuple[
+        bytes, bytes, tuple[tuple[str, bytes], ...], dict[str, Any]]:
+    if len(package) < 12 or package[:8] != PACKAGE_MAGIC:
+        raise PackageError("package is truncated or has invalid magic")
+    version = struct.unpack_from("<H", package, 8)[0]
+    if version == 3:
+        return _parse_package_v3(package, trusted_keys)
+    return _parse_legacy_package(package)
+
+
 def command_build(args: argparse.Namespace) -> None:
     spec_path = Path(args.spec)
     spec_value = json.loads(read_regular(spec_path).decode("utf-8"))
     if not isinstance(spec_value, dict):
         raise PackageError("package specification must be one JSON object")
-    executable = read_regular(Path(args.executable))
-    resource_specs = spec_value.get("resources", [])
-    if not isinstance(resource_specs, list):
-        raise PackageError("resources must be a list")
-    resources: list[tuple[str, bytes]] = []
-    for index, resource in enumerate(resource_specs):
-        if not isinstance(resource, dict) or set(resource) != {"path", "source"}:
-            raise PackageError(f"resources[{index}] must contain path and source")
-        source = resource["source"]
-        if not isinstance(source, str) or not source:
-            raise PackageError(f"resources[{index}].source must be a path")
-        resources.append((resource["path"],
-                          read_regular(spec_path.parent / source)))
-    package = build_package(spec_value, executable, tuple(resources))
+    spec_format = spec_value.get("format")
+    if args.format is not None and spec_format is not None \
+            and args.format != spec_format:
+        raise PackageError("--format conflicts with the package specification")
+    requested_format = args.format if args.format is not None else spec_format
+    if requested_format == 3:
+        if not args.signing_key:
+            raise PackageError("format-v3 build requires --signing-key")
+        if args.executable:
+            raise PackageError("format-v3 files come from spec.files, not --executable")
+        if "resources" in spec_value:
+            raise PackageError("format-v3 resources must be entries in spec.files")
+        file_specs = spec_value.get("files")
+        if not isinstance(file_specs, list):
+            raise PackageError("format-v3 files must be a list")
+        files: list[dict[str, Any]] = []
+        for index, file_value in enumerate(file_specs):
+            required = {"path", "kind", "source"}
+            allowed = required | {"mode", "soname"}
+            if not isinstance(file_value, dict) or not required <= set(file_value) \
+                    or set(file_value) - allowed:
+                raise PackageError(
+                    f"files[{index}] must contain path, kind, source, and optional mode/soname")
+            source = file_value["source"]
+            if not isinstance(source, str) or not source:
+                raise PackageError(f"files[{index}].source must be a path")
+            converted = {key: value for key, value in file_value.items()
+                         if key != "source"}
+            converted["payload"] = read_regular_bounded(
+                spec_path.parent / source, V3_MAX_FILE_BYTES,
+                f"files[{index}].source")
+            files.append(converted)
+        signing_key = read_regular_bounded(
+            Path(args.signing_key), 64 * 1024, "Ed25519 private key")
+        package = build_package_v3(spec_value, tuple(files), signing_key)
+        public_key = _ed25519_public_bytes_from_private(signing_key)
+        _, _, _, report = parse_package(package, trusted_keys={
+            hashlib.sha256(public_key).hexdigest(): public_key})
+    else:
+        if requested_format not in (None, 1, 2):
+            raise PackageError("package format must be 1, 2, or 3")
+        if args.signing_key:
+            raise PackageError("--signing-key is only valid for format 3")
+        if not args.executable:
+            raise PackageError("legacy package build requires --executable")
+        executable = read_regular_bounded(
+            Path(args.executable), 16 * 1024 * 1024, "executable")
+        resource_specs = spec_value.get("resources", [])
+        if not isinstance(resource_specs, list):
+            raise PackageError("resources must be a list")
+        resources: list[tuple[str, bytes]] = []
+        for index, resource in enumerate(resource_specs):
+            if not isinstance(resource, dict) or set(resource) != {"path", "source"}:
+                raise PackageError(f"resources[{index}] must contain path and source")
+            source = resource["source"]
+            if not isinstance(source, str) or not source:
+                raise PackageError(f"resources[{index}].source must be a path")
+            resources.append((resource["path"], read_regular_bounded(
+                spec_path.parent / source, 16 * 1024 * 1024,
+                f"resources[{index}].source")))
+        if requested_format == 1 and resources:
+            raise PackageError("format 1 cannot contain resources")
+        if requested_format == 2 and not resources:
+            raise PackageError("format 2 requires at least one resource")
+        package = build_package(spec_value, executable, tuple(resources))
+        _, _, _, report = parse_package(package)
     atomic_write(Path(args.output), package)
-    _, _, _, report = parse_package(package)
     print(json.dumps({"output": str(Path(args.output)),
                       "package_sha256": hashlib.sha256(package).hexdigest().upper(),
                       **report}, sort_keys=True))
 
 
 def command_inspect(args: argparse.Namespace) -> None:
-    package = read_regular(Path(args.package))
-    _, _, _, report = parse_package(package)
+    package = read_regular_bounded(
+        Path(args.package), V3_MAX_PACKAGE_BYTES, "package")
+    _, _, _, report = parse_package(
+        package, trusted_keys=trusted_ed25519_keys(args.trusted_key))
     print(json.dumps({"package": str(Path(args.package)),
                       "package_sha256": hashlib.sha256(package).hexdigest().upper(),
                       **report}, indent=2, sort_keys=True))
@@ -348,9 +936,14 @@ def command_install(args: argparse.Namespace) -> None:
     busyboxes = tuple(read_regular(Path(path)) for path in legacy_paths if path)
     extras: list[tuple[str, bytes]] = []
     identifiers: set[str] = set()
+    trusted_keys = trusted_ed25519_keys(args.trusted_key)
     for path in args.packages:
         manifest, executable, resources, report = parse_package(
-            read_regular(Path(path)))
+            read_regular_bounded(Path(path), V3_MAX_PACKAGE_BYTES, "package"),
+            trusted_keys=trusted_keys)
+        if report["package_format"] == 3:
+            raise PackageError(
+                "format-v3 packages cannot be installed into the legacy FAT32 System image")
         app_id = str(report["identifier"])
         if app_id in identifiers:
             raise PackageError(f"duplicate package identifier: {app_id}")
@@ -373,16 +966,20 @@ def parser() -> argparse.ArgumentParser:
     commands = result.add_subparsers(dest="command", required=True)
     builder = commands.add_parser("build")
     builder.add_argument("--spec", required=True)
-    builder.add_argument("--executable", required=True)
+    builder.add_argument("--executable")
+    builder.add_argument("--format", type=int, choices=(1, 2, 3))
+    builder.add_argument("--signing-key")
     builder.add_argument("--output", required=True)
     builder.set_defaults(function=command_build)
     inspector = commands.add_parser("inspect")
+    inspector.add_argument("--trusted-key", action="append", default=[])
     inspector.add_argument("package")
     inspector.set_defaults(function=command_inspect)
     installer = commands.add_parser("install-system")
     installer.add_argument("--echo")
     installer.add_argument("--uname")
     installer.add_argument("--cat")
+    installer.add_argument("--trusted-key", action="append", default=[])
     installer.add_argument("--output", required=True)
     installer.add_argument("packages", nargs="+")
     installer.set_defaults(function=command_install)

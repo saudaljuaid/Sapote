@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
+import os
 from pathlib import Path
 import sys
 
@@ -19,15 +21,23 @@ PACKAGE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PACKAGE)
 
 
-def expect_refusal(package: bytes) -> None:
+def expect_refusal(package: bytes, *, trusted_keys: dict[str, bytes] | None = None,
+                   contains: str | None = None) -> None:
     try:
-        PACKAGE.parse_package(package)
-    except PACKAGE.PackageError:
+        PACKAGE.parse_package(package, trusted_keys=trusted_keys)
+    except PACKAGE.PackageError as error:
+        if contains is not None:
+            assert contains in str(error), str(error)
         return
     raise AssertionError("malformed package was accepted")
 
 
 def main() -> int:
+    crypto_available = PACKAGE.ed25519_available()
+    if os.environ.get("SAPOTE_REQUIRE_ED25519") == "1" and not crypto_available:
+        raise AssertionError(
+            "Python cryptography with Ed25519 support is required for verification")
+
     executable = b"\x7fELF" + bytes(range(64))
     spec = {
         "name": "Package Test",
@@ -43,6 +53,8 @@ def main() -> int:
     first = PACKAGE.build_package(spec, executable)
     second = PACKAGE.build_package(copy.deepcopy(spec), executable)
     assert first == second
+    assert hashlib.sha256(first).hexdigest().upper() == (
+        "6E6361943726BF3E08B0DE5D10A49870D0A685C52358A50435F0A163F40119FC")
     _, parsed_executable, resources, report = PACKAGE.parse_package(first)
     assert parsed_executable == executable
     assert resources == ()
@@ -69,6 +81,8 @@ def main() -> int:
     resource = b"immutable packaged resource\n"
     resource_package = PACKAGE.build_package(
         resource_spec, executable, (("DATA.TXT", resource),))
+    assert hashlib.sha256(resource_package).hexdigest().upper() == (
+        "86F90F54E9FF9612A7ED97D48846482338DE8B8084CDB38A1973175D86F1CC81")
     _, _, resources, report = PACKAGE.parse_package(resource_package)
     assert resources == (("DATA.TXT", resource),)
     assert report["package_format"] == 2
@@ -80,7 +94,106 @@ def main() -> int:
     assert "PKGRES/DATA.TXT" in {
         item["path"] for item in image_report["files"]
     }
-    print("Sapote package host tests passed: reproducible, digest, reserved, manifest, resources")
+
+    v3_spec = {
+        "format": 3,
+        "architecture": "x86_64",
+        "abi_min": 1,
+        "abi_max": 2,
+        "identifier": "org.sapote.pkgtest",
+        "name": "Package v3 Test",
+        "version": "1.2.3-rc.1+hosttest",
+        "publisher": "Sapote Project",
+        "capabilities": ["data-read", "console"],
+        "dependencies": [
+            {"identifier": "org.sapote.zlib", "constraint": ">=1.2.13,<2.0.0"},
+            {"identifier": "org.sapote.libc", "constraint": "^1.0.0"},
+        ],
+        "conflicts": [
+            {"identifier": "org.sapote.pkgtest-old", "constraint": "*"},
+        ],
+    }
+    v3_files = (
+        {"path": "share/pkgtest/readme.txt", "kind": "resource",
+         "payload": b"package v3 resource\n"},
+        {"path": "lib/libpkgtest.so.1", "kind": "library",
+         "soname": "libpkgtest.so.1", "payload": b"\x7fELFshared-v3"},
+        {"path": "bin/pkgtest", "kind": "executable", "payload": executable},
+    )
+    private_seed = bytes(range(32))
+    if crypto_available:
+        v3_first = PACKAGE.build_package_v3(v3_spec, v3_files, private_seed)
+        reordered_spec = copy.deepcopy(v3_spec)
+        reordered_spec["dependencies"].reverse()
+        reordered_spec["capabilities"].reverse()
+        v3_second = PACKAGE.build_package_v3(
+            reordered_spec, tuple(reversed(v3_files)), private_seed)
+        assert v3_first == v3_second
+        assert v3_first[:8] == PACKAGE.PACKAGE_MAGIC
+        assert int.from_bytes(v3_first[8:10], "little") == 3
+        public_key = PACKAGE._ed25519_public_bytes_from_private(private_seed)
+        key_id = hashlib.sha256(public_key).hexdigest()
+        trusted = {key_id: public_key}
+
+        def resign(changed: bytearray) -> bytes:
+            changed[376:408] = hashlib.sha256(
+                changed[PACKAGE.V3_HEADER_BYTES:]).digest()
+            changed[PACKAGE.V3_SIGNATURE_OFFSET:
+                    PACKAGE.V3_SIGNATURE_OFFSET + PACKAGE.V3_SIGNATURE_BYTES] = bytes(
+                        PACKAGE.V3_SIGNATURE_BYTES)
+            signature = PACKAGE._ed25519_private(private_seed).sign(bytes(changed))
+            changed[PACKAGE.V3_SIGNATURE_OFFSET:
+                    PACKAGE.V3_SIGNATURE_OFFSET + PACKAGE.V3_SIGNATURE_BYTES] = signature
+            return bytes(changed)
+
+        _, parsed_executable, resources, report = PACKAGE.parse_package(
+            v3_first, trusted_keys=trusted)
+        assert parsed_executable == b"" and resources == ()
+        assert report["identifier"] == "org.sapote.pkgtest"
+        assert report["version"] == "1.2.3-rc.1+hosttest"
+        assert report["architecture"] == "x86_64"
+        assert report["abi_min"] == 1 and report["abi_max"] == 2
+        assert report["signature"] == {
+            "algorithm": "Ed25519", "verified": True, "key_id": key_id.upper()}
+        assert [item["path"] for item in report["files"]] == [
+            "bin/pkgtest", "lib/libpkgtest.so.1", "share/pkgtest/readme.txt"]
+        assert [item["identifier"] for item in report["dependencies"]] == [
+            "org.sapote.libc", "org.sapote.zlib"]
+        expect_refusal(v3_first, contains="requires trusted Ed25519 key")
+        changed = bytearray(v3_first)
+        changed[PACKAGE.V3_SIGNATURE_OFFSET] ^= 1
+        expect_refusal(bytes(changed), trusted_keys=trusted,
+                       contains="signature verification failed")
+        changed = bytearray(v3_first)
+        changed[508] = 1
+        expect_refusal(bytes(changed), trusted_keys=trusted,
+                       contains="reserved bytes")
+        changed = bytearray(v3_first)
+        changed[-1] ^= 1
+        expect_refusal(bytes(changed), trusted_keys=trusted,
+                       contains="content SHA-256 mismatch")
+        expect_refusal(resign(changed), trusted_keys=trusted,
+                       contains="SHA-256 mismatch")
+        changed = bytearray(v3_first)
+        changed[PACKAGE.V3_HEADER_BYTES + 248] = 1
+        expect_refusal(resign(changed), trusted_keys=trusted,
+                       contains="reserved bytes")
+        duplicate_files = v3_files + (dict(v3_files[0]),)
+        try:
+            PACKAGE.build_package_v3(v3_spec, duplicate_files, private_seed)
+        except PACKAGE.PackageError as error:
+            assert "duplicate path" in str(error)
+        else:
+            raise AssertionError("duplicate format-v3 path was accepted")
+    else:
+        try:
+            PACKAGE.build_package_v3(v3_spec, v3_files, private_seed)
+        except PACKAGE.PackageError as error:
+            assert "real Ed25519 support is unavailable" in str(error)
+        else:
+            raise AssertionError("format-v3 package was built without real Ed25519 support")
+
+    print("Sapote package host tests passed: legacy bytes, v3 canonical tables, bounds, digests, trust, Ed25519 verification/refusal")
     return 0
 
 

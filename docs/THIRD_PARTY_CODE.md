@@ -41,3 +41,11 @@ The async crates appear because they are manifest-level dependencies of the
 single upstream implementation. Sapote disables ext4plus's async and
 multi-threaded paths; Cargo still resolves the published dependency closure.
 No upstream test images, hosted adapters, or task runner are included.
+
+## Host signature implementation
+
+Format-v3 package construction and inspection use the distribution-provided
+Python `cryptography` Ed25519 implementation. It is a host build dependency,
+not code linked into or distributed with Sapote. The Linux verification image
+installs `python3-cryptography`, requires a real sign/verify round trip, and
+also tests fail-closed behavior with Python site packages disabled.
