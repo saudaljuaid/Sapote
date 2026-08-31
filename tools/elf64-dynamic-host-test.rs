@@ -366,6 +366,11 @@ fn admits_the_linker_pie_flag_but_no_other_flags1_bits() {
 
     put_u64(&mut changed, fixture.dynamic_null + 8, 0x0800_0003);
     assert_refused(&changed, Status::DynamicUnsupported);
+
+    changed = fixture.bytes.clone();
+    put_i64(&mut changed, fixture.dynamic_null, 30);
+    put_u64(&mut changed, fixture.dynamic_null + 8, 0x18);
+    assert_refused(&changed, Status::DynamicUnsupported);
 }
 
 #[test]
@@ -573,6 +578,12 @@ fn initial_exec_tls_relocation_uses_defining_object_offset() {
         4,
         16,
         8,
+    );
+    put_i64(&mut dependency_fixture.bytes, dependency_fixture.dynamic_null, 30);
+    put_u64(
+        &mut dependency_fixture.bytes,
+        dependency_fixture.dynamic_null + 8,
+        0x18,
     );
     dependency_fixture.bytes[SYMTAB + 24 + 4] = 0x16;
     put_u64(&mut dependency_fixture.bytes, SYMTAB + 24 + 8, 0);

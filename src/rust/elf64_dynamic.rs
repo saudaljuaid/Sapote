@@ -87,6 +87,7 @@ const DT_RELRSZ: i64 = 35;
 const DT_RELRENT: i64 = 37;
 
 const DF_BIND_NOW: u64 = 0x8;
+const DF_STATIC_TLS: u64 = 0x10;
 const DF_1_NOW: u64 = 0x1;
 const DF_1_PIE: u64 = 0x0800_0000;
 
@@ -1592,7 +1593,8 @@ pub fn parse(input: &[u8]) -> Result<Image, Status> {
             return Err(Status::DynamicEntry);
         }
     }
-    if flags.unwrap_or(0) & !DF_BIND_NOW != 0
+    if flags.unwrap_or(0) & !(DF_BIND_NOW | DF_STATIC_TLS) != 0
+        || flags.unwrap_or(0) & DF_STATIC_TLS != 0 && image.tls.memory_size == 0
         || flags_1.unwrap_or(0) & !(DF_1_NOW | DF_1_PIE) != 0
     {
         return Err(Status::DynamicUnsupported);
