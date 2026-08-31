@@ -65,6 +65,7 @@ RUST_LINUX_UNAME_ELF64_TEST := $(BUILD_DIR)/linux-uname-elf64-tests
 RUST_LINUX_CAT_FAT16_TEST := $(BUILD_DIR)/linux-cat-fat16-tests
 RUST_LINUX_CAT_ELF64_TEST := $(BUILD_DIR)/linux-cat-elf64-tests
 RUST_ELF64_TEST := $(BUILD_DIR)/elf64-tests
+RUST_DYNAMIC_ELF64_TEST := $(BUILD_DIR)/elf64-dynamic-tests
 RUST_NVBIOS_TEST := $(BUILD_DIR)/nvbios-tests
 RUST_NATIVE_IMAGE_TEST := $(BUILD_DIR)/native-image-tests
 WALL_CLOCK_HOST_TEST := $(TEST_BUILD_DIR)/wall-clock-host-test
@@ -288,7 +289,7 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d)
 # implicit and pattern rule search for a phony target, so declaring them phony
 # makes every scenario resolve to "nothing to be done" and pass without booting.
 # They never create a file of their own name, so they rerun regardless.
-.PHONY: all capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios ext4-images ext4-tests fat32-images hooks \
+.PHONY: all capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios dynamic-elf-tests ext4-images ext4-tests fat32-images hooks \
 	iso kernel lint native-apps port-tests qemu-port-tests reproducible-sdk run \
 	package-repository-tests screenshot-proof sdk sdk-once smoke toolchain verify wall-clock-tests
 
@@ -825,6 +826,12 @@ package-repository-tests: tools/sapote-repository.py \
 		tools/sapote_repository_host_test.py tools/sapote-package.py
 	SAPOTE_REQUIRE_ED25519=1 $(PYTHON) -u tools/sapote_repository_host_test.py
 
+dynamic-elf-tests: src/rust/elf64_dynamic.rs \
+		tools/elf64-dynamic-host-test.rs
+	$(RUSTC) --edition 2024 --test -D warnings \
+		tools/elf64-dynamic-host-test.rs -o $(RUST_DYNAMIC_ELF64_TEST)
+	$(RUST_DYNAMIC_ELF64_TEST)
+
 $(EXT4_FIXTURE): tools/ext4_image.py
 	mkdir -p $(dir $@)
 	$(PYTHON) tools/ext4_image.py build $@ --report $@.json
@@ -834,7 +841,8 @@ ext4-images: $(EXT4_FIXTURE)
 verify: toolchain lint
 	$(MAKE) clean
 	$(MAKE) kernel
-	$(MAKE) wall-clock-tests ext4-tests package-repository-tests
+	$(MAKE) wall-clock-tests ext4-tests package-repository-tests \
+		dynamic-elf-tests
 	$(PYTHON) tools/verify-ui-assets.py
 	@test '$(LOGO_MAX_DIMENSION)' -eq 280
 	@test '$(STUDIO_ICON_MAX_DIMENSION)' -eq 80
