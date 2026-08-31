@@ -25,6 +25,7 @@ enum FixtureHash {
 struct Fixture {
     bytes: Vec<u8>,
     first_load: usize,
+    relro: usize,
     dynamic_null: usize,
     hash: usize,
 }
@@ -197,7 +198,7 @@ fn fixture(
         8,
     );
     program(&mut bytes, 4, 0x6474_e551, 6, 0, 0, 0, 0, 16);
-    program(
+    let relro = program(
         &mut bytes,
         5,
         0x6474_e552,
@@ -314,6 +315,7 @@ fn fixture(
     Fixture {
         bytes,
         first_load,
+        relro,
         dynamic_null: DYNAMIC + dynamic_index * 16,
         hash: HASH,
     }
@@ -364,6 +366,30 @@ fn admits_the_linker_pie_flag_but_no_other_flags1_bits() {
 
     put_u64(&mut changed, fixture.dynamic_null + 8, 0x0800_0003);
     assert_refused(&changed, Status::DynamicUnsupported);
+}
+
+#[test]
+fn admits_a_bounded_zero_filled_relro_tail() {
+    let fixture = fixture("libroot.so", &[], true, FixtureHash::SysV, false);
+    let mut changed = fixture.bytes.clone();
+    put_u64(&mut changed, fixture.relro + 40, 0xf00);
+    let image = elf64_dynamic::parse(&changed).expect("zero-filled RELRO tail");
+    assert_eq!(
+        image.permission_intent(0x2fff),
+        Some(PermissionIntent::Read)
+    );
+
+    let mut outside_load = changed.clone();
+    put_u64(&mut outside_load, fixture.relro + 40, 0xf01);
+    assert_refused(&outside_load, Status::ProgramType);
+
+    let mut wrong_offset = changed.clone();
+    put_u64(&mut wrong_offset, fixture.relro + 8, 0x2101);
+    assert_refused(&wrong_offset, Status::ProgramType);
+
+    let mut file_larger_than_memory = fixture.bytes.clone();
+    put_u64(&mut file_larger_than_memory, fixture.relro + 40, 0x80);
+    assert_refused(&file_larger_than_memory, Status::ProgramType);
 }
 
 #[test]

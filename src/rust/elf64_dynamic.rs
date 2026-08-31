@@ -1071,6 +1071,7 @@ pub fn parse(input: &[u8]) -> Result<Image, Status> {
     let mut relro_exact_start = 0u64;
     let mut relro_exact_end = 0u64;
     let mut relro_offset = 0u64;
+    let mut relro_file_size = 0u64;
     let mut tls = Tls::empty();
     let mut mapping_start = u64::MAX;
     let mut mapping_end = 0u64;
@@ -1184,8 +1185,9 @@ pub fn parse(input: &[u8]) -> Result<Image, Status> {
             PT_GNU_RELRO => {
                 if relro_end != 0
                     || item.flags != PF_R
-                    || item.file_size != item.memory_size
+                    || item.file_size > item.memory_size
                     || item.memory_size == 0
+                    || item.physical != 0 && item.physical != item.address
                     || item.alignment > PAGE
                     || item
                         .offset
@@ -1196,6 +1198,7 @@ pub fn parse(input: &[u8]) -> Result<Image, Status> {
                     return Err(Status::ProgramType);
                 }
                 relro_offset = item.offset;
+                relro_file_size = item.file_size;
                 relro_start = item.address & !(PAGE - 1);
                 relro_exact_start = item.address;
                 relro_exact_end = item
@@ -1297,11 +1300,9 @@ pub fn parse(input: &[u8]) -> Result<Image, Status> {
             relro_exact_start,
             relro_exact_end - relro_exact_start,
             true,
-        ) || virtual_file_offset(
-            &image,
-            relro_exact_start,
-            relro_exact_end - relro_exact_start,
-        )? != usize::try_from(relro_offset).map_err(|_| Status::FileRange)?)
+        ) || relro_file_size != 0
+            && virtual_file_offset(&image, relro_exact_start, relro_file_size)?
+                != usize::try_from(relro_offset).map_err(|_| Status::FileRange)?)
     {
         return Err(Status::ProgramType);
     }
