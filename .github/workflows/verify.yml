@@ -38,8 +38,8 @@ jobs:
                   sudo sed -i '\|azure.archive.ubuntu.com|d' /etc/apt/apt-mirrors.txt
                   sudo apt-get update
                   sudo apt-get install --yes --no-install-recommends \
-                      binutils clang ffmpeg gcc grub-common grub-pc-bin lld make mtools \
-                      qemu-system-x86 xorriso
+                      binutils clang e2fsprogs ffmpeg gcc grub-common grub-pc-bin lld make mtools \
+                      python3-cryptography qemu-system-x86 xorriso
             - name: Install the Rust bare-metal target
               run: rustup target add x86_64-unknown-none
             - name: Record QEMU fixture capabilities

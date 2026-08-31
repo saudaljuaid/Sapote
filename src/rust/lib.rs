@@ -40,11 +40,11 @@ pub mod wallpaper;
 
 /// Where a Rust panic goes.
 ///
-/// Nothing in this crate panics: every fallible path returns a status instead,
-/// and the crate is built with `panic=abort` so unwinding does not exist. This
-/// is the backstop for a bounds check the compiler inserted that this code did
-/// not anticipate - which is exactly the class of bug Rust is here to convert
-/// from silent corruption into a stop.
+/// Sapote-authored fallible paths return a status, while compiler-inserted
+/// bounds checks in the reviewed ext4 dependency may still trap. The crate is
+/// built with `panic=abort`, so those traps cannot unwind. This handler turns
+/// an unanticipated metadata-parser defect into a kernel stop rather than
+/// silent corruption.
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     abi::panic()

@@ -19,6 +19,7 @@ and encodings dominate the risk. Today it validates:
 | `logo.rs` | the deterministic runtime Sapote S-mark stream |
 | `fat16.rs`, `linux_fat16.rs` | FAT16 geometry, chains, root entries, and payload digests |
 | `fat32.rs` | FAT32 BPB/FSInfo geometry, cluster classes, paths, names, and directory entries |
+| `ext4.rs` | checked ext4 superblock, group-descriptor, and journal admission through pinned `ext4plus` |
 | `elf64.rs`, `linux_elf64.rs` | bounded native and static BusyBox ELF64 records |
 | `abi.rs` | the explicit C/Rust calling boundary and embedded assets |
 
@@ -50,6 +51,8 @@ refusals. See [`FAT32.md`](FAT32.md).
 - `#![no_std]` and `panic=abort`;
 - static relocation and no red zone;
 - no MMX, SSE, AVX, or floating-point kernel state;
+- abort-only panics routed to `console_panic`, with no unwinder or exception
+  personality linked;
 - warnings denied;
 - `unsafe_op_in_unsafe_fn` denied;
 - linker rejection of unexpected sections, relocations, GOT growth, and W+X.

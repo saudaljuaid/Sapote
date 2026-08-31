@@ -67,6 +67,9 @@ RUST_LINUX_CAT_ELF64_TEST := $(BUILD_DIR)/linux-cat-elf64-tests
 RUST_ELF64_TEST := $(BUILD_DIR)/elf64-tests
 RUST_NVBIOS_TEST := $(BUILD_DIR)/nvbios-tests
 RUST_NATIVE_IMAGE_TEST := $(BUILD_DIR)/native-image-tests
+WALL_CLOCK_HOST_TEST := $(TEST_BUILD_DIR)/wall-clock-host-test
+SDK_TIME_HOST_TEST := $(TEST_BUILD_DIR)/sdk-time-host-test
+EXT4_FIXTURE := $(TEST_BUILD_DIR)/ext4/sapote-ext4.raw
 RUST_SOURCES := $(wildcard src/rust/*.rs)
 RUST_MANIFEST := src/rust/Cargo.toml
 RUST_LOCKFILE := src/rust/Cargo.lock
@@ -271,9 +274,9 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d)
 # implicit and pattern rule search for a phony target, so declaring them phony
 # makes every scenario resolve to "nothing to be done" and pass without booting.
 # They never create a file of their own name, so they rerun regardless.
-.PHONY: all capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios fat32-images hooks \
+.PHONY: all capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios ext4-images ext4-tests fat32-images hooks \
 	iso kernel lint native-apps port-tests qemu-port-tests reproducible-sdk run \
-	screenshot-proof sdk sdk-once smoke toolchain verify
+	screenshot-proof sdk sdk-once smoke toolchain verify wall-clock-tests
 
 all: kernel
 
@@ -535,7 +538,7 @@ port-tests: native-apps
 		$(RUST_NATIVE_IMAGE_TEST)
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(CRASH_APP)' \
 		$(RUST_NATIVE_IMAGE_TEST)
-	$(PYTHON) -u tools/sapote_package_host_test.py
+	SAPOTE_REQUIRE_ED25519=1 $(PYTHON) -u tools/sapote_package_host_test.py
 	$(PYTHON) tools/sapote-package.py inspect $(NATIVE_TEST_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(LUA_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(SQLITE_PACKAGE)
@@ -772,9 +775,38 @@ lint:
 		echo "trailing whitespace is forbidden"; exit 1; \
 	fi
 
+$(WALL_CLOCK_HOST_TEST): tools/wall-clock-host-test.c \
+		src/kernel/wall_clock.c include/sapote/wall_clock.h
+	mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -Wshadow \
+		-Wundef -Wstrict-prototypes -Wmissing-prototypes -Iinclude \
+		tools/wall-clock-host-test.c src/kernel/wall_clock.c -o $@
+
+$(SDK_TIME_HOST_TEST): tools/sdk-time-host-test.c sdk/src/time.c \
+		sdk/include/time.h sdk/include/sapote/runtime.h
+	mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -Wshadow \
+		-Wundef -Wstrict-prototypes -Wmissing-prototypes \
+		-Isdk/include -Iinclude tools/sdk-time-host-test.c \
+		sdk/src/time.c -o $@
+
+wall-clock-tests: $(WALL_CLOCK_HOST_TEST) $(SDK_TIME_HOST_TEST)
+	$(WALL_CLOCK_HOST_TEST)
+	$(SDK_TIME_HOST_TEST)
+
+ext4-tests: tools/ext4_image.py tools/ext4_host_test.py
+	$(PYTHON) -u tools/ext4_host_test.py
+
+$(EXT4_FIXTURE): tools/ext4_image.py
+	mkdir -p $(dir $@)
+	$(PYTHON) tools/ext4_image.py build $@ --report $@.json
+
+ext4-images: $(EXT4_FIXTURE)
+
 verify: toolchain lint
 	$(MAKE) clean
 	$(MAKE) kernel
+	$(MAKE) wall-clock-tests ext4-tests
 	$(PYTHON) tools/verify-ui-assets.py
 	@test '$(LOGO_MAX_DIMENSION)' -eq 280
 	@test '$(STUDIO_ICON_MAX_DIMENSION)' -eq 80
@@ -805,7 +837,7 @@ verify: toolchain lint
 	$(RUSTC) --edition 2024 --test -D warnings \
 		tools/native-image-host-test.rs -o $(RUST_NATIVE_IMAGE_TEST)
 	$(RUST_NATIVE_IMAGE_TEST)
-	$(PYTHON) -u tools/sapote_package_host_test.py
+	SAPOTE_REQUIRE_ED25519=1 $(PYTHON) -u tools/sapote_package_host_test.py
 	$(MAKE) $(LINUX_ABI_FIXTURE)
 	@test "$$(sha256sum $(LINUX_ABI_FIXTURE) | awk '{ print toupper($$1) }')" = \
 		'41513E5D6F4C33F898F887D4F40F37149A29B1AE13B5E8A600495C18A38C7A6F'
@@ -963,8 +995,19 @@ verify: toolchain lint
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_native_image_self_test$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_multiprocess_elf64_parse$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_multiprocess_elf64_self_test$$'
+	# Hostile ext4 metadata is parsed by safe Rust and may retain compiler-
+	# inserted bounds traps. Those traps are a corruption backstop, not an
+	# unwinding runtime: require every one to terminate through Sapote's panic
+	# handler and reject any linked exception personality or unwinder.
 	@if $(NM) $(KERNEL) | grep -Eq 'panic_bounds_check'; then \
-		echo 'safe Rust retained a reachable bounds-panic path'; exit 1; \
+		$(NM) $(KERNEL) | grep -Eq ' [tT] rust_begin_unwind$$' && \
+		$(OBJDUMP) -d --disassemble=rust_begin_unwind $(KERNEL) | \
+			grep -Eq '<console_panic>'; \
+	fi
+	@if $(NM) $(KERNEL) | grep -Eq \
+		'(_Unwind_|rust_eh_personality|__gcc_personality_v0|panic_unwind)'; then \
+		echo 'kernel Rust linked an unwinding runtime or exception personality'; \
+		exit 1; \
 	fi
 	# Paging and the scenario runner must stay coupled to one typed aggregate,
 	# never grow hardware-specific parameters or hidden firmware reads again.
