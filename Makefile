@@ -194,8 +194,8 @@ SDK_CFLAGS := --target=x86_64-unknown-none-elf -Isdk/include -Iinclude \
 	-ffunction-sections -fdata-sections -ftls-model=local-exec \
 	-Wall -Wextra -Werror -Wpedantic -Wshadow -Wundef \
 	-Wstrict-prototypes -Wmissing-prototypes
-BEARSSL_CFLAGS := --target=x86_64-unknown-none-elf -Ivendor/bearssl/inc \
-	-Ivendor/bearssl/src -std=c11 -O2 -g -ffreestanding -fno-pie \
+BEARSSL_CFLAGS := --target=x86_64-unknown-none-elf -Isdk/include -Iinclude \
+	-Ivendor/bearssl/inc -Ivendor/bearssl/src -std=c11 -O2 -g -ffreestanding -fno-pie \
 	-fno-stack-protector -mcmodel=large -mno-red-zone -fno-builtin \
 	-ffunction-sections -fdata-sections \
 	-DBR_USE_URANDOM=0 -DBR_USE_WIN32_RAND=0 \
