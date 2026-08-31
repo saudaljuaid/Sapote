@@ -436,25 +436,25 @@ fn dependency_order_is_needed_stable_bounded_and_cycle_checked() {
 
 #[test]
 fn refuses_wx_unsupported_dynamic_bad_hash_and_relocation_targets() {
-    let fixture = fixture("libroot.so", &["libdep.so"], false, FixtureHash::Gnu, true);
-    let mut changed = fixture.bytes.clone();
-    put_u32(&mut changed, fixture.first_load + 4, 7);
+    let root_fixture = fixture("libroot.so", &["libdep.so"], false, FixtureHash::Gnu, true);
+    let mut changed = root_fixture.bytes.clone();
+    put_u32(&mut changed, root_fixture.first_load + 4, 7);
     assert_refused(&changed, Status::ProgramFlags);
 
-    changed = fixture.bytes.clone();
-    put_i64(&mut changed, fixture.dynamic_null, 36);
-    put_u64(&mut changed, fixture.dynamic_null + 8, 0x1500);
+    changed = root_fixture.bytes.clone();
+    put_i64(&mut changed, root_fixture.dynamic_null, 36);
+    put_u64(&mut changed, root_fixture.dynamic_null + 8, 0x1500);
     assert_refused(&changed, Status::DynamicUnsupported);
 
-    changed = fixture.bytes.clone();
-    put_i64(&mut changed, fixture.dynamic_null, 5);
-    put_u64(&mut changed, fixture.dynamic_null + 8, STRTAB as u64);
+    changed = root_fixture.bytes.clone();
+    put_i64(&mut changed, root_fixture.dynamic_null, 5);
+    put_u64(&mut changed, root_fixture.dynamic_null + 8, STRTAB as u64);
     assert_refused(&changed, Status::DynamicDuplicate);
 
-    changed = fixture.bytes.clone();
+    changed = root_fixture.bytes.clone();
     put_u32(
         &mut changed,
-        fixture.hash + 24,
+        root_fixture.hash + 24,
         elf64_dynamic::MAX_SYMBOLS as u32,
     );
     assert_refused(&changed, Status::HashTable);
@@ -464,15 +464,15 @@ fn refuses_wx_unsupported_dynamic_bad_hash_and_relocation_targets() {
     put_u32(&mut changed, sysv_fixture.hash + 24, 1);
     assert_refused(&changed, Status::HashTable);
 
-    changed = fixture.bytes.clone();
+    changed = root_fixture.bytes.clone();
     put_u64(&mut changed, RELA + 8, 5);
     assert_refused(&changed, Status::RelocationType);
 
-    changed = fixture.bytes.clone();
+    changed = root_fixture.bytes.clone();
     put_u64(&mut changed, SYMTAB + 24 + 8, 1);
     assert_refused(&changed, Status::Symbol);
 
-    changed = fixture.bytes.clone();
+    changed = root_fixture.bytes.clone();
     put_u64(&mut changed, RELA, 0x100);
     assert_refused(&changed, Status::RelocationTarget);
 }
