@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include <sapote/console.h>
+#include <sapote/fat32_backend.h>
 #include <sapote/fat32_fs.h>
 #include <sapote/nvme.h>
 
@@ -424,6 +425,7 @@ static enum sapfs_status end_operation(
 {
     enum sapfs_status result = SAPFS_STATUS_OK;
     enum nvme_status close_status;
+    enum nvme_status flush_status;
     uint64_t total;
 
     if (operation == NULL || !operation->active) {
@@ -431,6 +433,13 @@ static enum sapfs_status end_operation(
     }
     if (commit) {
         result = flush_cache(operation);
+        if (result == SAPFS_STATUS_OK) {
+            flush_status = nvme_volume_flush(&operation->nvme);
+            if (flush_status != NVME_STATUS_OK) {
+                report_nvme_failure("flush", flush_status);
+                result = nvme_result(flush_status);
+            }
+        }
     }
     if (add_u64(operation->mount->completion_count,
             operation->nvme.completion_count, &total)) {
@@ -1522,7 +1531,7 @@ static enum sapfs_status validate_live_tree(
     return status;
 }
 
-enum sapfs_status sapfs_mount(enum sapfs_volume volume)
+enum sapfs_status fat32_backend_mount(enum sapfs_volume volume)
 {
     uint8_t boot[SAPFS_SECTOR_BYTES];
     uint8_t backup[SAPFS_SECTOR_BYTES];
@@ -1673,7 +1682,7 @@ static enum sapfs_status write_fsinfo(struct sapfs_operation *operation)
     return flush_one(operation, backup);
 }
 
-enum sapfs_status sapfs_sync(enum sapfs_volume volume)
+enum sapfs_status fat32_backend_sync(enum sapfs_volume volume)
 {
     struct sapfs_operation operation;
     enum sapfs_status status;
@@ -1701,7 +1710,7 @@ enum sapfs_status sapfs_sync(enum sapfs_volume volume)
     return status != SAPFS_STATUS_OK ? status : close_status;
 }
 
-enum sapfs_status sapfs_unmount(enum sapfs_volume volume)
+enum sapfs_status fat32_backend_unmount(enum sapfs_volume volume)
 {
     enum sapfs_status status;
 
@@ -1716,7 +1725,7 @@ enum sapfs_status sapfs_unmount(enum sapfs_volume volume)
             return SAPFS_STATUS_BUSY;
         }
     }
-    status = sapfs_sync(volume);
+    status = fat32_backend_sync(volume);
     if (status != SAPFS_STATUS_OK) {
         return status;
     }
@@ -1725,17 +1734,17 @@ enum sapfs_status sapfs_unmount(enum sapfs_volume volume)
     return SAPFS_STATUS_OK;
 }
 
-void sapfs_initialize(void)
+void fat32_backend_initialize(void)
 {
     zero_bytes(mounts, sizeof(mounts));
     zero_bytes(handles, sizeof(handles));
     zero_bytes(cache, sizeof(cache));
     cache_stamp = 0U;
-    (void)sapfs_mount(SAPFS_VOLUME_SYSTEM);
-    (void)sapfs_mount(SAPFS_VOLUME_DATA);
+    (void)fat32_backend_mount(SAPFS_VOLUME_SYSTEM);
+    (void)fat32_backend_mount(SAPFS_VOLUME_DATA);
 }
 
-struct sapfs_drive_info sapfs_drive(enum sapfs_volume volume)
+struct sapfs_drive_info fat32_backend_drive(enum sapfs_volume volume)
 {
     struct sapfs_drive_info result = {0};
     struct sapfs_mount_state *mount;
@@ -1758,7 +1767,7 @@ struct sapfs_drive_info sapfs_drive(enum sapfs_volume volume)
     return result;
 }
 
-uint64_t sapfs_completion_count(enum sapfs_volume volume)
+uint64_t fat32_backend_completion_count(enum sapfs_volume volume)
 {
     return valid_volume(volume) ? mounts[volume].completion_count : 0U;
 }
@@ -1792,7 +1801,7 @@ static enum sapfs_status handle_state(
     return SAPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_open(
+enum sapfs_status fat32_backend_open(
     enum sapfs_volume volume,
     const char *path,
     enum sapfs_access access,
@@ -1857,7 +1866,7 @@ enum sapfs_status sapfs_open(
     return SAPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_close(sapfs_handle handle)
+enum sapfs_status fat32_backend_close(sapfs_handle handle)
 {
     struct sapfs_handle_state *state;
     enum sapfs_status status = handle_state(handle, &state);
@@ -1871,7 +1880,7 @@ enum sapfs_status sapfs_close(sapfs_handle handle)
     return SAPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_seek(
+enum sapfs_status fat32_backend_seek(
     sapfs_handle handle,
     int64_t offset,
     enum sapfs_seek_origin origin,
@@ -1918,7 +1927,7 @@ enum sapfs_status sapfs_seek(
     return SAPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_read(
+enum sapfs_status fat32_backend_read(
     sapfs_handle handle,
     uint8_t *destination,
     size_t capacity,
@@ -2025,7 +2034,7 @@ static enum sapfs_status handle_location(
     return SAPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_write(
+enum sapfs_status fat32_backend_write(
     sapfs_handle handle,
     const uint8_t *source,
     size_t source_bytes,
@@ -2122,7 +2131,7 @@ enum sapfs_status sapfs_write(
     return close_status;
 }
 
-enum sapfs_status sapfs_stat_path(
+enum sapfs_status fat32_backend_stat_path(
     enum sapfs_volume volume,
     const char *path,
     struct sapfs_stat *stat
@@ -2191,7 +2200,7 @@ static void display_name(const uint8_t *short_name, char *output)
     output[used] = '\0';
 }
 
-enum sapfs_status sapfs_list(
+enum sapfs_status fat32_backend_list(
     enum sapfs_volume volume,
     const char *path,
     struct sapfs_list_entry *entries,
@@ -2295,7 +2304,10 @@ listing_complete:
     return status;
 }
 
-enum sapfs_status sapfs_create(enum sapfs_volume volume, const char *path)
+enum sapfs_status fat32_backend_create(
+    enum sapfs_volume volume,
+    const char *path
+)
 {
     struct sapfs_operation operation;
     struct sapfs_parent parent;
@@ -2319,7 +2331,10 @@ enum sapfs_status sapfs_create(enum sapfs_volume volume, const char *path)
     return status != SAPFS_STATUS_OK ? status : close_status;
 }
 
-enum sapfs_status sapfs_mkdir(enum sapfs_volume volume, const char *path)
+enum sapfs_status fat32_backend_mkdir(
+    enum sapfs_volume volume,
+    const char *path
+)
 {
     static const uint8_t dot[11] =
         {'.', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '};
@@ -2385,7 +2400,10 @@ static bool location_open(
     return false;
 }
 
-enum sapfs_status sapfs_unlink(enum sapfs_volume volume, const char *path)
+enum sapfs_status fat32_backend_unlink(
+    enum sapfs_volume volume,
+    const char *path
+)
 {
     struct sapfs_operation operation;
     struct sapfs_location location;
@@ -2476,7 +2494,10 @@ static enum sapfs_status directory_empty(
     return SAPFS_STATUS_CORRUPT;
 }
 
-enum sapfs_status sapfs_rmdir(enum sapfs_volume volume, const char *path)
+enum sapfs_status fat32_backend_rmdir(
+    enum sapfs_volume volume,
+    const char *path
+)
 {
     struct sapfs_operation operation;
     struct sapfs_location location;
@@ -2512,7 +2533,7 @@ enum sapfs_status sapfs_rmdir(enum sapfs_volume volume, const char *path)
     return status != SAPFS_STATUS_OK ? status : close_status;
 }
 
-enum sapfs_status sapfs_truncate(
+enum sapfs_status fat32_backend_truncate(
     enum sapfs_volume volume,
     const char *path,
     uint32_t size
@@ -2643,7 +2664,7 @@ static enum sapfs_status destination_inside_directory(
     return SAPFS_STATUS_CORRUPT;
 }
 
-enum sapfs_status sapfs_rename(
+enum sapfs_status fat32_backend_rename(
     enum sapfs_volume volume,
     const char *source,
     const char *destination
@@ -2714,7 +2735,7 @@ enum sapfs_status sapfs_rename(
     return status != SAPFS_STATUS_OK ? status : close_status;
 }
 
-bool sapfs_self_test(size_t *completed_tests)
+bool fat32_backend_self_test(size_t *completed_tests)
 {
     size_t completed = 0U;
     uint32_t components = 0U;

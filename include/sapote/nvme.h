@@ -257,7 +257,9 @@ struct nvme_read_proof {
 /*
  * A synchronous, generation-authenticated session over one selected ordinary
  * NVMe controller. The controller owns the DMA buffer; callers only provide
- * exact one-LBA CPU buffers to the read/write operations below.
+ * exact one-LBA CPU buffers to the read/write operations below. A successful
+ * flush establishes the durability boundary for every earlier write in the
+ * session.
  */
 struct nvme_volume_session {
     uint64_t generation;
@@ -330,6 +332,7 @@ enum nvme_status nvme_volume_write(
     const uint8_t *source,
     size_t source_bytes
 );
+enum nvme_status nvme_volume_flush(struct nvme_volume_session *session);
 enum nvme_status nvme_volume_close(struct nvme_volume_session *session);
 const char *nvme_status_string(enum nvme_status status);
 

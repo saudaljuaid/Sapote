@@ -90,9 +90,7 @@ struct native_thread {
 };
 
 struct native_directory_resource {
-    char path[SAPFS_MAX_PATH];
-    uint32_t cursor;
-    enum sapfs_volume volume;
+    sapfs_directory_handle iterator;
     bool active;
 };
 
@@ -614,6 +612,11 @@ static bool close_resource(
         return sapfs_close((sapfs_handle)resource->words[0]) == SAPFS_STATUS_OK;
     case SAPOTE_HANDLE_DIRECTORY:
         if (resource->words[0] >= NATIVE_HANDLE_LIMIT) {
+            return false;
+        }
+        if (sapfs_directory_close(
+                process->directories[resource->words[0]].iterator) !=
+                SAPFS_STATUS_OK) {
             return false;
         }
         zero_bytes(&process->directories[resource->words[0]],
@@ -1884,11 +1887,11 @@ static int64_t syscall_directory_open(
 )
 {
     struct sapote_path path_request;
-    struct sapfs_stat stat;
     struct native_resource resource = {{0U, 0U, 0U, 0U}};
     char path[SAPFS_MAX_PATH];
     enum sapfs_volume volume;
     enum sapfs_status status;
+    sapfs_directory_handle iterator = 0U;
     sapote_handle_t handle;
     size_t slot = SIZE_MAX;
 
@@ -1909,18 +1912,12 @@ static int64_t syscall_directory_open(
         return -SAPOTE_ENOMEM;
     }
     cpu_interrupt_enable();
-    status = sapfs_stat_path(volume, path, &stat);
+    status = sapfs_directory_open(volume, path, &iterator);
     cpu_interrupt_disable();
     if (status != SAPFS_STATUS_OK) {
         return filesystem_error(status);
     }
-    if (!stat.directory) {
-        return -SAPOTE_ENOTDIR;
-    }
-    copy_bytes(process->directories[slot].path, path,
-        bounded_length((const uint8_t *)path, sizeof(process->directories[slot].path)) + 1U);
-    process->directories[slot].volume = volume;
-    process->directories[slot].cursor = 0U;
+    process->directories[slot].iterator = iterator;
     process->directories[slot].active = true;
     resource.words[0] = slot;
     {
@@ -1928,6 +1925,7 @@ static int64_t syscall_directory_open(
             &process->handles, SAPOTE_HANDLE_DIRECTORY, &resource, &handle);
 
         if (handle_status != NATIVE_HANDLE_OK) {
+            (void)sapfs_directory_close(iterator);
             zero_bytes(&process->directories[slot],
                 sizeof(process->directories[slot]));
             return handle_error(handle_status);
@@ -1946,10 +1944,10 @@ static int64_t syscall_directory_read(
 )
 {
     struct native_resource *resource;
-    struct sapfs_list_entry entries[SAPFS_MAX_LIST_ENTRIES];
+    struct sapfs_list_entry entry;
     struct sapote_directory_entry output;
     struct native_directory_resource *directory;
-    size_t count = 0U;
+    bool present = false;
     enum sapfs_status status;
 
     if (!validate_user_range(process, output_address, sizeof(output), true)) {
@@ -1971,33 +1969,29 @@ static int64_t syscall_directory_read(
         return -SAPOTE_ESTALE;
     }
     cpu_interrupt_enable();
-    status = sapfs_list(directory->volume, directory->path, entries,
-        SAPFS_MAX_LIST_ENTRIES, &count);
+    status = sapfs_directory_read(directory->iterator, &entry, &present);
     cpu_interrupt_disable();
     if (status != SAPFS_STATUS_OK) {
         return filesystem_error(status);
     }
-    if (directory->cursor >= count) {
+    if (!present) {
         return 0;
     }
     zero_bytes(&output, sizeof(output));
     output.size = sizeof(output);
     output.version = SAPOTE_ABI_VERSION;
-    output.byte_length = entries[directory->cursor].size;
-    output.attributes = entries[directory->cursor].directory ?
+    output.byte_length = entry.size;
+    output.attributes = entry.directory ?
         SAPOTE_PATH_DIRECTORY : 0U;
     output.name_length = (uint16_t)bounded_length(
-        (const uint8_t *)entries[directory->cursor].name,
-        sizeof(entries[directory->cursor].name));
+        (const uint8_t *)entry.name, sizeof(entry.name));
     if (output.name_length > sizeof(output.name)) {
         return -SAPOTE_EIO;
     }
-    copy_bytes(output.name, entries[directory->cursor].name,
-        output.name_length);
+    copy_bytes(output.name, entry.name, output.name_length);
     if (!copy_to_user(process, output_address, &output, sizeof(output))) {
         return -SAPOTE_EFAULT;
     }
-    ++directory->cursor;
     return 1;
 }
 

@@ -61,6 +61,7 @@
 #define NVME_ADMIN_IDENTIFY UINT8_C(0x06)
 #define NVME_ADMIN_CREATE_IO_SQ UINT8_C(0x01)
 #define NVME_ADMIN_CREATE_IO_CQ UINT8_C(0x05)
+#define NVME_NVM_FLUSH UINT8_C(0x00)
 #define NVME_NVM_READ UINT8_C(0x02)
 #define NVME_NVM_WRITE UINT8_C(0x01)
 #define NVME_IDENTIFY_NAMESPACE UINT32_C(0)
@@ -1675,6 +1676,29 @@ static enum nvme_status submit_write_at(
         controller->read.data_length);
 }
 
+static enum nvme_status submit_flush(
+    struct nvme_runtime *controller,
+    uint16_t command_identifier
+)
+{
+    struct nvme_submission_entry *entry;
+    enum nvme_status status;
+
+    if (controller == NULL) {
+        return NVME_STATUS_NULL_ARGUMENT;
+    }
+    status = prepare_submission_entry(&controller->io, &entry);
+    if (status != NVME_STATUS_OK) {
+        return status;
+    }
+    zero_bytes(entry, sizeof(*entry));
+    entry->dword[0] = NVME_NVM_FLUSH |
+        (uint32_t)command_identifier << 16U;
+    entry->dword[1] = NVME_NAMESPACE_IDENTIFIER;
+    return submit_entry(controller, &controller->io, command_identifier,
+        NULL, 0U, 0U);
+}
+
 static enum nvme_status submit_read(struct nvme_runtime *controller)
 {
     return submit_read_at(controller, NVME_FIXTURE_LBA, 1U);
@@ -3069,6 +3093,59 @@ enum nvme_status nvme_volume_write(
     }
     result = volume_write_interrupts_disabled(session, lba, source,
         source_bytes);
+    if (interrupts_were_enabled) {
+        cpu_interrupt_enable();
+    }
+    return result;
+}
+
+static enum nvme_status volume_flush_interrupts_disabled(
+    struct nvme_volume_session *session
+)
+{
+    struct nvme_runtime *controller;
+    uint64_t interrupts_before;
+    enum nvme_status result;
+
+    if (session == NULL) {
+        return NVME_STATUS_NULL_ARGUMENT;
+    }
+    if (!volume_session_matches(session)) {
+        return NVME_STATUS_SESSION_INVALID;
+    }
+    if (!session->writable) {
+        return NVME_STATUS_VOLUME_READ_ONLY;
+    }
+    if (session->state != NVME_FILESYSTEM_SESSION_READY &&
+        session->state != NVME_FILESYSTEM_SESSION_BLOCK_CPU_OWNED) {
+        return NVME_STATUS_TRANSITION_INVALID;
+    }
+    controller = &filesystem_runtime.controller;
+    session->state = NVME_FILESYSTEM_SESSION_BLOCK_CONTROLLER_OWNED;
+    interrupts_before = controller->interrupt_count;
+    result = submit_flush(controller, volume_command_identifier(session));
+    if (result != NVME_STATUS_OK) {
+        session->state = NVME_FILESYSTEM_SESSION_READY;
+        return result;
+    }
+    if (controller->interrupt_count != interrupts_before + 1U) {
+        session->state = NVME_FILESYSTEM_SESSION_READY;
+        return NVME_STATUS_INTERRUPT_COUNT;
+    }
+    session->state = NVME_FILESYSTEM_SESSION_READY;
+    ++session->completion_count;
+    return NVME_STATUS_OK;
+}
+
+enum nvme_status nvme_volume_flush(struct nvme_volume_session *session)
+{
+    const bool interrupts_were_enabled = cpu_interrupts_enabled();
+    enum nvme_status result;
+
+    if (interrupts_were_enabled) {
+        cpu_interrupt_disable();
+    }
+    result = volume_flush_interrupts_disabled(session);
     if (interrupts_were_enabled) {
         cpu_interrupt_enable();
     }

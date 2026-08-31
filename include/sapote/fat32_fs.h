@@ -63,6 +63,7 @@ enum sapfs_status {
 };
 
 typedef uint64_t sapfs_handle;
+typedef uint64_t sapfs_directory_handle;
 
 struct sapfs_stat {
     uint32_t size;
@@ -135,6 +136,17 @@ enum sapfs_status sapfs_list(
     size_t capacity,
     size_t *entry_count
 );
+enum sapfs_status sapfs_directory_open(
+    enum sapfs_volume volume,
+    const char *path,
+    sapfs_directory_handle *handle
+);
+enum sapfs_status sapfs_directory_read(
+    sapfs_directory_handle handle,
+    struct sapfs_list_entry *entry,
+    bool *present
+);
+enum sapfs_status sapfs_directory_close(sapfs_directory_handle handle);
 enum sapfs_status sapfs_create(enum sapfs_volume volume, const char *path);
 enum sapfs_status sapfs_truncate(
     enum sapfs_volume volume,
