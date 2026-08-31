@@ -112,7 +112,9 @@ class Peer:
                 if self.mode == "reset":
                     connection.setsockopt(
                         socket.SOL_SOCKET, socket.SO_LINGER,
-                        struct.pack("hh", 1, 0),
+                        struct.pack(
+                            "hh" if sys.platform == "win32" else "ii", 1, 0
+                        ),
                     )
                     return
                 if self.mode == "truncated-handshake":

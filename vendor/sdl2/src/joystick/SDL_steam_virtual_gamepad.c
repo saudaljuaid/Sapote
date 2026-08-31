@@ -25,6 +25,34 @@
 #include "SDL_joystick_c.h"
 #include "SDL_steam_virtual_gamepad.h"
 
+#if defined(SDL_JOYSTICK_DISABLED)
+
+void SDL_InitSteamVirtualGamepadInfo(void)
+{
+}
+
+SDL_bool SDL_SteamVirtualGamepadEnabled(void)
+{
+    return SDL_FALSE;
+}
+
+SDL_bool SDL_UpdateSteamVirtualGamepadInfo(void)
+{
+    return SDL_FALSE;
+}
+
+const SDL_SteamVirtualGamepadInfo *SDL_GetSteamVirtualGamepadInfo(int slot)
+{
+    (void)slot;
+    return NULL;
+}
+
+void SDL_QuitSteamVirtualGamepadInfo(void)
+{
+}
+
+#else
+
 #ifdef __WIN32__
 #include "../core/windows/SDL_windows.h"
 #else
@@ -249,3 +277,5 @@ void SDL_QuitSteamVirtualGamepadInfo(void)
         SDL_steam_virtual_gamepad_info_file = NULL;
     }
 }
+
+#endif /* SDL_JOYSTICK_DISABLED */

@@ -325,8 +325,14 @@ long sapote_stream_read(sapote_handle_t stream, void *buffer, size_t length,
     }
     count = recv(descriptor, (char *)buffer,
         length > INT_MAX ? INT_MAX : (int)length, 0);
-    return count > 0 ? count : count == 0 ? -(long)SAPOTE_EPIPE :
-        socket_error(descriptor);
+    if (count > 0) {
+        return count;
+    }
+    if ((uintptr_t)descriptor ==
+            __atomic_load_n(&canceled_socket_bits, __ATOMIC_ACQUIRE)) {
+        return -(long)SAPOTE_ECANCELED;
+    }
+    return count == 0 ? -(long)SAPOTE_EPIPE : socket_error(descriptor);
 }
 
 long sapote_stream_write(sapote_handle_t stream, const void *buffer,
@@ -423,6 +429,7 @@ static int run_cancel(const char *hostname, uint64_t deadline_ns)
             sizeof(sapote_https_test_anchors[0]), deadline_ns};
     struct cancel_read_task task;
     long cancel_result;
+    enum sapote_tls_status close_status;
     bool joined;
 #if defined(_WIN32)
     HANDLE thread;
@@ -469,9 +476,10 @@ static int run_cancel(const char *hostname, uint64_t deadline_ns)
 #else
     joined = pthread_join(thread, NULL) == 0;
 #endif
+    close_status = sapote_tls_client_close(client, deadline_ns);
     if (cancel_result != 0 || !joined || task.result != -1 ||
         task.transport_error != -(long)SAPOTE_ECANCELED ||
-        sapote_tls_client_close(client, deadline_ns) != SAPOTE_TLS_IO) {
+        close_status != SAPOTE_TLS_IO) {
         return 1;
     }
     puts("HTTPS REFUSAL blocking TLS operation canceled across threads");
