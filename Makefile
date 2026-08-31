@@ -393,7 +393,7 @@ $(ZLIB_OBJECT_DIR)/%.o: vendor/zlib/src/%.c $(ZLIB_HEADERS)
 $(SDL2_OBJECT_DIR)/%.o: vendor/sdl2/src/%.c $(SDL2_PUBLIC_HEADERS) \
 		vendor/sdl2/include/SDL_config_sapote.h
 	mkdir -p $(dir $@)
-	$(SDK_CC) $(SDL2_VENDOR_CFLAGS) -MMD -MP -c $< -o $@
+	$(SDK_CC) $(SDL2_VENDOR_CFLAGS) -MMD -MP -MT sdl2/$*.o -c $< -o $@
 
 $(TEST_BUILD_DIR)/bearssl/%.o: vendor/bearssl/src/%.c
 	mkdir -p $(dir $@)
