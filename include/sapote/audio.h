@@ -59,7 +59,7 @@
 #define AUDIO_PCM_STREAM_TAG 1U
 #define AUDIO_NATIVE_STREAMS 2U
 #define AUDIO_NATIVE_VOLUME_UNITY 32768U
-#define AUDIO_NATIVE_CONTROLLED_CONTROLS 6U
+#define AUDIO_NATIVE_CONTROLLED_CONTROLS 8U
 
 /* Controls the pure foundation stage exercises before any device is touched. */
 #define AUDIO_CONTROLLED_CONTROLS 16U

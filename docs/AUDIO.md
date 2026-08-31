@@ -82,11 +82,17 @@ the chunk into its own bounded queue. Submitting while that handle already owns
 a queued or active chunk returns `EBUSY`. There is no per-sample syscall and no
 userspace DMA.
 
-The scheduler gives the first queued chunk a one-millisecond coalescing window.
-If both handles queue during it, an integer-only two-input mixer applies an
-independent unsigned Q15 left/right gain to each stream, adds in signed 32-bit
-space, and saturates to signed 16-bit output. Unity is 32768 and zero is silent.
-At most two 4,096-byte source chunks and one 4,096-byte DMA mix exist.
+With two handles open, the scheduler gives the first queued chunk one guaranteed
+return to its owner plus a ten-millisecond coalescing window. The service grace
+is independent of host pauses, so two consecutive public submit calls cannot be
+split merely because slow TCG advanced the monotonic deadline while the first
+syscall returned through the scheduler. If both handles queue during that
+bounded opportunity, an integer-only two-input mixer applies an independent
+unsigned Q15 left/right gain to each stream, adds in signed 32-bit space, and
+saturates to signed 16-bit output. Unity is 32768 and zero is silent. A lone
+queued handle starts after the grace/window expires; a single open handle starts
+without the two-handle coalescing delay. At most two 4,096-byte source chunks and
+one 4,096-byte DMA mix exist.
 
 `SAPOTE_WAIT_WRITABLE` means the handle can accept another chunk;
 `SAPOTE_WAIT_CLOSED` reports cancellation or a stream error. Drain blocks only
@@ -166,3 +172,32 @@ Still explicitly refused:
 
 The existing `-audiodev none` scenario still proves DMA consumption only. It
 does not prove loudness, speaker selection, or an audible host artifact.
+
+## Public-ABI and WAV evidence
+
+`apps/native-audio` is the Ring 3 proof for the public surface. Its admitted
+manifest requests only `console`, `time`, and `audio`; a second manifest for
+the same executable deliberately omits `audio` and must observe `EACCES`
+without changing the PCI or DMA census. The admitted process uses only SDK
+headers and wrappers to prove the two-handle limit, immediate and completion
+readiness, malformed-length refusal, per-channel volume, deterministic
+two-stream mixing, drain, queued cancellation, terminal readiness, explicit
+close, stale-handle refusal, and process-exit cleanup.
+
+`make native-audio-proof` builds both packages, their isolated System/Data
+images, and the host WAV controls. `make qemu-test-native-audio` attaches the
+same QEMU ICH9/`hda-duplex` model as the kernel proof. If that QEMU build
+advertises its `wav` audio driver, the scenario writes
+`build/tests/native-audio/native-audio.wav` and independently verifies:
+
+- 48,000 Hz, signed 16-bit, two-channel uncompressed PCM;
+- a bounded nonempty frame count and reported duration;
+- an exact 1,024-frame Q15 mixed waveform with SHA-256
+  `5864c13557496ba86294adbbfe8078e9f2c0b5e808e4d0c4f49738fd465d1261`;
+- non-silence and absence of the chunk canceled before DMA ownership.
+
+When the runner does not expose the WAV backend, the scenario uses the null
+backend and prints an explicit WAV skip while retaining all serial, refusal,
+DMA-consumption, and resource-census assertions. A matching WAV is digital
+emulator-backend evidence, not microphone, loudspeaker, or perceptual acoustic
+proof.

@@ -31,10 +31,10 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	multiprocess multiprocess-slots driver-matrix driver-matrix-builtin audio \
 	nvidia nvidia-builtin native native-lua native-sqlite native-canvas \
 	native-rust native-crash native-elf-refusal native-digest-refusal \
-	native-abi-refusal native-relaunch
+	native-abi-refusal native-relaunch native-audio
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 112
-EXPECTED_SHELL_ASSERTION_COUNT := 439
+EXPECTED_TEST_SCENARIO_COUNT := 113
+EXPECTED_SHELL_ASSERTION_COUNT := 448
 
 CC := gcc
 LD := ld
@@ -70,9 +70,11 @@ RUST_NVBIOS_TEST := $(BUILD_DIR)/nvbios-tests
 RUST_NATIVE_IMAGE_TEST := $(BUILD_DIR)/native-image-tests
 WALL_CLOCK_HOST_TEST := $(TEST_BUILD_DIR)/wall-clock-host-test
 SDK_TIME_HOST_TEST := $(TEST_BUILD_DIR)/sdk-time-host-test
+PACKAGE_STATE_HOST_TEST := $(TEST_BUILD_DIR)/package-state-host-test
 TLS_HOST_TEST := $(TEST_BUILD_DIR)/tls-client-host-test
 TLS_HOST_OBJECT := $(TEST_BUILD_DIR)/tls-client.o
 TLS_HOST_WRAPPER_OBJECT := $(TEST_BUILD_DIR)/tls-wrapper.o
+ZLIB_HOST_TEST := $(TEST_BUILD_DIR)/zlib-host-test
 EXT4_FIXTURE := $(TEST_BUILD_DIR)/ext4/sapote-ext4.raw
 RUST_SOURCES := $(wildcard src/rust/*.rs)
 RUST_MANIFEST := src/rust/Cargo.toml
@@ -188,8 +190,20 @@ BEARSSL_LIB := $(SDK_BUILD_DIR)/lib/libbearssl.a
 TLS_HOST_BEARSSL_OBJECTS := $(patsubst vendor/bearssl/src/%.c,\
 	$(TEST_BUILD_DIR)/bearssl/%.o,$(BEARSSL_SOURCE))
 TLS_HOST_BEARSSL_LIB := $(TEST_BUILD_DIR)/libbearssl-host.a
+ZLIB_SOURCE := vendor/zlib/src/adler32.c vendor/zlib/src/crc32.c \
+	vendor/zlib/src/deflate.c vendor/zlib/src/infback.c \
+	vendor/zlib/src/inffast.c vendor/zlib/src/inflate.c \
+	vendor/zlib/src/inftrees.c vendor/zlib/src/trees.c \
+	vendor/zlib/src/zutil.c
+ZLIB_OBJECT_DIR := $(SDK_BUILD_DIR)/zlib
+ZLIB_OBJECTS := $(patsubst vendor/zlib/src/%.c,\
+	$(ZLIB_OBJECT_DIR)/%.o,$(ZLIB_SOURCE))
+ZLIB_LIB := $(SDK_BUILD_DIR)/lib/libz.a
+ZLIB_DEFINES := -DZ_SOLO -DZ_U4=unsigned -DZ_U8='unsigned long long' \
+	-DHAVE_UNISTD_H=0 -DHAVE_STDARG_H=0
 SDK_CFLAGS := --target=x86_64-unknown-none-elf -Isdk/include -Iinclude \
-	-Ivendor/bearssl/inc -Isdk/src -std=c11 -O2 -g -ffreestanding -fno-pie \
+	-Ivendor/bearssl/inc -Ivendor/zlib/include -Isdk/src \
+	$(ZLIB_DEFINES) -std=c11 -O2 -g -ffreestanding -fno-pie \
 	-fno-stack-protector -mcmodel=large -mno-red-zone -fno-builtin \
 	-ffunction-sections -fdata-sections -ftls-model=local-exec \
 	-Wall -Wextra -Werror -Wpedantic -Wshadow -Wundef \
@@ -202,6 +216,12 @@ BEARSSL_CFLAGS := --target=x86_64-unknown-none-elf -Isdk/include -Iinclude \
 	-DBR_USE_UNIX_TIME=0 -DBR_USE_WIN32_TIME=0 \
 	-DBR_SSE2=0 -DBR_AES_X86NI=0 -DBR_POWER8=0 \
 	-Wall -Wextra -Werror
+ZLIB_CFLAGS := --target=x86_64-unknown-none-elf -Isdk/include -Iinclude \
+	-Ivendor/zlib/include -Ivendor/zlib/src $(ZLIB_DEFINES) \
+	-std=c11 -O2 -g -ffreestanding -fno-pie -fno-stack-protector \
+	-mcmodel=large -mno-red-zone -fno-builtin -ffunction-sections \
+	-fdata-sections -Wall -Wextra -Werror -Wpedantic -Wshadow -Wundef \
+	-Wstrict-prototypes -Wmissing-prototypes
 SDK_LDFLAGS := -nostdlib -static --gc-sections --build-id=none \
 	-z max-page-size=0x1000 -z noexecstack --fatal-warnings \
 	--orphan-handling=error -T sdk/linker.ld
@@ -234,6 +254,12 @@ NETAPP_APP := $(NETAPP_DIR)/NETAPP.APP
 NETAPP_PACKAGE := $(NETAPP_DIR)/NETAPP.SPK
 NETAPP_SYSTEM_IMAGE := $(NETAPP_DIR)/system.raw
 NETAPP_DATA_IMAGE := $(NETAPP_DIR)/data.raw
+AUDIO_APP_DIR := $(BUILD_DIR)/native-audio
+AUDIO_APP := $(AUDIO_APP_DIR)/AUDIO.APP
+AUDIO_PACKAGE := $(AUDIO_APP_DIR)/AUDIO.SPK
+AUDIO_REFUSAL_PACKAGE := $(AUDIO_APP_DIR)/AUDIONO.SPK
+AUDIO_SYSTEM_IMAGE := $(AUDIO_APP_DIR)/system.raw
+AUDIO_DATA_IMAGE := $(AUDIO_APP_DIR)/data.raw
 RUST_APP_DIR := $(BUILD_DIR)/native-rust
 RUST_APP_CARGO_TARGET := $(RUST_APP_DIR)/cargo
 RUST_APP_SOURCE := $(RUST_APP_CARGO_TARGET)/x86_64-unknown-none/release/sapote-native-rust-proof
@@ -295,9 +321,9 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d)
 # implicit and pattern rule search for a phony target, so declaring them phony
 # makes every scenario resolve to "nothing to be done" and pass without booting.
 # They never create a file of their own name, so they rerun regardless.
-.PHONY: all capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios dynamic-elf-tests ext4-images ext4-tests fat32-images hooks \
-	iso kernel lint native-apps port-tests qemu-port-tests reproducible-sdk run \
-	package-repository-tests package-transaction-tests screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests
+.PHONY: all audio-wav-tests capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios dynamic-elf-tests ext4-images ext4-tests fat32-images hooks \
+	iso kernel lint native-apps native-audio-proof port-tests qemu-port-tests reproducible-sdk run \
+	package-repository-tests package-state-tests package-transaction-tests screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests zlib-tests
 
 all: kernel
 
@@ -317,6 +343,10 @@ $(SDK_OBJECT_DIR)/%.o: sdk/src/%.S | $(SDK_OBJECT_DIR)
 $(BEARSSL_OBJECT_DIR)/%.o: vendor/bearssl/src/%.c
 	mkdir -p $(dir $@)
 	$(SDK_CC) $(BEARSSL_CFLAGS) -c $< -o $@
+
+$(ZLIB_OBJECT_DIR)/%.o: vendor/zlib/src/%.c
+	mkdir -p $(dir $@)
+	$(SDK_CC) $(ZLIB_CFLAGS) -c $< -o $@
 
 $(TEST_BUILD_DIR)/bearssl/%.o: vendor/bearssl/src/%.c
 	mkdir -p $(dir $@)
@@ -339,11 +369,15 @@ $(SDK_LIB): $(SDK_OBJECTS) | $(SDK_BUILD_DIR)/lib
 $(BEARSSL_LIB): $(BEARSSL_OBJECTS) | $(SDK_BUILD_DIR)/lib
 	$(SDK_AR) rcsD $@ $(BEARSSL_OBJECTS)
 
-$(SDK_BUILD_DIR)/.installed: Makefile $(SDK_LIB) $(BEARSSL_LIB) $(SDK_CRT) \
+$(ZLIB_LIB): $(ZLIB_OBJECTS) | $(SDK_BUILD_DIR)/lib
+	$(SDK_AR) rcsD $@ $(ZLIB_OBJECTS)
+
+$(SDK_BUILD_DIR)/.installed: Makefile $(SDK_LIB) $(BEARSSL_LIB) $(ZLIB_LIB) $(SDK_CRT) \
 		sdk/linker.ld \
 		sdk/bin/sapote-cc $(wildcard sdk/include/*.h) \
 		$(wildcard sdk/include/sapote/*.h) $(wildcard sdk/include/sys/*.h) \
 		$(wildcard vendor/bearssl/inc/*.h) \
+		$(wildcard vendor/zlib/include/*.h) \
 		$(wildcard include/sapote/abi/*.h) \
 		include/sapote/abi.h | $(SDK_BUILD_DIR)/include $(SDK_BUILD_DIR)/bin
 	mkdir -p $(SDK_BUILD_DIR)/include/sapote/abi $(SDK_BUILD_DIR)/include/sys
@@ -353,6 +387,7 @@ $(SDK_BUILD_DIR)/.installed: Makefile $(SDK_LIB) $(BEARSSL_LIB) $(SDK_CRT) \
 	cp include/sapote/abi.h $(SDK_BUILD_DIR)/include/sapote/
 	cp include/sapote/abi/*.h $(SDK_BUILD_DIR)/include/sapote/abi/
 	cp vendor/bearssl/inc/*.h $(SDK_BUILD_DIR)/include/
+	cp vendor/zlib/include/*.h $(SDK_BUILD_DIR)/include/
 	cp sdk/linker.ld $(SDK_BUILD_DIR)/linker.ld
 	cp sdk/bin/sapote-cc $(SDK_BUILD_DIR)/bin/sapote-cc
 	touch $@
@@ -381,6 +416,9 @@ $(CANVAS_APP_DIR):
 	mkdir -p $@
 
 $(NETAPP_DIR):
+	mkdir -p $@
+
+$(AUDIO_APP_DIR):
 	mkdir -p $@
 
 $(RUST_APP_DIR):
@@ -513,6 +551,32 @@ $(NETAPP_SYSTEM_IMAGE): $(NETAPP_PACKAGE) tools/sapote-package.py \
 $(NETAPP_DATA_IMAGE): tools/fat32_image.py | $(NETAPP_DIR)
 	$(PYTHON) tools/fat32_image.py format data $@
 
+$(AUDIO_APP_DIR)/main.o: apps/native-audio/main.c \
+		$(SDK_BUILD_DIR)/.installed | $(AUDIO_APP_DIR)
+	$(SDK_CC) $(SDK_CFLAGS) -c $< -o $@
+
+$(AUDIO_APP): $(AUDIO_APP_DIR)/main.o $(SDK_BUILD_DIR)/.installed
+	$(SDK_LD) $(SDK_LDFLAGS) -Map=$(AUDIO_APP_DIR)/AUDIO.map \
+		-o $@ $(SDK_CRT) $< $(SDK_LIB)
+
+$(AUDIO_PACKAGE): $(AUDIO_APP) apps/native-audio/manifest.json
+	$(PYTHON) tools/sapote-package.py build \
+		--spec apps/native-audio/manifest.json --executable $< --output $@
+
+$(AUDIO_REFUSAL_PACKAGE): $(AUDIO_APP) \
+		apps/native-audio/manifest-refusal.json
+	$(PYTHON) tools/sapote-package.py build \
+		--spec apps/native-audio/manifest-refusal.json \
+		--executable $< --output $@
+
+$(AUDIO_SYSTEM_IMAGE): $(AUDIO_PACKAGE) $(AUDIO_REFUSAL_PACKAGE) \
+		tools/sapote-package.py tools/fat32_image.py
+	$(PYTHON) tools/sapote-package.py install-system \
+		--output $@ $(AUDIO_PACKAGE) $(AUDIO_REFUSAL_PACKAGE)
+
+$(AUDIO_DATA_IMAGE): tools/fat32_image.py | $(AUDIO_APP_DIR)
+	$(PYTHON) tools/fat32_image.py format data $@
+
 $(RUST_APP): apps/native-rust/Cargo.toml apps/native-rust/Cargo.lock \
 		apps/native-rust/manifest.json apps/native-rust/src/main.rs \
 		rust/sapote/Cargo.toml rust/sapote/src/lib.rs sdk/linker.ld | $(RUST_APP_DIR)
@@ -561,9 +625,16 @@ $(ADMISSION_DATA_IMAGE): tools/fat32_image.py | $(ADMISSION_DIR)
 
 native-apps: $(NATIVE_TEST_PACKAGE) $(LUA_PACKAGE) $(SQLITE_PACKAGE) \
 	$(CANVAS_PACKAGE) $(CANVAS_PROOF_PACKAGE) $(NETAPP_PACKAGE) \
-	$(RUST_APP_PACKAGE) $(CRASH_PACKAGE)
+	$(AUDIO_PACKAGE) $(AUDIO_REFUSAL_PACKAGE) $(RUST_APP_PACKAGE) \
+	$(CRASH_PACKAGE)
 
-port-tests: native-apps
+audio-wav-tests:
+	$(PYTHON) -S tools/audio-wav-host-test.py --self-test
+
+native-audio-proof: $(AUDIO_SYSTEM_IMAGE) $(AUDIO_DATA_IMAGE) audio-wav-tests
+	@echo 'native audio proof packages, images and WAV controls built'
+
+port-tests: native-apps audio-wav-tests
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(NATIVE_TEST_APP)' \
 		$(RUSTC) --edition 2024 --test -D warnings \
 		tools/native-image-host-test.rs -o $(RUST_NATIVE_IMAGE_TEST)
@@ -576,6 +647,8 @@ port-tests: native-apps
 		$(RUST_NATIVE_IMAGE_TEST)
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(NETAPP_APP)' \
 		$(RUST_NATIVE_IMAGE_TEST)
+	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(AUDIO_APP)' \
+		$(RUST_NATIVE_IMAGE_TEST)
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(RUST_APP)' \
 		$(RUST_NATIVE_IMAGE_TEST)
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(CRASH_APP)' \
@@ -587,6 +660,8 @@ port-tests: native-apps
 	$(PYTHON) tools/sapote-package.py inspect $(CANVAS_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(CANVAS_PROOF_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(NETAPP_PACKAGE)
+	$(PYTHON) tools/sapote-package.py inspect $(AUDIO_PACKAGE)
+	$(PYTHON) tools/sapote-package.py inspect $(AUDIO_REFUSAL_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(RUST_APP_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(CRASH_PACKAGE)
 
@@ -594,8 +669,8 @@ qemu-port-tests: qemu-test-native qemu-test-native-lua qemu-test-native-sqlite \
 	qemu-test-native-canvas qemu-test-network-native qemu-test-native-rust \
 	qemu-test-native-crash qemu-test-native-elf-refusal \
 	qemu-test-native-digest-refusal qemu-test-native-abi-refusal \
-	qemu-test-native-relaunch
-	@echo 'native userspace, Lua, SQLite, Canvas, network and Rust QEMU scenarios passed'
+	qemu-test-native-relaunch qemu-test-native-audio
+	@echo 'native userspace, Lua, SQLite, Canvas, network, audio and Rust QEMU scenarios passed'
 
 contract-counts:
 	@printf '%s %s\n' '$(EXPECTED_TEST_SCENARIO_COUNT)' \
@@ -847,6 +922,29 @@ package-transaction-tests: tools/sapote-transaction.py \
 		tools/sapote_transaction_host_test.py tools/sapote-package.py
 	$(PYTHON) -u tools/sapote_transaction_host_test.py
 
+$(PACKAGE_STATE_HOST_TEST): tools/package-state-host-test.c \
+		src/kernel/package_state.c include/sapote/package_state.h
+	mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -Wshadow \
+		-Wundef -Wstrict-prototypes -Wmissing-prototypes -Iinclude \
+		tools/package-state-host-test.c src/kernel/package_state.c -o $@
+
+package-state-tests: $(PACKAGE_STATE_HOST_TEST)
+	$(PACKAGE_STATE_HOST_TEST)
+
+$(ZLIB_HOST_TEST): tools/zlib-host-test.c sdk/src/zlib.c \
+		sdk/include/sapote/zlib.h $(ZLIB_SOURCE) \
+		vendor/zlib/include/zlib.h vendor/zlib/include/zconf.h
+	mkdir -p $(dir $@)
+	$(CC) -Ivendor/zlib/include -Ivendor/zlib/src -idirafter sdk/include \
+		$(ZLIB_DEFINES) -std=c11 -O2 -Wall -Wextra -Werror \
+		-Wpedantic -Wshadow -Wundef -Wstrict-prototypes \
+		-Wmissing-prototypes tools/zlib-host-test.c sdk/src/zlib.c \
+		$(ZLIB_SOURCE) -o $@
+
+zlib-tests: $(ZLIB_HOST_TEST)
+	$(ZLIB_HOST_TEST)
+
 dynamic-elf-tests: src/rust/elf64_dynamic.rs \
 		tools/elf64-dynamic-host-test.rs
 	$(RUSTC) --edition 2024 --test -D warnings \
@@ -888,7 +986,8 @@ verify: toolchain lint
 	$(MAKE) clean
 	$(MAKE) kernel
 	$(MAKE) wall-clock-tests ext4-tests package-repository-tests \
-		package-transaction-tests dynamic-elf-tests tls-tests
+		package-transaction-tests package-state-tests dynamic-elf-tests \
+		tls-tests zlib-tests
 	$(PYTHON) tools/verify-ui-assets.py
 	@test '$(LOGO_MAX_DIMENSION)' -eq 280
 	@test '$(STUDIO_ICON_MAX_DIMENSION)' -eq 80
@@ -1834,6 +1933,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		native-digest-refusal) expected=253 ;; \
 		native-abi-refusal) expected=1 ;; \
 		native-relaunch) expected=3 ;; \
+		native-audio) expected=5 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -1853,6 +1953,15 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			driver-matrix-builtin) hardware='' ;; \
 			audio) \
 				hardware='-device ich9-intel-hda,id=hda -device hda-duplex,bus=hda.0,audiodev=none0 -audiodev none,id=none0' ;; \
+			native-audio) \
+				$(MAKE) '$(AUDIO_SYSTEM_IMAGE)' '$(AUDIO_DATA_IMAGE)' || exit 1; \
+				cp '$(AUDIO_DATA_IMAGE)' '$(TEST_BUILD_DIR)/$*/data.raw' || exit 1; \
+				audio_wav='$(abspath $(TEST_BUILD_DIR)/$*/native-audio.wav)'; rm -f "$$audio_wav"; audio_capture=false; \
+				if qemu-system-x86_64 -audiodev help 2>&1 | grep -Eq '(^|[[:space:]])wav([[:space:]]|$$)'; then \
+					audio_capture=true; \
+					audio_backend="-audiodev wav,id=wav0,path=$$audio_wav"; \
+				else audio_backend='-audiodev none,id=wav0'; fi; \
+				hardware="-boot order=d -blockdev driver=file,filename=$(AUDIO_SYSTEM_IMAGE),node-name=audio-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=audio-system-file,node-name=audio-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=audio-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=audio-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=audio-data-file,node-name=audio-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=audio-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -device ich9-intel-hda,id=hda -device hda-duplex,bus=hda.0,audiodev=wav0 $$audio_backend" ;; \
 			# No emulator models an NVIDIA part, so the nvidia scenario \
 			# attaches display and HD Audio functions of exactly the classes \
 			# these drivers match on, from vendors that are not NVIDIA. \
@@ -1954,7 +2063,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		native-lua) timeout_seconds=150 ;; \
 		native-sqlite) timeout_seconds=240 ;; \
 		native-canvas) timeout_seconds=180 ;; \
-		native-crash|native-relaunch) timeout_seconds=180 ;; \
+		native-crash|native-relaunch|native-audio) timeout_seconds=180 ;; \
 		native-rust|native-*-refusal) timeout_seconds=120 ;; \
 	esac; \
 	if test '$*' = fat32-persistence -o '$*' = native-sqlite; then reboot_control=''; fi; \
@@ -2362,6 +2471,16 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fxq 'Sapote: native unsupported ABI version refused; resource census unchanged' "$$log" || diagnostics_ok=false ;; \
 		native-relaunch) \
 			grep -Fxq 'Sapote: native relaunch advanced generation; both resource censuses clean' "$$log" || diagnostics_ok=false ;; \
+		native-audio) \
+			grep -Fxq 'SAPOTE AUDIO REFUSAL PASS capability=EACCES' "$$log" && \
+			grep -Fxq 'SAPOTE AUDIO PHASE open-limit-readiness PASS' "$$log" && \
+			grep -Fxq 'SAPOTE AUDIO PHASE two-stream-mix-drain PASS' "$$log" && \
+			grep -Fxq 'SAPOTE AUDIO PHASE cancel-terminal-readiness PASS' "$$log" && \
+			grep -Fxq 'SAPOTE AUDIO PASS frames=1024 format=48000/S16LE/2 close=stale teardown=process' "$$log" && \
+			grep -Fxq 'Sapote: native audio ABI capability, mixing, cancellation and teardown passed' "$$log" || diagnostics_ok=false; \
+			if test "$$audio_capture" = true; then \
+				$(PYTHON) -S tools/audio-wav-host-test.py "$$audio_wav" || diagnostics_ok=false; \
+			else echo 'SAPOTE AUDIO WAV SKIP qemu wav backend unavailable'; fi ;; \
 	esac; \
 	if test "$$diagnostics_ok" != true; then \
 		echo 'QEMU scenario $* omitted its required diagnostic'; \

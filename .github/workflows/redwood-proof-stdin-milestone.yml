@@ -159,13 +159,13 @@ jobs:
                       make --no-print-directory -s contract-scenarios | wc -l
                   )
                   assertion_count=$(grep -c 'grep -F\|grep -E' Makefile)
-                  test "$expected_scenarios" -eq 112
+                  test "$expected_scenarios" -eq 113
                   test "$scenario_count" -eq "$expected_scenarios"
                   test "$assertion_count" -eq "$expected_assertions"
                   make qemu-tests QEMU_ACCEL=tcg \
                       | tee build/all-qemu-scenarios.txt
                   test "$(grep -Ec '^QEMU scenario [a-z0-9-]+ passed$' \
-                      build/all-qemu-scenarios.txt)" -eq 112
+                      build/all-qemu-scenarios.txt)" -eq 113
             - name: Capture authentic interactive Sapote Redwood evidence
               if: github.ref == 'refs/tags/v1.1.0'
               shell: bash

@@ -32,7 +32,7 @@ Redwood.
 - A 64-bit kernel built from scratch — no Linux inside.
 - Drivers for real hardware: NVMe, USB, audio, networking.
 - Runs real outside software — Lua and SQLite, natively.
-- 112 automated boots in QEMU, on every single change.
+- 113 automated boots in QEMU, on every single change.
 
 ## Build and boot
 

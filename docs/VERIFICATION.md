@@ -20,7 +20,7 @@ rejects warnings, unresolved symbols, unexpected sections, W+X mappings,
 floating-point or SIMD instructions in the kernel, modified pinned assets, and
 non-reproducible filesystem images.
 
-`make qemu-tests` runs the complete 112-scenario guest suite. The Makefile is
+`make qemu-tests` runs the complete 113-scenario guest suite. The Makefile is
 the source of truth for scenario names and expected results.
 
 The `native-canvas` scenario captures `canvas.png` and `canvas.mp4` directly

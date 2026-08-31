@@ -1,10 +1,63 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
 
-# Third-party visual assets
+# Third-party sources and visual assets
 
 Sapote's build is offline and deterministic. The exact third-party source
-files used by the UI are committed, licensed beside the assets, converted by
-host tools, and then parsed through bounded Rust formats before C draws them.
+files used by the runtime and UI are committed and licensed beside the code or
+assets. Runtime sources are pinned to exact upstream Git objects or release
+archives. Visual sources are converted by host tools and then parsed through
+bounded Rust formats before C draws them.
+
+## ext4plus
+
+The sole ext4 implementation candidate is the official
+[`arihant2math/ext4plus`](https://github.com/arihant2math/ext4plus) repository at
+commit `ec7e8443e474376977bb752cde370762226a5a50`, Git tree
+`a4aea888632546b2bbfbefa97b43ca6c8f945fc8`. The exact `no_std` source tree,
+manifest, lockfile, README, MIT license, and Apache-2.0 license are retained
+under `vendor/ext4plus/`. Sapote selects the MIT terms for GPL-3.0-only
+distribution; both upstream notices remain available.
+
+The local manifest removes workspace inheritance and development-only inputs;
+the implementation source is otherwise pinned to the recorded tree. The
+accepted runtime profile is currently read-only. Upstream does not implement a
+journaled write path, so vendoring it does not establish crash-consistent ext4
+writes. `vendor/ext4plus/SAPOTE-PORT.md` records that boundary and the exact
+feature configuration.
+
+## BearSSL
+
+TLS uses BearSSL 0.6 from the official
+[`bearssl.org` Git repository](https://www.bearssl.org/gitweb/?p=BearSSL;a=summary),
+annotated tag object `7d8e767e79bb1750345e571ec89cca1da13b52df`,
+commit `8ef7680081c61b486622f2d983c0d3d21e83caad`, and Git tree
+`3d0709034c2b5eb735d43ff639411ac31e76153b`. The retained `inc/` and `src/`
+trees are byte-for-byte upstream files. BearSSL's MIT license and README are
+preserved under `vendor/bearssl/`.
+
+Sapote disables BearSSL's hosted entropy and time adapters and its optional
+SSE2, AES-NI, and POWER8 implementations. The SDK wrapper supplies native
+entropy, validated realtime, trust anchors, a canonical DNS hostname,
+monotonic transport deadlines, and a bounded TLS 1.2 cipher profile. The
+cryptographic primitives and protocol state machine are unmodified.
+
+## zlib
+
+The compression source is the official zlib 1.3.2 release archive from
+[`zlib.net`](https://zlib.net/), SHA-256
+`bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16`.
+It corresponds to annotated tag object
+`216c70c020aa53f0c40920d155f808b6b59c9acb` and commit
+`da607da739fa6047df13e66a2af6b8bec7c2a498` in the official repository.
+The zlib license is retained verbatim.
+
+Sapote carries the byte-exact public headers and nine-source `Z_SOLO` core for
+bounded in-memory deflate/inflate and checksums. Hosted gzip-file adapters and
+the allocation-backed `compress*` convenience API are deliberately excluded.
+`vendor/zlib/SOURCE-MANIFEST.sha256` pins each retained upstream file, while
+`vendor/zlib/SAPOTE-PORT.md` defines the freestanding build and allocator
+contract. The reproducible SDK installs this profile as the static `libz.a`;
+there is not yet a shared-library ABI or dynamic-code-sharing claim.
 
 ## Inter
 

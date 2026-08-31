@@ -14,6 +14,7 @@
 #include <sapote/console.h>
 #include <sapote/cpu.h>
 #include <sapote/device_substrate.h>
+#include <sapote/dma.h>
 #include <sapote/framebuffer.h>
 #include <sapote/filesystem.h>
 #include <sapote/fat32_fs.h>
@@ -32,6 +33,7 @@
 #include <sapote/nvme.h>
 #include <sapote/paging.h>
 #include <sapote/pci.h>
+#include <sapote/pci_resource.h>
 #include <sapote/pic.h>
 #include <sapote/pit.h>
 #include <sapote/pointer.h>
@@ -563,6 +565,9 @@ static enum kernel_test_scenario scenario_from_value(
     if (token_equals(value, length, "native-relaunch")) {
         return KERNEL_TEST_NATIVE_RELAUNCH;
     }
+    if (token_equals(value, length, "native-audio")) {
+        return KERNEL_TEST_NATIVE_AUDIO;
+    }
 
     return KERNEL_TEST_INVALID;
 }
@@ -750,6 +755,7 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
     /* 0x7F is the invariant QEMU failure value. */
     case KERNEL_TEST_NATIVE_ABI_REFUSAL: return UINT8_C(0x80);
     case KERNEL_TEST_NATIVE_RELAUNCH: return UINT8_C(0x81);
+    case KERNEL_TEST_NATIVE_AUDIO: return UINT8_C(0x82);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -4722,6 +4728,7 @@ void kernel_test_run(
     case KERNEL_TEST_NATIVE_DIGEST_REFUSAL:
     case KERNEL_TEST_NATIVE_ABI_REFUSAL:
     case KERNEL_TEST_NATIVE_RELAUNCH:
+    case KERNEL_TEST_NATIVE_AUDIO:
         /* Deferred until Sapote Redwood and the Boot Ledger are published. */
         return;
     case KERNEL_TEST_MULTIPROCESS_SLOTS:
@@ -5154,6 +5161,63 @@ _Noreturn void kernel_test_complete_native_relaunch(void)
         kernel_test_fail("native relaunch did not reset generations and resources");
     }
     console_write("Sapote: native relaunch advanced generation; both resource censuses clean\n");
+    kernel_test_pass();
+}
+
+static bool native_audio_census_equal(
+    const struct pci_resource_state *pci_before,
+    const struct dma_state *dma_before
+)
+{
+    const struct pci_resource_state pci_after = pci_resource_get_state();
+    const struct dma_state dma_after = dma_get_state();
+
+    return pci_before->active_claims == pci_after.active_claims &&
+        pci_before->active_mappings == pci_after.active_mappings &&
+        pci_before->arena_pages == pci_after.arena_pages &&
+        pci_before->mapped_pages == pci_after.mapped_pages &&
+        pci_before->bus_masters == pci_after.bus_masters &&
+        pci_before->active == pci_after.active &&
+        dma_before->active_allocations == dma_after.active_allocations &&
+        dma_before->cpu_owned_allocations == dma_after.cpu_owned_allocations &&
+        dma_before->device_owned_allocations ==
+            dma_after.device_owned_allocations &&
+        dma_before->active == dma_after.active;
+}
+
+_Noreturn void kernel_test_complete_native_audio(void)
+{
+    struct native_process_result refusal = { 0 };
+    struct native_process_result proof = { 0 };
+    struct pci_resource_state pci_before;
+    struct dma_state dma_before;
+
+    if (active_scenario != KERNEL_TEST_NATIVE_AUDIO) {
+        kernel_test_fail("native audio completion used outside its scenario");
+    }
+    pci_before = pci_resource_get_state();
+    dma_before = dma_get_state();
+    if (native_process_launch("AUDIONO.MAN", &refusal) != NATIVE_PROCESS_OK ||
+        !refusal.exited || refusal.faulted || refusal.exit_status != 0 ||
+        !refusal.resources_released || refusal.peak_handles != 0U ||
+        !native_process_resources_released() ||
+        !audio_native_resources_released() ||
+        !native_audio_census_equal(&pci_before, &dma_before)) {
+        kernel_test_fail(
+            "audio capability refusal changed the resource census");
+    }
+    pci_before = pci_resource_get_state();
+    dma_before = dma_get_state();
+    if (native_process_launch("AUDIO.MAN", &proof) != NATIVE_PROCESS_OK ||
+        !proof.exited || proof.faulted || proof.exit_status != 0 ||
+        !proof.resources_released || proof.peak_handles != 2U ||
+        proof.syscall_count < 20U || !native_process_resources_released() ||
+        !audio_native_resources_released() || !audio_resources_released() ||
+        !native_audio_census_equal(&pci_before, &dma_before)) {
+        kernel_test_fail("native audio proof did not leave a clean census");
+    }
+    console_write(
+        "Sapote: native audio ABI capability, mixing, cancellation and teardown passed\n");
     kernel_test_pass();
 }
 
@@ -8721,6 +8785,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "native-abi-refusal";
     case KERNEL_TEST_NATIVE_RELAUNCH:
         return "native-relaunch";
+    case KERNEL_TEST_NATIVE_AUDIO:
+        return "native-audio";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

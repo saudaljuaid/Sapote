@@ -36,6 +36,16 @@ handle, whole-chunk submission, Q15 volume, drain, cancellation and close.
 Familiar names are a source-porting layer; the kernel remains the Sapote ABI
 rather than a Linux personality.
 
+The installed SDK also provides zlib 1.3.2 as `libz.a` and installs its public
+`zlib.h`/`zconf.h`. Sapote builds the upstream `Z_SOLO` profile: checksums and
+streaming deflate/inflate are available, while `gz*`, `compress*`, and
+`uncompress*` are not. Include `<sapote/zlib.h>` and call
+`sapote_zlib_stream_prepare()` before `deflateInit*` or `inflateInit*` to use
+the checked SDK allocation adapter. Every successful initialization still
+requires its matching `deflateEnd` or `inflateEnd` call. `sapote-cc` supplies
+the required `Z_SOLO` and fixed-width configuration definitions to every
+consumer so headers cannot advertise omitted hosted APIs.
+
 Time APIs keep elapsed and civil time separate. `clock()` and
 `CLOCK_MONOTONIC` use boot-relative monotonic nanoseconds; `time()` and
 `CLOCK_REALTIME` use validated RTC UTC with one-second resolution. `gmtime_r`

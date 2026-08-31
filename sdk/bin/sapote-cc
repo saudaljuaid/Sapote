@@ -16,6 +16,8 @@ compile)
         -I"$sdk_root/include" -std=c11 -O2 -g -ffreestanding -fno-pie \
         -fno-stack-protector -mcmodel=large -mno-red-zone -fno-builtin \
         -ffunction-sections -fdata-sections -ftls-model=local-exec \
+        -DZ_SOLO -DZ_U4=unsigned '-DZ_U8=unsigned long long' \
+        -DHAVE_UNISTD_H=0 -DHAVE_STDARG_H=0 \
         -Wall -Wextra -Werror -Wpedantic -Wshadow -Wundef \
         -Wstrict-prototypes -Wmissing-prototypes -c "$@" -o "$output"
     ;;
@@ -27,7 +29,7 @@ link)
         -z max-page-size=0x1000 -z noexecstack --fatal-warnings \
         --orphan-handling=error -T "$sdk_root/linker.ld" -o "$output" \
         "$sdk_root/lib/crt0.o" "$@" "$sdk_root/lib/libsapote.a" \
-        "$sdk_root/lib/libbearssl.a"
+        "$sdk_root/lib/libbearssl.a" "$sdk_root/lib/libz.a"
     ;;
 *)
     echo "usage: sapote-cc compile OUTPUT SOURCE... | link OUTPUT OBJECT..." >&2

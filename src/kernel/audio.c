@@ -172,7 +172,7 @@
 #define AUDIO_STREAM_FORMAT UINT16_C(0x0011)
 #define AUDIO_TONE_HALF_PERIOD_FRAMES 32U
 #define AUDIO_TONE_AMPLITUDE INT16_C(8192)
-#define AUDIO_NATIVE_COALESCE_NS UINT64_C(1000000)
+#define AUDIO_NATIVE_COALESCE_NS UINT64_C(10000000)
 #define AUDIO_NATIVE_SERVICE_NS UINT64_C(100000)
 
 _Static_assert(AUDIO_NATIVE_STREAMS == 2U,
@@ -272,6 +272,7 @@ struct audio_native_runtime {
     uint32_t underrun_recoveries;
     bool initialized;
     bool stream_running;
+    bool coalesce_service_grace;
 };
 
 static struct audio_proof_result installed_result;
@@ -1928,6 +1929,18 @@ static size_t native_queued_streams(void)
     return count;
 }
 
+static bool native_mix_ready(
+    size_t queued,
+    size_t open,
+    uint64_t now,
+    uint64_t deadline,
+    bool service_grace
+)
+{
+    return queued != 0U &&
+        (queued == open || (!service_grace && now >= deadline));
+}
+
 static uint64_t native_allocate_token(void)
 {
     uint64_t token = audio_native_next_token++;
@@ -1990,8 +2003,10 @@ static void native_finish_active(enum audio_native_terminal terminal)
         audio_native.coalesce_deadline = now <=
                 UINT64_MAX - AUDIO_NATIVE_COALESCE_NS ?
             now + AUDIO_NATIVE_COALESCE_NS : now;
+        audio_native.coalesce_service_grace = false;
     } else {
         audio_native.coalesce_deadline = 0U;
+        audio_native.coalesce_service_grace = false;
     }
 }
 
@@ -2009,6 +2024,7 @@ static void native_fail_queued(void)
         }
     }
     audio_native.coalesce_deadline = 0U;
+    audio_native.coalesce_service_grace = false;
 }
 
 static bool native_start_mix(void)
@@ -2068,6 +2084,7 @@ static bool native_start_mix(void)
     audio_native.active_mask = mask;
     audio_native.stream_running = true;
     audio_native.coalesce_deadline = 0U;
+    audio_native.coalesce_service_grace = false;
     now = clock_monotonic_ns();
     audio_native.playback_deadline = now <= UINT64_MAX - AUDIO_TIMEOUT_NS ?
         now + AUDIO_TIMEOUT_NS : now;
@@ -2176,10 +2193,13 @@ enum audio_native_status audio_native_submit(
     stream->cancel_after_active = false;
     if (!audio_native.stream_running) {
         const uint64_t now = clock_monotonic_ns();
+        const size_t queued = native_queued_streams();
 
         audio_native.coalesce_deadline = now <=
                 UINT64_MAX - AUDIO_NATIVE_COALESCE_NS ?
             now + AUDIO_NATIVE_COALESCE_NS : now;
+        audio_native.coalesce_service_grace =
+            queued != 0U && queued < native_open_streams();
     }
     return AUDIO_NATIVE_OK;
 }
@@ -2356,11 +2376,28 @@ bool audio_native_service(void)
             native_finish_active(AUDIO_NATIVE_TERMINAL_ERROR);
         }
     }
-    if (!audio_native.stream_running && native_queued_streams() != 0U &&
-        (native_queued_streams() == AUDIO_NATIVE_STREAMS ||
-            now >= audio_native.coalesce_deadline)) {
-        if (!native_start_mix()) {
-            native_fail_queued();
+    if (!audio_native.stream_running) {
+        const size_t queued = native_queued_streams();
+        const size_t open = native_open_streams();
+
+        if (queued != 0U && audio_native.coalesce_service_grace &&
+            queued < open) {
+            /*
+             * Every native syscall returns through this service loop.  Give
+             * the owner one guaranteed scheduler return after the first of
+             * two submissions, even if a paused host advanced the wall-time
+             * window while the syscall was in flight.
+             */
+            audio_native.coalesce_service_grace = false;
+            audio_native.coalesce_deadline = now <=
+                    UINT64_MAX - AUDIO_NATIVE_COALESCE_NS ?
+                now + AUDIO_NATIVE_COALESCE_NS : now;
+        } else if (native_mix_ready(queued, open, now,
+                audio_native.coalesce_deadline,
+                audio_native.coalesce_service_grace)) {
+            if (!native_start_mix()) {
+                native_fail_queued();
+            }
         }
     }
     if (native_open_streams() == 0U && !audio_native.stream_running &&
@@ -2473,6 +2510,16 @@ bool audio_native_self_test(size_t *completed_tests)
     second_token = native_allocate_token();
     if (first_token == 0U || second_token == 0U ||
         first_token == second_token) {
+        return false;
+    }
+    ++completed;
+    if (native_mix_ready(1U, 2U, UINT64_C(100), UINT64_C(99), true) ||
+        !native_mix_ready(1U, 2U, UINT64_C(100), UINT64_C(99), false)) {
+        return false;
+    }
+    ++completed;
+    if (!native_mix_ready(2U, 2U, 0U, UINT64_MAX, true) ||
+        native_mix_ready(0U, 2U, UINT64_MAX, 0U, false)) {
         return false;
     }
     ++completed;
