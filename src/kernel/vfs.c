@@ -10,6 +10,7 @@
 
 #include <sapote/fat32_backend.h>
 #include <sapote/fat32_fs.h>
+#include <sapote/vfs_backend.h>
 
 #define VFS_MAX_VNODES 128U
 #define VFS_VNODE_BUCKETS 64U
@@ -18,6 +19,7 @@
 #define VFS_NO_INDEX UINT16_MAX
 
 struct vfs_mount_state {
+    const struct vfs_backend_ops *backend;
     uint64_t generation;
     size_t references;
     enum sapfs_volume volume;
@@ -36,6 +38,7 @@ struct vfs_vnode_state {
 };
 
 struct vfs_open_file_state {
+    const struct vfs_backend_ops *backend;
     uint64_t generation;
     uint64_t vnode_generation;
     sapfs_handle backend_handle;
@@ -62,6 +65,29 @@ static uint64_t next_mount_generation = UINT64_C(1);
 static uint64_t next_vnode_generation = UINT64_C(1);
 static uint64_t next_open_generation = UINT64_C(1);
 static uint64_t next_directory_generation = UINT64_C(1);
+
+static const struct vfs_backend_ops fat32_backend_ops = {
+    .mount = fat32_backend_mount,
+    .unmount = fat32_backend_unmount,
+    .sync = fat32_backend_sync,
+    .drive = fat32_backend_drive,
+    .completion_count = fat32_backend_completion_count,
+    .open = fat32_backend_open,
+    .close = fat32_backend_close,
+    .read = fat32_backend_read,
+    .write = fat32_backend_write,
+    .seek = fat32_backend_seek,
+    .stat_path = fat32_backend_stat_path,
+    .list = fat32_backend_list,
+    .create = fat32_backend_create,
+    .truncate = fat32_backend_truncate,
+    .mkdir = fat32_backend_mkdir,
+    .rename = fat32_backend_rename,
+    .unlink = fat32_backend_unlink,
+    .rmdir = fat32_backend_rmdir,
+};
+
+static const struct vfs_backend_ops *volume_backends[SAPFS_VOLUME_COUNT];
 
 _Static_assert(VFS_MAX_OPEN_FILES <= UINT8_MAX,
     "VFS open-file index no longer fits encoded handle");
@@ -346,7 +372,7 @@ static enum sapfs_status resolve_path(
         return status;
     }
     if (canonical[0] == '.' && canonical[1] == '\0') {
-        status = fat32_backend_stat_path(volume, canonical, &stat);
+        status = mounts[volume].backend->stat_path(volume, canonical, &stat);
         return status == SAPFS_STATUS_OK ?
             vnode_retain(volume, canonical, &stat, vnode_index) : status;
     }
@@ -358,7 +384,7 @@ static enum sapfs_status resolve_path(
             continue;
         }
         partial[index] = '\0';
-        status = fat32_backend_stat_path(volume, partial, &stat);
+        status = mounts[volume].backend->stat_path(volume, partial, &stat);
         if (status != SAPFS_STATUS_OK) {
             return status;
         }
@@ -414,13 +440,21 @@ static enum sapfs_status resolve_parent(
     return status;
 }
 
-static void install_mount(enum sapfs_volume volume)
+static void install_mount(
+    enum sapfs_volume volume,
+    const struct vfs_backend_ops *backend
+)
 {
-    const struct sapfs_drive_info drive = fat32_backend_drive(volume);
+    struct sapfs_drive_info drive;
 
+    if (backend == NULL) {
+        return;
+    }
+    drive = backend->drive(volume);
     if (!drive.mounted) {
         return;
     }
+    mounts[volume].backend = backend;
     mounts[volume].generation = next_generation(
         &next_mount_generation, UINT64_MAX);
     mounts[volume].volume = volume;
@@ -490,15 +524,20 @@ void sapfs_initialize(void)
     for (size_t index = 0U; index < VFS_VNODE_BUCKETS; ++index) {
         vnode_buckets[index] = VFS_NO_INDEX;
     }
+    for (enum sapfs_volume volume = SAPFS_VOLUME_SYSTEM;
+         volume < SAPFS_VOLUME_COUNT; ++volume) {
+        volume_backends[volume] = &fat32_backend_ops;
+    }
     fat32_backend_initialize();
     for (enum sapfs_volume volume = SAPFS_VOLUME_SYSTEM;
          volume < SAPFS_VOLUME_COUNT; ++volume) {
-        install_mount(volume);
+        install_mount(volume, volume_backends[volume]);
     }
 }
 
 enum sapfs_status sapfs_mount(enum sapfs_volume volume)
 {
+    const struct vfs_backend_ops *backend;
     enum sapfs_status status;
 
     if (!valid_volume(volume)) {
@@ -507,9 +546,13 @@ enum sapfs_status sapfs_mount(enum sapfs_volume volume)
     if (mounts[volume].active) {
         return SAPFS_STATUS_ALREADY_MOUNTED;
     }
-    status = fat32_backend_mount(volume);
+    backend = volume_backends[volume];
+    if (backend == NULL) {
+        return SAPFS_STATUS_NOT_MOUNTED;
+    }
+    status = backend->mount(volume);
     if (status == SAPFS_STATUS_OK) {
-        install_mount(volume);
+        install_mount(volume, backend);
     }
     return status;
 }
@@ -527,7 +570,7 @@ enum sapfs_status sapfs_unmount(enum sapfs_volume volume)
     if (mounts[volume].references != 0U) {
         return SAPFS_STATUS_BUSY;
     }
-    status = fat32_backend_unmount(volume);
+    status = mounts[volume].backend->unmount(volume);
     if (status == SAPFS_STATUS_OK) {
         zero_bytes(&mounts[volume], sizeof(mounts[volume]));
     }
@@ -539,18 +582,22 @@ enum sapfs_status sapfs_sync(enum sapfs_volume volume)
     if (!valid_volume(volume)) {
         return SAPFS_STATUS_INVALID_ARGUMENT;
     }
-    return mounts[volume].active ? fat32_backend_sync(volume) :
+    return mounts[volume].active ? mounts[volume].backend->sync(volume) :
         SAPFS_STATUS_NOT_MOUNTED;
 }
 
 struct sapfs_drive_info sapfs_drive(enum sapfs_volume volume)
 {
-    return fat32_backend_drive(volume);
+    const struct sapfs_drive_info absent = {0};
+
+    return valid_volume(volume) && mounts[volume].active ?
+        mounts[volume].backend->drive(volume) : absent;
 }
 
 uint64_t sapfs_completion_count(enum sapfs_volume volume)
 {
-    return fat32_backend_completion_count(volume);
+    return valid_volume(volume) && mounts[volume].active ?
+        mounts[volume].backend->completion_count(volume) : 0U;
 }
 
 enum sapfs_status sapfs_open(
@@ -588,7 +635,8 @@ enum sapfs_status sapfs_open(
         vnode_release(vnode_index, vnodes[vnode_index].generation);
         return SAPFS_STATUS_NO_HANDLES;
     }
-    status = fat32_backend_open(volume, canonical, access, &backend_handle);
+    status = mounts[volume].backend->open(
+        volume, canonical, access, &backend_handle);
     if (status != SAPFS_STATUS_OK) {
         vnode_release(vnode_index, vnodes[vnode_index].generation);
         return status;
@@ -596,6 +644,7 @@ enum sapfs_status sapfs_open(
     zero_bytes(&open_files[slot], sizeof(open_files[slot]));
     open_files[slot].generation = next_generation(
         &next_open_generation, UINT64_MAX >> 8U);
+    open_files[slot].backend = mounts[volume].backend;
     open_files[slot].vnode_generation = vnodes[vnode_index].generation;
     open_files[slot].backend_handle = backend_handle;
     open_files[slot].vnode_index = (uint16_t)vnode_index;
@@ -608,6 +657,7 @@ enum sapfs_status sapfs_close(sapfs_handle handle)
 {
     struct vfs_open_file_state *state;
     sapfs_handle backend_handle;
+    const struct vfs_backend_ops *backend;
     uint64_t vnode_generation;
     uint16_t vnode_index;
     enum sapfs_status status = open_file_state(handle, &state);
@@ -616,11 +666,12 @@ enum sapfs_status sapfs_close(sapfs_handle handle)
         return status;
     }
     backend_handle = state->backend_handle;
+    backend = state->backend;
     vnode_generation = state->vnode_generation;
     vnode_index = state->vnode_index;
     state->active = false;
     state->backend_handle = 0U;
-    status = fat32_backend_close(backend_handle);
+    status = backend->close(backend_handle);
     vnode_release(vnode_index, vnode_generation);
     return status;
 }
@@ -635,7 +686,7 @@ enum sapfs_status sapfs_read(
     struct vfs_open_file_state *state;
     enum sapfs_status status = open_file_state(handle, &state);
 
-    return status == SAPFS_STATUS_OK ? fat32_backend_read(
+    return status == SAPFS_STATUS_OK ? state->backend->read(
         state->backend_handle, destination, capacity, read_bytes) : status;
 }
 
@@ -649,7 +700,7 @@ enum sapfs_status sapfs_write(
     struct vfs_open_file_state *state;
     enum sapfs_status status = open_file_state(handle, &state);
 
-    return status == SAPFS_STATUS_OK ? fat32_backend_write(
+    return status == SAPFS_STATUS_OK ? state->backend->write(
         state->backend_handle, source, source_bytes, written_bytes) : status;
 }
 
@@ -663,7 +714,7 @@ enum sapfs_status sapfs_seek(
     struct vfs_open_file_state *state;
     enum sapfs_status status = open_file_state(handle, &state);
 
-    return status == SAPFS_STATUS_OK ? fat32_backend_seek(
+    return status == SAPFS_STATUS_OK ? state->backend->seek(
         state->backend_handle, offset, origin, position) : status;
 }
 
@@ -710,7 +761,7 @@ enum sapfs_status sapfs_list(
         vnode_release(vnode_index, vnodes[vnode_index].generation);
         return SAPFS_STATUS_NOT_DIRECTORY;
     }
-    status = fat32_backend_list(volume, canonical, entries, capacity,
+    status = mounts[volume].backend->list(volume, canonical, entries, capacity,
         entry_count);
     vnode_release(vnode_index, vnodes[vnode_index].generation);
     return status;
@@ -750,8 +801,9 @@ enum sapfs_status sapfs_directory_open(
         return SAPFS_STATUS_NO_HANDLES;
     }
     zero_bytes(&directories[slot], sizeof(directories[slot]));
-    status = fat32_backend_list(volume, canonical, directories[slot].entries,
-        SAPFS_MAX_LIST_ENTRIES, &directories[slot].count);
+    status = mounts[volume].backend->list(volume, canonical,
+        directories[slot].entries, SAPFS_MAX_LIST_ENTRIES,
+        &directories[slot].count);
     if (status != SAPFS_STATUS_OK) {
         vnode_release(vnode_index, vnodes[vnode_index].generation);
         return status;
@@ -817,7 +869,7 @@ enum sapfs_status sapfs_create(enum sapfs_volume volume, const char *path)
     enum sapfs_status status = resolve_parent(volume, path, canonical);
 
     return status == SAPFS_STATUS_OK ?
-        fat32_backend_create(volume, canonical) : status;
+        mounts[volume].backend->create(volume, canonical) : status;
 }
 
 enum sapfs_status sapfs_truncate(
@@ -839,7 +891,7 @@ enum sapfs_status sapfs_truncate(
     }
     vnode_release(vnode_index, vnodes[vnode_index].generation);
     return status == SAPFS_STATUS_OK ?
-        fat32_backend_truncate(volume, canonical, size) : status;
+        mounts[volume].backend->truncate(volume, canonical, size) : status;
 }
 
 enum sapfs_status sapfs_mkdir(enum sapfs_volume volume, const char *path)
@@ -848,7 +900,7 @@ enum sapfs_status sapfs_mkdir(enum sapfs_volume volume, const char *path)
     enum sapfs_status status = resolve_parent(volume, path, canonical);
 
     return status == SAPFS_STATUS_OK ?
-        fat32_backend_mkdir(volume, canonical) : status;
+        mounts[volume].backend->mkdir(volume, canonical) : status;
 }
 
 enum sapfs_status sapfs_rename(
@@ -868,7 +920,7 @@ enum sapfs_status sapfs_rename(
     }
     status = resolve_parent(volume, destination, destination_canonical);
     vnode_release(vnode_index, vnodes[vnode_index].generation);
-    return status == SAPFS_STATUS_OK ? fat32_backend_rename(volume,
+    return status == SAPFS_STATUS_OK ? mounts[volume].backend->rename(volume,
         source_canonical, destination_canonical) : status;
 }
 
@@ -887,7 +939,7 @@ enum sapfs_status sapfs_unlink(enum sapfs_volume volume, const char *path)
     }
     vnode_release(vnode_index, vnodes[vnode_index].generation);
     return status == SAPFS_STATUS_OK ?
-        fat32_backend_unlink(volume, canonical) : status;
+        mounts[volume].backend->unlink(volume, canonical) : status;
 }
 
 enum sapfs_status sapfs_rmdir(enum sapfs_volume volume, const char *path)
@@ -907,5 +959,5 @@ enum sapfs_status sapfs_rmdir(enum sapfs_volume volume, const char *path)
     }
     vnode_release(vnode_index, vnodes[vnode_index].generation);
     return status == SAPFS_STATUS_OK ?
-        fat32_backend_rmdir(volume, canonical) : status;
+        mounts[volume].backend->rmdir(volume, canonical) : status;
 }
