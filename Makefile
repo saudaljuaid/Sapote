@@ -264,7 +264,7 @@ OBJECTS := $(ASM_OBJECTS) $(C_OBJECTS)
 # font copies use explicit bounded byte operations instead of runtime calls.
 RUSTFLAGS := -C panic=abort -C relocation-model=static \
 	-C llvm-args=-max-store-memcpy=1024 \
-	-C llvm-args=-max-store-memset=1024 -D warnings
+	-C llvm-args=-max-store-memset=1024
 DEPENDENCIES := $(C_OBJECTS:.o=.d)
 
 # The qemu-test-% scenarios are deliberately absent from .PHONY. GNU Make skips
