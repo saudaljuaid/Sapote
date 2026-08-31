@@ -195,6 +195,8 @@ ZLIB_SOURCE := vendor/zlib/src/adler32.c vendor/zlib/src/crc32.c \
 	vendor/zlib/src/inffast.c vendor/zlib/src/inflate.c \
 	vendor/zlib/src/inftrees.c vendor/zlib/src/trees.c \
 	vendor/zlib/src/zutil.c
+ZLIB_HEADERS := $(wildcard vendor/zlib/include/*.h) \
+	$(wildcard vendor/zlib/src/*.h)
 ZLIB_OBJECT_DIR := $(SDK_BUILD_DIR)/zlib
 ZLIB_OBJECTS := $(patsubst vendor/zlib/src/%.c,\
 	$(ZLIB_OBJECT_DIR)/%.o,$(ZLIB_SOURCE))
@@ -344,7 +346,7 @@ $(BEARSSL_OBJECT_DIR)/%.o: vendor/bearssl/src/%.c
 	mkdir -p $(dir $@)
 	$(SDK_CC) $(BEARSSL_CFLAGS) -c $< -o $@
 
-$(ZLIB_OBJECT_DIR)/%.o: vendor/zlib/src/%.c
+$(ZLIB_OBJECT_DIR)/%.o: vendor/zlib/src/%.c $(ZLIB_HEADERS)
 	mkdir -p $(dir $@)
 	$(SDK_CC) $(ZLIB_CFLAGS) -c $< -o $@
 
@@ -933,8 +935,7 @@ package-state-tests: $(PACKAGE_STATE_HOST_TEST)
 	$(PACKAGE_STATE_HOST_TEST)
 
 $(ZLIB_HOST_TEST): tools/zlib-host-test.c sdk/src/zlib.c \
-		sdk/include/sapote/zlib.h $(ZLIB_SOURCE) \
-		vendor/zlib/include/zlib.h vendor/zlib/include/zconf.h
+		sdk/include/sapote/zlib.h $(ZLIB_SOURCE) $(ZLIB_HEADERS)
 	mkdir -p $(dir $@)
 	$(CC) -Ivendor/zlib/include -Ivendor/zlib/src -idirafter sdk/include \
 		$(ZLIB_DEFINES) -std=c11 -O2 -Wall -Wextra -Werror \
