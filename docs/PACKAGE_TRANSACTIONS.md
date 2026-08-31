@@ -201,6 +201,31 @@ remove. An interruption after replacement completes it. Recovery never merges
 some old files with some new metadata. Cancellation is permitted only while the
 base authority is still selected; afterward normal recovery is required.
 
+`include/sapote/package_state.h` and `src/kernel/package_state.c` provide the
+first guest-consumable part of this contract. They are freestanding and
+allocation-free: all untrusted integers are decoded from checked little-endian
+byte fields, SHA-256 is computed incrementally in fixed storage, dependency
+cycle/reachability state is bounded by the 256-package maximum, and no on-disk
+structure is overlaid with a C struct. The parser enforces the exact v1 table
+locations, counts, record sizes, canonical text and SemVer grammars, package-v3
+per-package limits, unique sorting, provider existence, file ownership, modes,
+SONAMEs, zero reserved bytes, and both content and envelope digests.
+
+The C recovery core accepts two database candidates and one explicit
+`owned_files_complete` proof per candidate. That proof is deliberately not
+inferred from a database checksum: a future privileged service must iterate the
+owned-file records, open the immutable generation without following unsafe
+links, bound every read, and verify exact length and SHA-256 before setting it.
+The core then re-parses and re-hashes both databases itself, binds them to the
+journal, and selects only the complete base or authoritative complete target.
+An authority generation, database length, or database digest unrelated to the
+prepared journal is refused as a state mismatch. With no journal, exactly one
+complete candidate must match authority.
+
+This remains a decision core, not filesystem recovery. It returns which complete
+generation is safe; it does not rename authority, delete staging, install files,
+or mutate user data.
+
 ## Removal, references, and repair
 
 The explicit bit distinguishes requested roots from automatically selected
@@ -229,6 +254,11 @@ python3 tools/sapote-transaction.py inspect-authority build/installed.authority
 python3 tools/sapote-transaction.py inspect-journal build/installed.journal
 
 python3 tools/sapote_transaction_host_test.py
+
+gcc -std=c11 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude \
+    tools/package-state-host-test.c src/kernel/package_state.c \
+    -o build/package-state-host-test
+build/package-state-host-test
 ```
 
 The test creates only in-memory reference stores. It covers deterministic
@@ -236,6 +266,13 @@ encoding, zero reserved fields, interrupted commit on both sides of authority
 replacement, incomplete-new fallback, update rollback, transactional removal,
 shared dependency retention, ownership collision, cancellation cleanup,
 low-space refusal, verify/repair, and preserved user data.
+
+The C host test independently constructs canonical empty-base and two-package
+target byte fixtures, then mutates reserved fields, table bounds, canonical
+package text, provider bindings, ownership paths, content digests, authority,
+and journal records. It exercises recovery before and after the authority switch,
+incomplete-new fallback, absent-journal selection, corrupt-authority fallback,
+and unrelated-authority refusal under `-Werror`.
 
 Guest integration still requires authenticated download/cache plumbing,
 filesystem generation directories or equivalent immutable storage, bounded I/O
