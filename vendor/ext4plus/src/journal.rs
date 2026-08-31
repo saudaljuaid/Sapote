@@ -36,16 +36,17 @@ impl Journal {
 
     /// Load a journal from the filesystem.
     ///
-    /// If the filesystem has no journal, an empty journal is returned.
+    /// If the filesystem does not require replay, an empty journal is returned.
     ///
     /// Note: ext4 is all little-endian, except for the journal, which
     /// is all big-endian.
     #[maybe_async::maybe_async]
     pub(crate) async fn load(fs: &Ext4) -> Result<Self, Ext4Error> {
-        let Some(journal_inode) = fs.0.superblock.journal_inode() else {
-            // Return an empty journal if this filesystem does not have
-            // a journal.
+        if !fs.0.superblock.needs_recovery() {
             return Ok(Self::empty());
+        }
+        let Some(journal_inode) = fs.0.superblock.journal_inode() else {
+            return Err(crate::error::CorruptKind::JournalInode.into());
         };
 
         let journal_inode = Inode::read(fs, journal_inode).await?;

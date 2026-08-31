@@ -186,10 +186,14 @@ impl Superblock {
             return Err(CorruptKind::InodeSize.into());
         }
 
-        let journal_inode = if compatible_features
-            .contains(CompatibleFeatures::HAS_JOURNAL)
-            && incompatible_features.contains(IncompatibleFeatures::RECOVERY)
+        let has_journal = compatible_features
+            .contains(CompatibleFeatures::HAS_JOURNAL);
+        if incompatible_features.contains(IncompatibleFeatures::RECOVERY)
+            && !has_journal
         {
+            return Err(CorruptKind::JournalInode.into());
+        }
+        let journal_inode = if has_journal {
             // For now a separate journal device is not supported, so
             // assert that feature is not present. This assert cannot
             // fail because of the call to `check_incompat_features`
@@ -372,8 +376,15 @@ impl Superblock {
         self.htree_hash_seed
     }
 
+    /// Return the internal journal inode whenever the filesystem has one.
     pub(crate) fn journal_inode(&self) -> Option<InodeIndex> {
         self.journal_inode
+    }
+
+    /// Return true only when the journal must be replayed before normal reads.
+    pub(crate) fn needs_recovery(&self) -> bool {
+        self.incompatible_features()
+            .contains(IncompatibleFeatures::RECOVERY)
     }
 
     /// The volume label.

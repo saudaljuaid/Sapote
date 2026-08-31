@@ -9,7 +9,9 @@ reported as skipped with the package name needed by Linux CI.
 from __future__ import annotations
 
 import filecmp
+import os
 from pathlib import Path
+import shutil
 import struct
 import sys
 import tempfile
@@ -201,6 +203,12 @@ class E2fsprogsIntegrationTests(unittest.TestCase):
             self.assertEqual(first_report["large_sparse_bytes"], ext4.LARGE_SPARSE_BYTES)
             self.assertEqual(first_report["symlink_target"], "state.txt")
             self.assertEqual(first_report["xattr"], {"name": ext4.XATTR_NAME, "value": ext4.XATTR_VALUE})
+
+            rust_fixture = os.environ.get("SAPOTE_EXT4_RUST_FIXTURE")
+            if rust_fixture:
+                destination = Path(rust_fixture).resolve()
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(first, destination)
 
             for kind in ext4.MUTATIONS:
                 with self.subTest(kind=kind):

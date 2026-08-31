@@ -108,6 +108,13 @@ in-range physical map of the journal inode (including its superblock), and the
 mapped ring refuses home metadata that aliases that superblock or revoke records
 when the corresponding incompatible-feature bit is absent.
 
+`load_journal_inode_map` now follows the admitted ext4 journal inode through the
+same bounded extent/block-map iterator used by ext4plus, refuses holes,
+duplicates, truncation, excess blocks, and superblock-length disagreement, and
+reads logical block zero without consulting the replay overlay. The public host
+suite passes the deterministic e2fsprogs image from the Python profile test into
+Rust and proves that its real journal inode maps into the clean ring.
+
 The caller must supply a distinct physical journal block for the descriptor,
 each metadata image, and the commit. The resulting operation list has one legal
 order:
@@ -137,9 +144,9 @@ only the committed Cargo source mirror.
 Sapote's NVMe layer already exposes the required `nvme_volume_flush()` fence,
 but the ext4 backend deliberately does not bind the plan to it yet. The ring
 planner operates only on an already-admitted clean journal. It can validate a
-caller-supplied journal-inode map and construct superblock state images, but it
-does not discover that map from extents, recover a non-empty head/tail, or issue
-the state writes. The remaining work is not a small wrapper: it needs live-ring
+discovered journal-inode map and construct superblock state images, but it does
+not recover a non-empty head/tail or issue the state writes. The remaining work
+is not a small wrapper: it needs live-ring
 recovery, binding operations and barriers to the platform writer,
 redirecting ext4plus mutations away from immediate home writes, allocation
 rollback, a writable Rust/C volume lease, VFS-level mutation/handle coherency,

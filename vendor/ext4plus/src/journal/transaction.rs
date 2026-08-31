@@ -10,17 +10,24 @@
 //!
 //! This module deliberately stops below ext4 namespace mutation. It provides
 //! checked descriptor/data/revoke/commit serialization, explicit durability
-//! barriers, replay validation for one transaction, and allocation within a
-//! caller-supplied clean-journal ring. It does not discover the journal inode
-//! or persist live ring state. A caller must execute the returned operations in
-//! order and reclaim a reservation only after its checkpoint flush.
+//! barriers, replay validation for one transaction, discovery of the internal
+//! journal inode, and allocation within a clean-journal ring. It does not
+//! recover or persist live ring state. A caller must execute the returned
+//! operations in order and reclaim a reservation only after its checkpoint
+//! flush.
 
 use super::block_header::{JournalBlockHeader, JournalBlockType};
 use super::commit_block::validate_commit_block_checksum;
 use super::descriptor_block::{DescriptorBlockTagIter, validate_descriptor_block_checksum};
 use super::revocation_block::{read_revocation_block_table, validate_revocation_block_checksum};
 use super::superblock::JournalSuperblock;
+use crate::Ext4;
 use crate::checksum::Checksum;
+use crate::error::Ext4Error;
+use crate::inode::Inode;
+#[cfg(not(feature = "sync"))]
+use crate::iters::AsyncIterator;
+use crate::iters::file_blocks::FileBlocks;
 use crate::util::read_u32be;
 use crate::uuid::Uuid;
 use alloc::collections::VecDeque;
@@ -227,6 +234,128 @@ pub struct JournalSuperblockImage {
     block_revocations: bool,
 }
 
+/// A failure while discovering the journal inode from an admitted filesystem.
+#[derive(Debug)]
+pub enum JournalInodeMapError {
+    /// The ext4 profile has no internal journal inode.
+    MissingJournal,
+    /// Ext4 metadata or block I/O failed validation.
+    Filesystem(Ext4Error),
+    /// The JBD2 superblock or physical map failed the bounded ring profile.
+    Transaction(JournalTransactionError),
+}
+
+impl Display for JournalInodeMapError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingJournal => formatter.write_str("filesystem has no internal journal"),
+            Self::Filesystem(error) => write!(formatter, "journal inode discovery failed: {error}"),
+            Self::Transaction(error) => write!(formatter, "journal ring admission failed: {error}"),
+        }
+    }
+}
+
+impl Error for JournalInodeMapError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::MissingJournal => None,
+            Self::Filesystem(error) => Some(error),
+            Self::Transaction(error) => Some(error),
+        }
+    }
+}
+
+impl From<Ext4Error> for JournalInodeMapError {
+    fn from(error: Ext4Error) -> Self {
+        Self::Filesystem(error)
+    }
+}
+
+impl From<JournalTransactionError> for JournalInodeMapError {
+    fn from(error: JournalTransactionError) -> Self {
+        Self::Transaction(error)
+    }
+}
+
+/// A complete, bounded physical map of one internal journal inode.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JournalInodeMap {
+    superblock: JournalSuperblockImage,
+    maximum_block: u64,
+    physical_blocks: Vec<u64>,
+}
+
+impl JournalInodeMap {
+    /// Return the validated JBD2 superblock stored at logical block zero.
+    #[must_use]
+    pub fn superblock(&self) -> &JournalSuperblockImage {
+        &self.superblock
+    }
+
+    /// Return every physical journal-inode block in logical order.
+    #[must_use]
+    pub fn physical_blocks(&self) -> &[u64] {
+        &self.physical_blocks
+    }
+
+    /// Admit the discovered map only when the on-disk journal is clean.
+    pub fn into_clean_ring(self) -> Result<JournalRing, JournalTransactionError> {
+        self.superblock
+            .map_clean_ring(self.maximum_block, &self.physical_blocks)
+    }
+}
+
+/// Discover and validate the internal journal inode and its physical block map.
+#[maybe_async::maybe_async]
+pub async fn load_journal_inode_map(fs: &Ext4) -> Result<JournalInodeMap, JournalInodeMapError> {
+    let journal_inode_index =
+        fs.0.superblock
+            .journal_inode()
+            .ok_or(JournalInodeMapError::MissingJournal)?;
+    let journal_inode = Inode::read(fs, journal_inode_index).await?;
+    let logical_blocks = journal_inode.file_size_in_blocks(fs)?;
+    let logical_blocks =
+        usize::try_from(logical_blocks).map_err(|_| JournalTransactionError::RingGeometry)?;
+    if logical_blocks < 4 || logical_blocks > JOURNAL_RING_MAX_SLOTS + 1 {
+        return Err(JournalTransactionError::RingGeometry.into());
+    }
+    let mut physical_blocks = Vec::new();
+    physical_blocks
+        .try_reserve_exact(logical_blocks)
+        .map_err(|_| JournalTransactionError::TooManyBlocks)?;
+    let mut iterator = FileBlocks::new(fs.clone(), &journal_inode)?;
+    while let Some(block) = iterator.next().await {
+        if physical_blocks.len() >= logical_blocks {
+            return Err(JournalTransactionError::RingGeometry.into());
+        }
+        physical_blocks.push(block?);
+    }
+    if physical_blocks.len() != logical_blocks {
+        return Err(JournalTransactionError::RingGeometry.into());
+    }
+    let mut superblock_bytes = vec![0; JOURNAL_SUPERBLOCK_BYTES];
+    fs.read_from_block_raw(physical_blocks[0], 0, &mut superblock_bytes)
+        .await?;
+    let superblock = JournalSuperblockImage::from_bytes(&superblock_bytes)?;
+    if usize::try_from(superblock.maximum_length())
+        .map_err(|_| JournalTransactionError::RingGeometry)?
+        != logical_blocks
+    {
+        return Err(JournalTransactionError::RingGeometry.into());
+    }
+    let maximum_block =
+        fs.0.superblock
+            .blocks_count()
+            .checked_sub(1)
+            .ok_or(JournalTransactionError::RingGeometry)?;
+    superblock.map_clean_ring(maximum_block, &physical_blocks)?;
+    Ok(JournalInodeMap {
+        superblock,
+        maximum_block,
+        physical_blocks,
+    })
+}
+
 impl JournalSuperblockImage {
     /// Build a canonical clean JBD2 superblock for deterministic image tooling.
     pub fn new_clean(
@@ -384,7 +513,7 @@ impl JournalSuperblockImage {
         if physical_journal_blocks.len() != maximum_length
             || physical_journal_blocks
                 .iter()
-                .any(|block| *block > maximum_block)
+                .any(|block| *block == 0 || *block > maximum_block)
         {
             return Err(JournalTransactionError::RingGeometry);
         }

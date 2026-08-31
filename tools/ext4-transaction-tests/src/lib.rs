@@ -2,9 +2,9 @@
 #![cfg(test)]
 
 use ext4plus::{
-    JOURNAL_BLOCK_BYTES, JournalCommitOperation, JournalFlush, JournalRecordKind, JournalRing,
-    JournalSuperblockImage, JournalTransaction, JournalTransactionError,
-    replay_committed_transaction,
+    Ext4, JOURNAL_BLOCK_BYTES, JournalCommitOperation, JournalFlush, JournalRecordKind,
+    JournalRing, JournalSuperblockImage, JournalTransaction, JournalTransactionError,
+    load_journal_inode_map, replay_committed_transaction,
 };
 use std::collections::BTreeMap;
 
@@ -255,6 +255,45 @@ fn superblock_images_admit_only_a_complete_clean_inode_map() {
         clean.map_clean_ring(MAXIMUM_BLOCK, &physical[..8]),
         Err(JournalTransactionError::RingGeometry)
     );
+    let mut hole = physical;
+    hole[4] = 0;
+    assert_eq!(
+        clean.map_clean_ring(MAXIMUM_BLOCK, &hole),
+        Err(JournalTransactionError::RingGeometry)
+    );
+}
+
+#[test]
+fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
+    let Ok(path) = std::env::var("SAPOTE_EXT4_RUST_FIXTURE") else {
+        eprintln!("SAPOTE_EXT4_RUST_FIXTURE is unset; journal-inode integration is CI-only");
+        return;
+    };
+    let Ok(bytes) = std::fs::read(path) else {
+        eprintln!("journal-inode fixture was not produced because e2fsprogs is unavailable");
+        return;
+    };
+    let filesystem = Ext4::load(Box::new(bytes)).unwrap();
+    let journal = load_journal_inode_map(&filesystem).unwrap();
+    assert_eq!(journal.superblock().start_block(), 0);
+    assert_eq!(
+        usize::try_from(journal.superblock().maximum_length()).unwrap(),
+        journal.physical_blocks().len()
+    );
+    assert!(journal.physical_blocks().len() >= 4);
+    assert!(journal.physical_blocks().iter().all(|block| *block != 0));
+
+    let physical = Vec::from(journal.physical_blocks());
+    let mut ring = journal.into_clean_ring().unwrap();
+    let home_block = (1..MAXIMUM_BLOCK)
+        .find(|block| !physical.contains(block))
+        .unwrap();
+    let mut transaction = ring.begin_transaction().unwrap();
+    transaction
+        .stage_metadata(home_block, &filled(0x44))
+        .unwrap();
+    let prepared = ring.prepare(&transaction).unwrap();
+    assert_eq!(prepared.journal_blocks(), &physical[1..4]);
 }
 
 #[test]

@@ -186,8 +186,10 @@ pub use journal::transaction::{
     JOURNAL_TRANSACTION_MAX_METADATA_BLOCKS,
     JOURNAL_TRANSACTION_MAX_REVOKED_BLOCKS,
     JournalBlockImage, JournalCommitOperation, JournalFlush, JournalRecordKind,
-    JournalPreparedTransaction, JournalRing, JournalSuperblockImage,
-    JournalTransaction, JournalTransactionError, replay_committed_transaction,
+    JournalInodeMap, JournalInodeMapError, JournalPreparedTransaction,
+    JournalRing, JournalSuperblockImage, JournalTransaction,
+    JournalTransactionError, load_journal_inode_map,
+    replay_committed_transaction,
 };
 pub use label::Label;
 pub use mem_io_error::MemIoError;

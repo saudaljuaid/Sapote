@@ -1061,8 +1061,10 @@ wall-clock-tests: $(WALL_CLOCK_HOST_TEST) $(SDK_TIME_HOST_TEST)
 	$(SDK_TIME_HOST_TEST)
 
 ext4-tests: tools/ext4_image.py tools/ext4_host_test.py
-	$(PYTHON) -u tools/ext4_host_test.py
-	CARGO_TARGET_DIR='$(CURDIR)/$(BUILD_DIR)/ext4-transaction-target' \
+	SAPOTE_EXT4_RUST_FIXTURE='$(CURDIR)/$(BUILD_DIR)/ext4-rust-fixture.img' \
+		$(PYTHON) -u tools/ext4_host_test.py
+	SAPOTE_EXT4_RUST_FIXTURE='$(CURDIR)/$(BUILD_DIR)/ext4-rust-fixture.img' \
+		CARGO_TARGET_DIR='$(CURDIR)/$(BUILD_DIR)/ext4-transaction-target' \
 		$(CARGO) test \
 		--manifest-path tools/ext4-transaction-tests/Cargo.toml \
 		--locked --offline

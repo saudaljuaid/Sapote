@@ -36,8 +36,14 @@ into the ring. The mapping is bounded, distinct, in-range, and includes the
 physical superblock in alias checks. Ring preparation also refuses revokes when
 the admitted superblock does not advertise block revocations.
 
-This planner does not discover the journal inode's extents, issue superblock
-writes, recover a non-empty ring head/tail, bind a barrier to platform I/O,
+`load_journal_inode_map` discovers the internal journal through ext4plus's own
+checked inode and extent/block-map iterator, bounds the complete physical map,
+reads logical block zero without the replay overlay, and requires its length to
+agree with the JBD2 superblock. The public test consumes the real deterministic
+e2fsprogs fixture produced immediately before the Cargo suite.
+
+This planner does not issue superblock writes, recover a non-empty ring
+head/tail, bind a barrier to platform I/O,
 or redirect ext4 mutation methods away from their upstream home-block writes.
 Those gaps keep the Sapote backend read-only.
 
