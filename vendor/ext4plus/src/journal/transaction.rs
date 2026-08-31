@@ -9,17 +9,20 @@
 //! Bounded JBD2 transaction images and an ordered-data commit plan.
 //!
 //! This module deliberately stops below ext4 namespace mutation. It provides
-//! the part that can be correct without a journal ring allocator: checked
-//! descriptor/data/commit serialization, explicit durability barriers, and
-//! replay validation for one transaction. A caller must supply distinct
-//! physical journal blocks and must execute the returned operations in order.
+//! checked descriptor/data/revoke/commit serialization, explicit durability
+//! barriers, replay validation for one transaction, and allocation within a
+//! caller-supplied clean-journal ring. It does not discover the journal inode
+//! or persist live ring state. A caller must execute the returned operations in
+//! order and reclaim a reservation only after its checkpoint flush.
 
 use super::block_header::{JournalBlockHeader, JournalBlockType};
 use super::commit_block::validate_commit_block_checksum;
 use super::descriptor_block::{DescriptorBlockTagIter, validate_descriptor_block_checksum};
+use super::revocation_block::{read_revocation_block_table, validate_revocation_block_checksum};
 use super::superblock::JournalSuperblock;
 use crate::checksum::Checksum;
 use crate::uuid::Uuid;
+use alloc::collections::VecDeque;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::error::Error;
@@ -30,6 +33,12 @@ pub const JOURNAL_BLOCK_BYTES: usize = 4096;
 
 /// A deliberately small upper bound for one transaction's metadata images.
 pub const JOURNAL_TRANSACTION_MAX_METADATA_BLOCKS: usize = 64;
+
+/// The maximum number of block revocations represented by one transaction.
+pub const JOURNAL_TRANSACTION_MAX_REVOKED_BLOCKS: usize = 64;
+
+/// The maximum clean-journal data slots admitted by the bounded ring planner.
+pub const JOURNAL_RING_MAX_SLOTS: usize = 8192;
 
 /// A checked block image owned by a transaction or replay result.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -72,6 +81,8 @@ pub enum JournalRecordKind {
     Descriptor,
     /// A metadata image named by the corresponding descriptor tag.
     Metadata,
+    /// A checksummed list of home blocks whose older images must not replay.
+    Revocation,
     /// The checksummed record that makes the transaction replayable.
     Commit,
 }
@@ -125,6 +136,22 @@ pub enum JournalTransactionError {
     MissingCommit,
     /// The commit header, sequence, or checksum is invalid.
     CorruptCommit,
+    /// A revocation header, table, sequence, or checksum is invalid.
+    CorruptRevocation,
+    /// The clean-journal ring geometry is too small, too large, or malformed.
+    RingGeometry,
+    /// The ring has insufficient uncheckpointed space for a transaction.
+    RingFull,
+    /// A transaction was prepared with a stale sequence or different geometry.
+    RingTransactionMismatch,
+    /// A reservation ticket is unknown or no longer active.
+    ReservationUnknown,
+    /// A reservation transition was requested from the wrong durability state.
+    ReservationState,
+    /// Commit, abort, or checkpoint order would reclaim live journal records.
+    ReservationOrder,
+    /// The monotonic reservation ticket would overflow.
+    ReservationOverflow,
 }
 
 impl Display for JournalTransactionError {
@@ -143,6 +170,14 @@ impl Display for JournalTransactionError {
             Self::CorruptData => "journal metadata image is corrupt",
             Self::MissingCommit => "durable journal commit is missing",
             Self::CorruptCommit => "journal commit is corrupt",
+            Self::CorruptRevocation => "journal revocation record is corrupt",
+            Self::RingGeometry => "journal ring geometry is invalid",
+            Self::RingFull => "journal ring has insufficient free slots",
+            Self::RingTransactionMismatch => "journal transaction does not match the ring",
+            Self::ReservationUnknown => "journal reservation is not active",
+            Self::ReservationState => "journal reservation state transition is invalid",
+            Self::ReservationOrder => "journal reservation order is invalid",
+            Self::ReservationOverflow => "journal reservation ticket would overflow",
         };
         formatter.write_str(message)
     }
@@ -158,6 +193,7 @@ pub struct JournalTransaction {
     maximum_block: u64,
     ordered_data: Vec<JournalBlockImage>,
     metadata: Vec<JournalBlockImage>,
+    revoked_blocks: Vec<u64>,
 }
 
 impl JournalTransaction {
@@ -179,7 +215,35 @@ impl JournalTransaction {
             maximum_block,
             ordered_data: Vec::new(),
             metadata: Vec::new(),
+            revoked_blocks: Vec::new(),
         })
+    }
+
+    /// Stage a block revocation for an older journaled image.
+    pub fn stage_revocation(&mut self, block_index: u64) -> Result<(), JournalTransactionError> {
+        if self.revoked_blocks.len() >= JOURNAL_TRANSACTION_MAX_REVOKED_BLOCKS {
+            return Err(JournalTransactionError::TooManyBlocks);
+        }
+        if block_index > self.maximum_block {
+            return Err(JournalTransactionError::BlockOutOfRange);
+        }
+        if self.revoked_blocks.contains(&block_index) {
+            return Err(JournalTransactionError::DuplicateBlock);
+        }
+        self.revoked_blocks.push(block_index);
+        Ok(())
+    }
+
+    /// Return the exact descriptor/data/revoke/commit slot requirement.
+    pub fn required_journal_slots(&self) -> Result<usize, JournalTransactionError> {
+        if self.metadata.is_empty() {
+            return Err(JournalTransactionError::EmptyTransaction);
+        }
+        self.metadata
+            .len()
+            .checked_add(2)
+            .and_then(|count| count.checked_add(usize::from(!self.revoked_blocks.is_empty())))
+            .ok_or(JournalTransactionError::TooManyBlocks)
     }
 
     /// Stage a complete file-data block that must precede the journal commit.
@@ -244,20 +308,14 @@ impl JournalTransaction {
     /// Build the only legal ordered-data execution sequence for this image.
     ///
     /// `journal_blocks` must contain exactly one descriptor slot, one slot for
-    /// each metadata image, and one final commit slot. The returned operations
-    /// intentionally place the commit flush before every home-metadata write.
+    /// each metadata image, an optional revoke slot, and one final commit slot.
+    /// The returned operations intentionally place the commit flush before
+    /// every home-metadata write.
     pub fn commit_plan(
         &self,
         journal_blocks: &[u64],
     ) -> Result<Vec<JournalCommitOperation>, JournalTransactionError> {
-        if self.metadata.is_empty() {
-            return Err(JournalTransactionError::EmptyTransaction);
-        }
-        let required_slots = self
-            .metadata
-            .len()
-            .checked_add(2)
-            .ok_or(JournalTransactionError::TooManyBlocks)?;
+        let required_slots = self.required_journal_slots()?;
         if journal_blocks.len() != required_slots {
             return Err(JournalTransactionError::JournalSlotCount);
         }
@@ -273,6 +331,7 @@ impl JournalTransaction {
                 .iter()
                 .chain(self.metadata.iter())
                 .any(|image| image.block_index == *block)
+                || self.revoked_blocks.contains(block)
             {
                 return Err(JournalTransactionError::JournalSlotOverlap);
             }
@@ -280,7 +339,12 @@ impl JournalTransaction {
 
         let mut operations = Vec::new();
         operations
-            .try_reserve_exact(self.ordered_data.len() + self.metadata.len() * 2 + 7)
+            .try_reserve_exact(
+                self.ordered_data.len()
+                    + self.metadata.len() * 2
+                    + usize::from(!self.revoked_blocks.is_empty())
+                    + 7,
+            )
             .map_err(|_| JournalTransactionError::TooManyBlocks)?;
         operations.extend(
             self.ordered_data
@@ -303,9 +367,18 @@ impl JournalTransaction {
                 bytes: image.bytes.clone(),
             });
         }
+        let mut commit_slot = self.metadata.len() + 1;
+        if !self.revoked_blocks.is_empty() {
+            operations.push(JournalCommitOperation::WriteJournal {
+                journal_block: journal_blocks[commit_slot],
+                kind: JournalRecordKind::Revocation,
+                bytes: self.revocation_block(),
+            });
+            commit_slot += 1;
+        }
         operations.push(JournalCommitOperation::Flush(JournalFlush::JournalPayload));
         operations.push(JournalCommitOperation::WriteJournal {
-            journal_block: journal_blocks[required_slots - 1],
+            journal_block: journal_blocks[commit_slot],
             kind: JournalRecordKind::Commit,
             bytes: self.commit_block(),
         });
@@ -379,6 +452,308 @@ impl JournalTransaction {
         write_u32be(&mut block, CHECKSUM_OFFSET, checksum.finalize());
         block
     }
+
+    fn revocation_block(&self) -> Vec<u8> {
+        const TABLE_BYTES_OFFSET: usize = JournalBlockHeader::SIZE;
+        const TABLE_OFFSET: usize = TABLE_BYTES_OFFSET + 4;
+
+        let mut block = vec![0; JOURNAL_BLOCK_BYTES];
+        write_u32be(&mut block, 0, JournalBlockHeader::MAGIC);
+        write_u32be(&mut block, 4, JournalBlockType::REVOCATION.0);
+        write_u32be(&mut block, 8, self.sequence);
+        let table_bytes = self
+            .revoked_blocks
+            .len()
+            .checked_mul(8)
+            .and_then(|bytes| u32::try_from(bytes).ok())
+            .expect("bounded revocation table fits u32");
+        write_u32be(&mut block, TABLE_BYTES_OFFSET, table_bytes);
+        for (index, revoked) in self.revoked_blocks.iter().enumerate() {
+            let offset = TABLE_OFFSET + index * 8;
+            block[offset..offset + 8].copy_from_slice(&revoked.to_be_bytes());
+        }
+        let checksum_offset = JOURNAL_BLOCK_BYTES - 4;
+        let mut checksum = Checksum::new();
+        checksum.update(self.uuid.as_bytes());
+        checksum.update(&block[..checksum_offset]);
+        checksum.update_u32_be(0);
+        write_u32be(&mut block, checksum_offset, checksum.finalize());
+        block
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReservationState {
+    Prepared,
+    CommitDurable,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ActiveReservation {
+    ticket: u64,
+    start: usize,
+    slot_count: usize,
+    state: ReservationState,
+}
+
+/// One ring reservation and its complete ordered commit operation list.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JournalPreparedTransaction {
+    ticket: u64,
+    sequence: u32,
+    journal_blocks: Vec<u64>,
+    operations: Vec<JournalCommitOperation>,
+}
+
+impl JournalPreparedTransaction {
+    /// Return the monotonic ticket used for durability transitions.
+    #[must_use]
+    pub fn ticket(&self) -> u64 {
+        self.ticket
+    }
+
+    /// Return the JBD2 transaction sequence encoded into every record.
+    #[must_use]
+    pub fn sequence(&self) -> u32 {
+        self.sequence
+    }
+
+    /// Return the physical journal blocks reserved in logical ring order.
+    #[must_use]
+    pub fn journal_blocks(&self) -> &[u64] {
+        &self.journal_blocks
+    }
+
+    /// Return the only legal ordered-data commit operation list.
+    #[must_use]
+    pub fn operations(&self) -> &[JournalCommitOperation] {
+        &self.operations
+    }
+}
+
+/// Bounded allocation and reclamation for an admitted clean JBD2 ring.
+///
+/// The caller supplies the physical blocks of the journal inode after its
+/// superblock in logical ring order. This coordinator does not read or update
+/// the on-disk journal superblock. It prevents reuse until the oldest durable
+/// commit has also completed its checkpoint flush.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JournalRing {
+    uuid: Uuid,
+    maximum_block: u64,
+    slots: Vec<u64>,
+    head: usize,
+    tail: usize,
+    used: usize,
+    next_sequence: u32,
+    next_ticket: u64,
+    active: VecDeque<ActiveReservation>,
+}
+
+impl JournalRing {
+    /// Admit a clean journal ring with no live or replayable transactions.
+    pub fn new_clean(
+        next_sequence: u32,
+        journal_uuid: [u8; 16],
+        maximum_block: u64,
+        journal_slots: &[u64],
+    ) -> Result<Self, JournalTransactionError> {
+        if next_sequence == u32::MAX {
+            return Err(JournalTransactionError::SequenceOverflow);
+        }
+        if journal_slots.len() < 3
+            || journal_slots.len() > JOURNAL_RING_MAX_SLOTS
+            || journal_slots.iter().any(|slot| *slot > maximum_block)
+        {
+            return Err(JournalTransactionError::RingGeometry);
+        }
+        let mut sorted = Vec::from(journal_slots);
+        sorted.sort_unstable();
+        if sorted.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(JournalTransactionError::RingGeometry);
+        }
+        Ok(Self {
+            uuid: Uuid::new(journal_uuid),
+            maximum_block,
+            slots: Vec::from(journal_slots),
+            head: 0,
+            tail: 0,
+            used: 0,
+            next_sequence,
+            next_ticket: 1,
+            active: VecDeque::new(),
+        })
+    }
+
+    /// Start a transaction using the ring's next checked sequence.
+    pub fn begin_transaction(&self) -> Result<JournalTransaction, JournalTransactionError> {
+        JournalTransaction::new(
+            self.next_sequence,
+            *self.uuid.as_bytes(),
+            self.maximum_block,
+        )
+    }
+
+    /// Reserve ring slots and build a complete commit plan without issuing I/O.
+    pub fn prepare(
+        &mut self,
+        transaction: &JournalTransaction,
+    ) -> Result<JournalPreparedTransaction, JournalTransactionError> {
+        if transaction.sequence != self.next_sequence
+            || transaction.uuid != self.uuid
+            || transaction.maximum_block != self.maximum_block
+        {
+            return Err(JournalTransactionError::RingTransactionMismatch);
+        }
+        let required = transaction.required_journal_slots()?;
+        let free = self
+            .slots
+            .len()
+            .checked_sub(self.used)
+            .ok_or(JournalTransactionError::ReservationState)?;
+        if required > free {
+            return Err(JournalTransactionError::RingFull);
+        }
+        let next_ticket = self
+            .next_ticket
+            .checked_add(1)
+            .ok_or(JournalTransactionError::ReservationOverflow)?;
+        let next_sequence = self
+            .next_sequence
+            .checked_add(1)
+            .ok_or(JournalTransactionError::SequenceOverflow)?;
+        let mut journal_blocks = Vec::new();
+        journal_blocks
+            .try_reserve_exact(required)
+            .map_err(|_| JournalTransactionError::TooManyBlocks)?;
+        for offset in 0..required {
+            let index = self
+                .head
+                .checked_add(offset)
+                .ok_or(JournalTransactionError::RingGeometry)?
+                % self.slots.len();
+            journal_blocks.push(self.slots[index]);
+        }
+        let operations = transaction.commit_plan(&journal_blocks)?;
+        self.active
+            .try_reserve(1)
+            .map_err(|_| JournalTransactionError::TooManyBlocks)?;
+        let start = self.head;
+        self.head = self
+            .head
+            .checked_add(required)
+            .ok_or(JournalTransactionError::RingGeometry)?
+            % self.slots.len();
+        self.used = self
+            .used
+            .checked_add(required)
+            .ok_or(JournalTransactionError::RingGeometry)?;
+        let ticket = self.next_ticket;
+        self.next_ticket = next_ticket;
+        self.next_sequence = next_sequence;
+        self.active.push_back(ActiveReservation {
+            ticket,
+            start,
+            slot_count: required,
+            state: ReservationState::Prepared,
+        });
+        Ok(JournalPreparedTransaction {
+            ticket,
+            sequence: transaction.sequence,
+            journal_blocks,
+            operations,
+        })
+    }
+
+    /// Mark a commit flush durable, preserving transaction sequence order.
+    pub fn mark_commit_durable(&mut self, ticket: u64) -> Result<(), JournalTransactionError> {
+        let index = self
+            .active
+            .iter()
+            .position(|reservation| reservation.ticket == ticket)
+            .ok_or(JournalTransactionError::ReservationUnknown)?;
+        if self
+            .active
+            .iter()
+            .take(index)
+            .any(|reservation| reservation.state == ReservationState::Prepared)
+        {
+            return Err(JournalTransactionError::ReservationOrder);
+        }
+        let reservation = self
+            .active
+            .get_mut(index)
+            .ok_or(JournalTransactionError::ReservationUnknown)?;
+        if reservation.state != ReservationState::Prepared {
+            return Err(JournalTransactionError::ReservationState);
+        }
+        reservation.state = ReservationState::CommitDurable;
+        Ok(())
+    }
+
+    /// Abort only the newest reservation before its commit becomes durable.
+    pub fn abort_precommit(&mut self, ticket: u64) -> Result<(), JournalTransactionError> {
+        let reservation = self
+            .active
+            .back()
+            .copied()
+            .ok_or(JournalTransactionError::ReservationUnknown)?;
+        if reservation.ticket != ticket {
+            return Err(JournalTransactionError::ReservationOrder);
+        }
+        if reservation.state != ReservationState::Prepared {
+            return Err(JournalTransactionError::ReservationState);
+        }
+        self.head = reservation.start;
+        self.used = self
+            .used
+            .checked_sub(reservation.slot_count)
+            .ok_or(JournalTransactionError::ReservationState)?;
+        self.next_sequence = self
+            .next_sequence
+            .checked_sub(1)
+            .ok_or(JournalTransactionError::ReservationState)?;
+        let _ = self.active.pop_back();
+        Ok(())
+    }
+
+    /// Reclaim the oldest committed reservation after its checkpoint flush.
+    pub fn checkpoint_durable(&mut self, ticket: u64) -> Result<(), JournalTransactionError> {
+        let reservation = self
+            .active
+            .front()
+            .copied()
+            .ok_or(JournalTransactionError::ReservationUnknown)?;
+        if reservation.ticket != ticket {
+            return Err(JournalTransactionError::ReservationOrder);
+        }
+        if reservation.state != ReservationState::CommitDurable {
+            return Err(JournalTransactionError::ReservationState);
+        }
+        self.tail = self
+            .tail
+            .checked_add(reservation.slot_count)
+            .ok_or(JournalTransactionError::RingGeometry)?
+            % self.slots.len();
+        self.used = self
+            .used
+            .checked_sub(reservation.slot_count)
+            .ok_or(JournalTransactionError::ReservationState)?;
+        let _ = self.active.pop_front();
+        Ok(())
+    }
+
+    /// Return the number of journal data slots currently reserved.
+    #[must_use]
+    pub fn used_slots(&self) -> usize {
+        self.used
+    }
+
+    /// Return the next transaction sequence that will be assigned.
+    #[must_use]
+    pub fn next_sequence(&self) -> u32 {
+        self.next_sequence
+    }
 }
 
 /// Validate and replay one complete descriptor/data/commit transaction.
@@ -421,7 +796,16 @@ pub fn replay_committed_transaction(
     for tag in DescriptorBlockTagIter::new(&descriptor[JournalBlockHeader::SIZE..]) {
         tags.push(tag.map_err(|_| JournalTransactionError::CorruptDescriptor)?);
     }
-    if tags.is_empty() || journal_blocks.len() != tags.len() + 2 {
+    let without_revocation = tags
+        .len()
+        .checked_add(2)
+        .ok_or(JournalTransactionError::TooManyBlocks)?;
+    let with_revocation = without_revocation
+        .checked_add(1)
+        .ok_or(JournalTransactionError::TooManyBlocks)?;
+    if tags.is_empty()
+        || (journal_blocks.len() != without_revocation && journal_blocks.len() != with_revocation)
+    {
         return Err(JournalTransactionError::JournalSlotCount);
     }
     if tags.len() > JOURNAL_TRANSACTION_MAX_METADATA_BLOCKS {
@@ -454,6 +838,30 @@ pub fn replay_committed_transaction(
             block_index: tag.block_index,
             bytes: Vec::from(data),
         });
+    }
+
+    if journal_blocks.len() == with_revocation {
+        let revocation = journal_blocks[tags.len() + 1];
+        let header = JournalBlockHeader::read_bytes(revocation)
+            .ok_or(JournalTransactionError::CorruptRevocation)?;
+        if header.block_type != JournalBlockType::REVOCATION
+            || header.sequence != sequence
+            || validate_revocation_block_checksum(&superblock, revocation).is_err()
+        {
+            return Err(JournalTransactionError::CorruptRevocation);
+        }
+        let mut revoked_blocks = Vec::new();
+        read_revocation_block_table(revocation, &mut revoked_blocks)
+            .map_err(|_| JournalTransactionError::CorruptRevocation)?;
+        if revoked_blocks.len() > JOURNAL_TRANSACTION_MAX_REVOKED_BLOCKS {
+            return Err(JournalTransactionError::TooManyBlocks);
+        }
+        for (index, revoked) in revoked_blocks.iter().enumerate() {
+            if *revoked > maximum_block || revoked_blocks[..index].contains(revoked) {
+                return Err(JournalTransactionError::CorruptRevocation);
+            }
+        }
+        replay.retain(|image| !revoked_blocks.contains(&image.block_index));
     }
 
     let commit = journal_blocks[journal_blocks.len() - 1];
@@ -666,6 +1074,113 @@ mod tests {
     }
 
     #[test]
+    fn revocations_are_checksummed_and_remove_stale_images() {
+        let mut transaction = transaction();
+        transaction.stage_revocation(200).unwrap();
+        let slots = [3000, 3001, 3002, 3003, 3004];
+        let operations = transaction.commit_plan(&slots).unwrap();
+        assert!(operations.iter().any(|operation| {
+            matches!(
+                operation,
+                JournalCommitOperation::WriteJournal {
+                    kind: JournalRecordKind::Revocation,
+                    ..
+                }
+            )
+        }));
+        let journal = journal_images(&operations);
+        let references: Vec<&[u8]> = journal.iter().map(Vec::as_slice).collect();
+        let replay = replay_committed_transaction(UUID, 17, MAXIMUM_BLOCK, &references).unwrap();
+        assert_eq!(replay.len(), 1);
+        assert_eq!(replay[0].block_index(), 201);
+
+        let mut corrupt = journal;
+        corrupt[3][128] ^= 0x80;
+        let references: Vec<&[u8]> = corrupt.iter().map(Vec::as_slice).collect();
+        assert_eq!(
+            replay_committed_transaction(UUID, 17, MAXIMUM_BLOCK, &references),
+            Err(JournalTransactionError::CorruptRevocation)
+        );
+    }
+
+    #[test]
+    fn clean_ring_wraps_and_reclaims_only_after_checkpoint() {
+        let slots = [3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007];
+        let mut ring = JournalRing::new_clean(40, UUID, MAXIMUM_BLOCK, &slots).unwrap();
+
+        let mut first = ring.begin_transaction().unwrap();
+        first.stage_metadata(100, &filled(1)).unwrap();
+        let first = ring.prepare(&first).unwrap();
+        assert_eq!(first.journal_blocks(), &slots[..3]);
+        ring.mark_commit_durable(first.ticket()).unwrap();
+        ring.checkpoint_durable(first.ticket()).unwrap();
+
+        let mut second = ring.begin_transaction().unwrap();
+        second.stage_metadata(101, &filled(2)).unwrap();
+        second.stage_metadata(102, &filled(3)).unwrap();
+        let second = ring.prepare(&second).unwrap();
+        assert_eq!(second.journal_blocks(), &slots[3..7]);
+        ring.mark_commit_durable(second.ticket()).unwrap();
+        ring.checkpoint_durable(second.ticket()).unwrap();
+
+        let mut wrapped = ring.begin_transaction().unwrap();
+        wrapped.stage_metadata(103, &filled(4)).unwrap();
+        let wrapped = ring.prepare(&wrapped).unwrap();
+        assert_eq!(wrapped.journal_blocks(), &[3007, 3000, 3001]);
+        assert_eq!(wrapped.sequence(), 42);
+        assert_eq!(ring.next_sequence(), 43);
+        assert_eq!(ring.used_slots(), 3);
+    }
+
+    #[test]
+    fn ring_refuses_reuse_and_out_of_order_transitions() {
+        let slots = [3000, 3001, 3002, 3003, 3004, 3005];
+        let mut ring = JournalRing::new_clean(50, UUID, MAXIMUM_BLOCK, &slots).unwrap();
+        let mut first = ring.begin_transaction().unwrap();
+        first.stage_metadata(100, &filled(1)).unwrap();
+        let first = ring.prepare(&first).unwrap();
+        let mut second = ring.begin_transaction().unwrap();
+        second.stage_metadata(101, &filled(2)).unwrap();
+        let second = ring.prepare(&second).unwrap();
+        let mut full = ring.begin_transaction().unwrap();
+        full.stage_metadata(102, &filled(3)).unwrap();
+        assert_eq!(ring.prepare(&full), Err(JournalTransactionError::RingFull));
+        assert_eq!(
+            ring.mark_commit_durable(second.ticket()),
+            Err(JournalTransactionError::ReservationOrder)
+        );
+        assert_eq!(
+            ring.checkpoint_durable(first.ticket()),
+            Err(JournalTransactionError::ReservationState)
+        );
+        assert_eq!(
+            ring.abort_precommit(first.ticket()),
+            Err(JournalTransactionError::ReservationOrder)
+        );
+        ring.mark_commit_durable(first.ticket()).unwrap();
+        ring.mark_commit_durable(second.ticket()).unwrap();
+        assert_eq!(
+            ring.checkpoint_durable(second.ticket()),
+            Err(JournalTransactionError::ReservationOrder)
+        );
+        ring.checkpoint_durable(first.ticket()).unwrap();
+        ring.checkpoint_durable(second.ticket()).unwrap();
+        assert_eq!(ring.used_slots(), 0);
+
+        let mut aborted = ring.begin_transaction().unwrap();
+        aborted.stage_metadata(103, &filled(4)).unwrap();
+        let aborted = ring.prepare(&aborted).unwrap();
+        let aborted_sequence = aborted.sequence();
+        ring.abort_precommit(aborted.ticket()).unwrap();
+        assert_eq!(ring.used_slots(), 0);
+        assert_eq!(ring.next_sequence(), aborted_sequence);
+        assert_eq!(
+            ring.mark_commit_durable(aborted.ticket()),
+            Err(JournalTransactionError::ReservationUnknown)
+        );
+    }
+
+    #[test]
     fn hostile_bounds_duplicates_and_escape_are_refused() {
         assert_eq!(
             JournalTransaction::new(u32::MAX, UUID, MAXIMUM_BLOCK).unwrap_err(),
@@ -713,6 +1228,28 @@ mod tests {
         assert_eq!(
             transaction.commit_plan(&[100, 101, MAXIMUM_BLOCK + 1]),
             Err(JournalTransactionError::BlockOutOfRange)
+        );
+        transaction.stage_revocation(4).unwrap();
+        assert_eq!(
+            transaction.stage_revocation(4),
+            Err(JournalTransactionError::DuplicateBlock)
+        );
+        assert_eq!(
+            transaction.stage_revocation(MAXIMUM_BLOCK + 1),
+            Err(JournalTransactionError::BlockOutOfRange)
+        );
+
+        assert_eq!(
+            JournalRing::new_clean(1, UUID, MAXIMUM_BLOCK, &[1, 2]),
+            Err(JournalTransactionError::RingGeometry)
+        );
+        assert_eq!(
+            JournalRing::new_clean(1, UUID, MAXIMUM_BLOCK, &[1, 2, 2]),
+            Err(JournalTransactionError::RingGeometry)
+        );
+        assert_eq!(
+            JournalRing::new_clean(u32::MAX, UUID, MAXIMUM_BLOCK, &[3000, 3001, 3002]),
+            Err(JournalTransactionError::SequenceOverflow)
         );
 
         let mut bounded = JournalTransaction::new(10, UUID, MAXIMUM_BLOCK).unwrap();

@@ -182,9 +182,12 @@ pub use file_type::FileType;
 pub use format::BytesDisplay;
 pub use iters::read_dir::ReadDir;
 pub use journal::transaction::{
-    JOURNAL_BLOCK_BYTES, JOURNAL_TRANSACTION_MAX_METADATA_BLOCKS,
+    JOURNAL_BLOCK_BYTES, JOURNAL_RING_MAX_SLOTS,
+    JOURNAL_TRANSACTION_MAX_METADATA_BLOCKS,
+    JOURNAL_TRANSACTION_MAX_REVOKED_BLOCKS,
     JournalBlockImage, JournalCommitOperation, JournalFlush, JournalRecordKind,
-    JournalTransaction, JournalTransactionError, replay_committed_transaction,
+    JournalPreparedTransaction, JournalRing, JournalTransaction,
+    JournalTransactionError, replay_committed_transaction,
 };
 pub use label::Label;
 pub use mem_io_error::MemIoError;

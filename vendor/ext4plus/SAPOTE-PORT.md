@@ -17,15 +17,22 @@ the port adds an ordered, checksummed JBD2 writer over Sapote's explicit NVMe
 Flush fence and passes deliberate power-loss tests. Read-only mount admission
 may be integrated before that point.
 
-Sapote's first local journaling delta is intentionally below that admission
-line. `src/journal/transaction.rs` builds one bounded checksum-v3 descriptor,
-metadata set, and commit record and returns an ordered-data operation plan with
-explicit data, journal-payload, commit, and checkpoint flush barriers. It also
-validates a complete transaction for replay and has corruption and every-cut
-unit controls. It does not allocate the journal ring, emit revokes, update the
-journal superblock, bind a barrier to platform I/O, or redirect ext4 mutation
-methods away from their upstream home-block writes. Those gaps keep the Sapote
-backend read-only.
+Sapote's local journaling delta is intentionally below that admission line.
+`src/journal/transaction.rs` builds one bounded checksum-v3 descriptor,
+metadata set, optional 64-bit revoke record, and commit record and returns an
+ordered-data operation plan with explicit data, journal-payload, commit, and
+checkpoint flush barriers. Its clean-journal ring coordinator bounds and
+validates a caller-supplied physical slot map, wraps without collision, refuses
+overrun of uncheckpointed records, sequences commit durability, reclaims only
+the oldest checkpointed transaction, and rolls back the newest pre-commit
+reservation without leaving a sequence gap. Replay and public tests cover
+corruption, every power-cut prefix, revocation suppression, wrap, exhaustion,
+abort, and out-of-order reclamation.
+
+This planner does not map the journal inode, read or update the live journal
+superblock, recover a non-empty ring head/tail, bind a barrier to platform I/O,
+or redirect ext4 mutation methods away from their upstream home-block writes.
+Those gaps keep the Sapote backend read-only.
 
 Sapote also tightens upstream writer admission: an image carrying ext4's
 `RO_COMPAT_READONLY` feature now discards the supplied writer just as an image

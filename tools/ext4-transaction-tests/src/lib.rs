@@ -2,7 +2,7 @@
 #![cfg(test)]
 
 use ext4plus::{
-    JOURNAL_BLOCK_BYTES, JournalCommitOperation, JournalFlush, JournalRecordKind,
+    JOURNAL_BLOCK_BYTES, JournalCommitOperation, JournalFlush, JournalRecordKind, JournalRing,
     JournalTransaction, JournalTransactionError, replay_committed_transaction,
 };
 use std::collections::BTreeMap;
@@ -56,15 +56,11 @@ fn public_transaction_round_trips_and_preserves_order() {
         .unwrap();
     let commit_flush = operations
         .iter()
-        .position(|operation| {
-            *operation == JournalCommitOperation::Flush(JournalFlush::Commit)
-        })
+        .position(|operation| *operation == JournalCommitOperation::Flush(JournalFlush::Commit))
         .unwrap();
     let first_home = operations
         .iter()
-        .position(|operation| {
-            matches!(operation, JournalCommitOperation::WriteHomeMetadata(_))
-        })
+        .position(|operation| matches!(operation, JournalCommitOperation::WriteHomeMetadata(_)))
         .unwrap();
 
     assert!(ordered_flush < commit_record);
@@ -85,9 +81,7 @@ fn every_precommit_power_cut_has_no_durable_home_or_replay() {
     let operations = transaction().commit_plan(&JOURNAL_SLOTS).unwrap();
     let commit_flush = operations
         .iter()
-        .position(|operation| {
-            *operation == JournalCommitOperation::Flush(JournalFlush::Commit)
-        })
+        .position(|operation| *operation == JournalCommitOperation::Flush(JournalFlush::Commit))
         .unwrap();
 
     for cut in 0..=commit_flush {
@@ -142,6 +136,69 @@ fn corrupted_descriptor_data_and_commit_are_refused() {
             Err(expected)
         );
     }
+}
+
+#[test]
+fn revocation_records_are_checksummed_and_suppress_stale_images() {
+    let mut transaction = transaction();
+    transaction.stage_revocation(200).unwrap();
+    let slots = [3000, 3001, 3002, 3003, 3004];
+    let operations = transaction.commit_plan(&slots).unwrap();
+    assert!(operations.iter().any(|operation| {
+        matches!(
+            operation,
+            JournalCommitOperation::WriteJournal {
+                kind: JournalRecordKind::Revocation,
+                ..
+            }
+        )
+    }));
+    let journal = journal_images(&operations);
+    let references: Vec<&[u8]> = journal.iter().map(Vec::as_slice).collect();
+    let replay = replay_committed_transaction(UUID, 17, MAXIMUM_BLOCK, &references).unwrap();
+    assert_eq!(replay.len(), 1);
+    assert_eq!(replay[0].block_index(), 201);
+
+    let mut corrupt = journal;
+    corrupt[3][128] ^= 0x80;
+    let references: Vec<&[u8]> = corrupt.iter().map(Vec::as_slice).collect();
+    assert_eq!(
+        replay_committed_transaction(UUID, 17, MAXIMUM_BLOCK, &references),
+        Err(JournalTransactionError::CorruptRevocation)
+    );
+}
+
+#[test]
+fn clean_ring_wraps_and_refuses_early_reclamation() {
+    let slots = [3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007];
+    let mut ring = JournalRing::new_clean(40, UUID, MAXIMUM_BLOCK, &slots).unwrap();
+    let mut first = ring.begin_transaction().unwrap();
+    first.stage_metadata(100, &filled(1)).unwrap();
+    let first = ring.prepare(&first).unwrap();
+    assert_eq!(first.journal_blocks(), &slots[..3]);
+    assert_eq!(
+        ring.checkpoint_durable(first.ticket()),
+        Err(JournalTransactionError::ReservationState)
+    );
+    ring.mark_commit_durable(first.ticket()).unwrap();
+    ring.checkpoint_durable(first.ticket()).unwrap();
+
+    let mut second = ring.begin_transaction().unwrap();
+    second.stage_metadata(101, &filled(2)).unwrap();
+    second.stage_metadata(102, &filled(3)).unwrap();
+    let second = ring.prepare(&second).unwrap();
+    ring.mark_commit_durable(second.ticket()).unwrap();
+    ring.checkpoint_durable(second.ticket()).unwrap();
+
+    let mut wrapped = ring.begin_transaction().unwrap();
+    wrapped.stage_metadata(103, &filled(4)).unwrap();
+    let wrapped = ring.prepare(&wrapped).unwrap();
+    assert_eq!(wrapped.journal_blocks(), &[3007, 3000, 3001]);
+    assert_eq!(ring.used_slots(), 3);
+    let aborted_sequence = wrapped.sequence();
+    ring.abort_precommit(wrapped.ticket()).unwrap();
+    assert_eq!(ring.used_slots(), 0);
+    assert_eq!(ring.next_sequence(), aborted_sequence);
 }
 
 #[test]

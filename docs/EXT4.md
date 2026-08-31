@@ -80,11 +80,23 @@ delta from the exact upstream commit.
 The vendored crate now contains a lower-level, no-std transaction primitive;
 this does **not** open the read-write admission gate. `JournalTransaction`
 accepts only complete 4 KiB block images, rejects duplicate or out-of-range
-home blocks, bounds ordered-data and metadata sets to 64 blocks each, and
+home blocks, bounds ordered-data, metadata, and revocation sets to 64 blocks
+each, and
 refuses metadata that would require the unsupported JBD2 magic-escape rule. A
 transaction serializes one checksum-v3/64-bit descriptor, its checksummed
-metadata images, and one checksummed commit block. The serializer feeds the
-same descriptor-tag and commit validators used by the existing replay reader.
+metadata images, an optional checksummed 64-bit revoke record, and one
+checksummed commit block. The serializer feeds the same descriptor-tag,
+revocation, and commit validators used by the existing replay reader.
+
+`JournalRing` admits a distinct, bounded physical data-slot map for a clean
+journal and assigns those records without collision across wrap. It refuses
+more than 8,192 slots, duplicate/out-of-range slots, stale transaction
+sequences, and reservations that would overrun uncheckpointed data. Commit
+durability is sequence ordered; only the oldest committed reservation can be
+reclaimed after its checkpoint flush. The newest pre-commit reservation can be
+aborted without leaving a sequence gap. Public tests cover wrap, full-ring
+refusal, early/out-of-order reclamation refusal, abort, revoke corruption, and
+replay suppression.
 
 The caller must supply a distinct physical journal block for the descriptor,
 each metadata image, and the commit. The resulting operation list has one legal
@@ -113,10 +125,13 @@ image suite. This avoids importing unrelated upstream fixture tests while using
 only the committed Cargo source mirror.
 
 Sapote's NVMe layer already exposes the required `nvme_volume_flush()` fence,
-but the ext4 backend deliberately does not bind the plan to it yet. The missing
-work is not a small wrapper: it needs journal-inode ring allocation and wrap,
-head/tail and sequence updates, revoke records for block reuse, checkpoint/log
-reclamation, allocation rollback, a writable Rust/C volume lease, and VFS-level
-mutation/handle coherency. Until all of those are integrated and power-cut in
-QEMU, `ext4_backend_drive().read_only` remains true and create, write,
-truncate, rename, unlink, and sync remain `EROFS`.
+but the ext4 backend deliberately does not bind the plan to it yet. The ring
+planner operates on an already-admitted clean journal; it does not read or
+update the journal superblock or discover/recover a live head and tail. The
+remaining work is not a small wrapper: it needs journal-inode mapping and live
+superblock state, binding operations and barriers to the platform writer,
+redirecting ext4plus mutations away from immediate home writes, allocation
+rollback, a writable Rust/C volume lease, VFS-level mutation/handle coherency,
+and power-cut QEMU coverage. Until all of those are integrated,
+`ext4_backend_drive().read_only` remains true and create, write, truncate,
+rename, unlink, and sync remain `EROFS`.
