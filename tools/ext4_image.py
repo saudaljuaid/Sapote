@@ -329,6 +329,7 @@ def _write_debugfs_script(path: Path, payloads: dict[str, Path]) -> None:
         f"fallocate /data/user/large-sparse.bin {(LARGE_SPARSE_BYTES - 1) // BLOCK_BYTES} "
         f"{(LARGE_SPARSE_BYTES - 1) // BLOCK_BYTES}",
         f"set_inode_field /data/user/large-sparse.bin size {LARGE_SPARSE_BYTES}",
+        "set_inode_field / mode 040755",
         "set_inode_field /system mode 040755",
         "set_inode_field /packages mode 040755",
         "set_inode_field /packages/demo mode 040755",
@@ -370,7 +371,6 @@ def _format_image(image: Path, tools: dict[str, str], temporary: Path) -> None:
             "lazy_itable_init=0",
             "lazy_journal_init=0",
             "root_owner=0:0",
-            "root_perms=0755",
             "stride=0",
             "stripe_width=0",
             f"hash_seed={HASH_SEED_UUID}",
@@ -390,6 +390,9 @@ inode_size = 256
 inode_ratio = 16384
 
 [fs_types]
+small = {
+inode_size = 256
+}
 ext4 = {
 features = has_journal,extent,huge_file,metadata_csum,metadata_csum_seed,64bit,dir_nlink,extra_isize
 }

@@ -128,6 +128,7 @@ class FixtureScriptTests(unittest.TestCase):
 
             script = (root / "debugfs.commands").read_text(encoding="utf-8")
             self.assertIn(f"set_current_time @{ext4.FIXED_EPOCH}", script)
+            self.assertIn("set_inode_field / mode 040755", script)
             self.assertIn(f"set_super_value mkfs_time @{ext4.FIXED_EPOCH}", script)
             self.assertIn(f"ea_set /data/user/state.txt {ext4.XATTR_NAME} {ext4.XATTR_VALUE}", script)
             self.assertIn(f"set_inode_field /data/user/large-sparse.bin size {ext4.LARGE_SPARSE_BYTES}", script)
