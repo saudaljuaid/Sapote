@@ -18,6 +18,8 @@
 #include <sapote/event.h>
 #include <sapote/runtime.h>
 
+#define _THIS SDL_AudioDevice *_this
+
 struct SDL_PrivateAudioData
 {
     sapote_handle_t output;
@@ -136,5 +138,7 @@ AudioBootStrap SAPOTEAUDIO_bootstrap = {
     SAPOTEAUDIO_Init,
     SDL_FALSE
 };
+
+#undef _THIS
 
 #endif /* SDL_AUDIO_DRIVER_SAPOTE */
