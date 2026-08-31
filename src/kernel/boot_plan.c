@@ -2541,9 +2541,35 @@ static void execute_audio_codec_proof(
     console_write_u64(proof.verbs_issued);
     console_write(" responses ");
     console_write_u64(proof.responses_received);
+    console_write(" PCM ");
+    console_write_u64(proof.sample_rate);
+    console_write("Hz/");
+    console_write_u64(proof.bits_per_sample);
+    console_write("bit/");
+    console_write_u64(proof.channels);
+    console_write("ch route ");
+    console_write_u64(proof.playback_codec);
+    console_putc(':');
+    console_write_u64(proof.playback_function_group);
+    console_putc(':');
+    console_write_u64(proof.playback_converter);
+    console_write("->");
+    console_write_u64(proof.playback_pin);
+    console_write(" stream ");
+    console_write_u64(proof.stream_descriptor_index);
+    console_putc('/');
+    console_write_u64(proof.playback_stream_tag);
+    console_write(" link ");
+    console_write_u64(proof.initial_link_position);
+    console_write("->");
+    console_write_u64(proof.final_link_position);
+    console_write(" completions ");
+    console_write_u64(proof.period_completions);
+    console_write(" underrun-recoveries ");
+    console_write_u64(proof.underrun_recoveries);
     console_write(
-        " device wrote the response ring bus mastering withdrawn before "
-        "release teardown clean census equal\n");
+        " device wrote the response ring stream stopped/reset bus mastering "
+        "withdrawn before release teardown clean census equal\n");
     boot_stage_result_succeed(descriptor, result);
     result->proof_counters[0] = proof.responses_received;
     result->proof_counters[1] = proof.codecs_identified;

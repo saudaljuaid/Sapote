@@ -8079,6 +8079,22 @@ _Noreturn void kernel_test_complete_audio(void)
         !proof.controller_reset || !proof.rings_running ||
         !proof.audio_function_group_found ||
         !proof.device_wrote_response_ring ||
+        proof.sample_rate != AUDIO_PCM_SAMPLE_RATE ||
+        proof.channels != AUDIO_PCM_CHANNELS ||
+        proof.bits_per_sample != AUDIO_PCM_BITS_PER_SAMPLE ||
+        proof.pcm_frames != AUDIO_PCM_FRAMES ||
+        proof.pcm_bytes != AUDIO_PCM_BYTES ||
+        proof.bdl_entries != AUDIO_PCM_BDL_ENTRIES ||
+        proof.stream_format != UINT16_C(0x0011) || proof.pcm_hash == 0U ||
+        proof.playback_converter == 0U || proof.playback_pin == 0U ||
+        proof.playback_stream_tag != AUDIO_PCM_STREAM_TAG ||
+        !proof.output_route_found || !proof.pcm_profile_supported ||
+        !proof.pcm_device_owned_during_run ||
+        !proof.bdl_device_owned_during_run || !proof.stream_reset ||
+        !proof.stream_started || !proof.link_position_advanced ||
+        !proof.stream_status_observed || proof.service_iterations == 0U ||
+        proof.period_completions == 0U ||
+        !proof.stream_stopped_before_reset ||
         !proof.bus_master_withdrawn_before_release ||
         !proof.teardown_complete || !proof.resource_census_equal ||
         !audio_resources_released()) {

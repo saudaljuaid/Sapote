@@ -2,102 +2,127 @@
 
 # High Definition Audio
 
-Sapote's thirteen bounded drivers read registers and nothing else, on purpose:
-a driver that never enables bus mastering is a driver that cannot reach memory,
-and on a machine with no IOMMU that is the difference between *cannot* and *is
-not expected to*. This one is different. High Definition Audio has no register
-a driver can ask a codec through. It has two rings in memory — the controller
-reads commands out of one and writes the codecs' answers into the other, both
-by bus-mastering DMA — so talking to a codec at all means letting the device
-write into kernel memory.
+Sapote has one deliberately narrow, kernel-owned PCM playback proof for the
+QEMU ICH9 controller and `hda-duplex` codec. It is a real converter route and a
+real cyclic output DMA stream, but it is not yet an application audio service.
 
-That is the interesting part of this driver, and the ordering that makes it
-safe is most of the file.
+The implementation follows the Intel High Definition Audio 1.0a controller
+contract and derives its codec profile from QEMU's published `hda-codec.c` and
+`hda-codec-common.h` descriptions. It does not select node numbers by identity.
+It walks the audio function group's bounded widget range, finds a stereo audio
+output converter that advertises 48 kHz and 16-bit PCM, finds an output-capable
+pin, and proves that the pin's direct connection list names that converter. The
+current QEMU codec exposes function group 1, DAC 2, and output pin 3; those
+numbers are evidence recorded after discovery, not configuration constants.
 
-## The rule this driver exists to follow
+## Fixed PCM profile
 
+The only accepted profile is:
+
+- signed little-endian 16-bit PCM;
+- two interleaved channels;
+- 48,000 frames per second;
+- stream format `0x0011`;
+- stream tag 1, starting at channel 0;
+- 1,024 frames / 4,096 bytes in one page;
+- two 2,048-byte BDL periods, each with interrupt-on-completion status;
+- a deterministic 750 Hz square wave at amplitude +/-8192, identical on both
+  channels.
+
+The conservative format is inside QEMU's advertised 16-96 kHz signed-16-bit
+profile. The waveform is generated with integer operations; kernel code does
+not use floating point, MMX, or SIMD.
+
+The codec route is explicitly put in D0, its pin is set to output, and the DAC
+is assigned the same tag and format as the controller stream. Read-back verbs
+must return the selected pin control, converter tag, and converter format before
+DMA starts.
+
+## DMA ownership and playback evidence
+
+Four typed below-4-GiB DMA allocations exist during the proof:
+
+1. CORB command ring;
+2. RIRB response ring;
+3. BDL page;
+4. immutable PCM page.
+
+All four are initialized while CPU-owned and named in one bus-master request.
+The first enable attempt, before ownership transfer, must fail with
+`DMA_NOT_PREPARED`. Only after all four allocations are device-owned may PCI bus
+mastering be enabled. The BDL and PCM page are never modified while the device
+owns them.
+
+The first output stream descriptor is located after all input descriptors, as
+required by GCAP. Sapote stops and resets it, programs BDL base, cyclic buffer
+length, LVI 1, format and tag, then sets RUN. The proof accepts playback only
+after both forms of independent controller evidence appear within one second:
+
+- LPIB changes to another in-range byte position;
+- a BDL buffer-completion status arrives and is acknowledged.
+
+The existing QEMU scenario uses `-audiodev none`. Therefore this proves that the
+emulated codec consumed the programmed PCM stream, not that a host speaker or
+WAV backend emitted audible sound. The deterministic PCM hash proves what bytes
+were made available to the device; it is not an acoustic-capture claim.
+
+## Bounded service and underrun recovery
+
+This increment intentionally polls one stream. Each service step performs a
+fixed number of MMIO reads/writes and the proof is bounded by both one second
+and 1,000,000 service steps. No stream or global interrupt is enabled.
+
+A buffer completion is acknowledged and counted. A FIFO error is acknowledged,
+then the descriptor is stopped, reset, completely reprogrammed and restarted.
+At most three such recoveries are allowed. A descriptor error, an out-of-range
+LPIB, a fourth FIFO error, or failure of any stop/reset/start handshake fails the
+proof. Pure controls independently exercise completion/underrun/fatal status
+classification; QEMU is not required to manufacture an underrun in a healthy
+run.
+
+## Teardown and lock model
+
+`audio_active` is the one-controller lock. `audio_prove()` is synchronous and
+one-shot, and the PCI resource layer requires maskable interrupts disabled
+while the claim owns bus mastering. There is no background worker, callback,
+user mapping, shared mutable stream, or lock ordering with another subsystem.
+
+Teardown has one allowed order:
+
+```text
+clear output-stream RUN and observe it clear
+reset the output stream and observe reset set, then clear
+stop RIRB and CORB
+put the whole controller in reset and observe it
+withdraw PCI bus mastering
+transfer PCM, BDL, RIRB and CORB ownership back to the CPU
+release all four DMA allocations
+unmap BAR and release the PCI claim
 ```
-allocate the rings as typed DMA allocations
-    refuse bus mastering while the rings still belong to this side   <- proved
-    hand the rings to the device
-    enable bus mastering, naming exactly those two allocations
-        start the ring engines
-        ... the conversation ...
-        stop the ring engines
-    put the controller back into reset
-withdraw bus mastering
-    take the rings back from the device
-release the memory the rings were
-```
 
-Every line of that is checked. The refusal is a *proof*, not a comment:
-`pci_claim_enable_bus_master` is called once before the rings are transferred
-and is required to answer `DMA_NOT_PREPARED`, and only then called again for
-real. `make verify` refuses a build in which the teardown lines appear in any
-other order, and the scenario refuses a boot in which anything is still
-allocated, claimed or bus-mastering afterwards.
+Any partial bring-up follows the same release function. The scenario requires
+the frame, paging, DMA, PCI, vector, MSI-X and interrupt-state census to equal
+the pre-proof census, with no claim, allocation, mapping or bus master left.
 
-The controller reset before bus mastering is withdrawn is not redundant with
-stopping the engines. Stopping an engine is a request; a controller in reset
-has no engines.
+## Supported and refused
 
-## What the conversation is
+Supported now:
 
-Software writes a *verb* — a codec address, a node number and a command — into
-the command ring and advances the write pointer. The controller reads it, puts
-it on the link, and writes whatever the codec answers into the response ring,
-advancing its own write pointer. Reading that pointer is how a driver knows an
-answer arrived, and it is the only thing in this driver that waits.
+- one QEMU ICH9 HDA controller and one discovered fixed direct output route;
+- one cyclic kernel-owned 48 kHz / S16LE / stereo playback stream;
+- topology/format/read-back validation, polled completion service, bounded FIFO
+  recovery, and complete resource teardown.
 
-For every codec the controller reports on the link, Sapote asks four questions:
+Still explicitly refused:
 
-| Verb | What it establishes |
-| --- | --- |
-| `GET_PARAMETER(VENDOR_ID)` | who made this codec and which part it is |
-| `GET_PARAMETER(REVISION_ID)` | which revision of it |
-| `GET_PARAMETER(SUBORDINATE_NODE_COUNT)` | where its function groups are numbered |
-| `GET_PARAMETER(FUNCTION_GROUP_TYPE)` | whether the first of them is an audio function group |
+- any native/userspace audio handle or syscall;
+- application PCM writes, mixer, per-stream or master volume API;
+- more than one route or stream, input capture, hotplug or power management;
+- codec connection ranges, selectable multi-input pins, unsolicited responses,
+  and physical-codec compatibility claims;
+- interrupt-driven persistent playback, host WAV/acoustic validation, and
+  production daily-driver audio.
 
-Every answer is authenticated before it is believed: the extended half of a
-response carries the address of the codec that sent it, and a response from the
-wrong codec, or one no command asked for, is refused rather than recorded. An
-overrun in the response status — the controller having written past what this
-side had read — is a lost answer rather than a late one, and is also refused.
-
-Sapote polls the response ring rather than taking the response interrupt, so it
-sets the interrupt threshold beyond the number of answers one conversation
-collects *and* acknowledges the response flag after each answer anyway. A
-threshold is a bound, not a promise.
-
-## Evidence
-
-The `audio` scenario attaches an ICH9 HD Audio controller and one codec, and
-requires:
-
-- the controller to leave reset and report a version 1 interface with at least
-  one output stream;
-- at least one codec on the link, and every codec present to be identified;
-- as many responses as verbs, every one of them from the codec it was asked of;
-- an audio function group among them;
-- bus mastering withdrawn before the rings were released;
-- the frame, paging, DMA, PCI, vector and MSI-X census identical to before, and
-  no allocation, claim or bus master left behind.
-
-A codec identity cannot be produced from this side of the link. The one QEMU
-presents answers `0x1AF40022` — vendor 0x1AF4, device 0x0022 — at revision
-`0x00100101`, with its function group at node 1.
-
-## Limits
-
-This driver identifies codecs. It does not play anything.
-
-There is no stream descriptor, no buffer descriptor list, no format
-negotiation, no widget graph walk, no mixer, no volume, no input capture, and
-no interrupt. Adding playback means a third DMA allocation the device reads
-continuously rather than once, which is a larger claim about DMA ownership than
-this increment makes, and it needs its own evidence — a link position counter
-that advances is the honest proof, and it is not in this release.
-
-The driver is also bounded to one controller and to the codecs that controller
-reports at bind time. There is no hotplug, no unsolicited response handling,
-and no power management.
+Those require a persistent controller owner, native readiness/cancellation,
+bounded per-process buffers, a fixed-point mixer, process-death cleanup, and a
+separate QEMU audio artifact. None is implied by this kernel proof.
