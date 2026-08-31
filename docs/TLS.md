@@ -44,10 +44,16 @@ enforce the same bounds before constructing these records.
 
 ## Current evidence boundary
 
-The source and freestanding archive are reproducible and the API is wired to
-real Sapote services. That is not yet an HTTPS success claim. Required QEMU
-evidence still includes a deterministic offline peer and CA, successful
-hostname/chain/time validation, wrong-host and unknown-root refusal, expired and
-not-yet-valid certificates, truncated records, timeout/cancel behavior,
-authenticated close, concurrent-session isolation, HTTP bounds, and package
-digest failure after a valid TLS connection.
+`make tls-tests` compiles the same wrapper and pinned BearSSL source against a
+POSIX adapter, then connects it over real loopback TCP to a Python TLS 1.2 peer
+using the committed offline CA. It proves a valid chain, hostname, fixed
+certificate time, application bytes, and authenticated close. Separate peers
+prove wrong-host, unknown-root, expired, not-yet-valid, truncated-handshake, and
+deadline refusal. The certificates and public test keys are fixed inputs with
+recorded checksums; no Internet service or host trust store is consulted.
+
+This is meaningful transport-library evidence, but it is not yet an in-guest
+HTTPS success claim. Required QEMU evidence still includes the native TCP path,
+cancellation and process-death cleanup, malformed chains and signatures,
+concurrent-session isolation, bounded HTTP framing, and package digest failure
+after a valid TLS connection.

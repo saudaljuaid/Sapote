@@ -70,6 +70,9 @@ RUST_NVBIOS_TEST := $(BUILD_DIR)/nvbios-tests
 RUST_NATIVE_IMAGE_TEST := $(BUILD_DIR)/native-image-tests
 WALL_CLOCK_HOST_TEST := $(TEST_BUILD_DIR)/wall-clock-host-test
 SDK_TIME_HOST_TEST := $(TEST_BUILD_DIR)/sdk-time-host-test
+TLS_HOST_TEST := $(TEST_BUILD_DIR)/tls-client-host-test
+TLS_HOST_OBJECT := $(TEST_BUILD_DIR)/tls-client.o
+TLS_HOST_WRAPPER_OBJECT := $(TEST_BUILD_DIR)/tls-wrapper.o
 EXT4_FIXTURE := $(TEST_BUILD_DIR)/ext4/sapote-ext4.raw
 RUST_SOURCES := $(wildcard src/rust/*.rs)
 RUST_MANIFEST := src/rust/Cargo.toml
@@ -182,6 +185,9 @@ BEARSSL_OBJECT_DIR := $(SDK_BUILD_DIR)/bearssl
 BEARSSL_OBJECTS := $(patsubst vendor/bearssl/src/%.c,\
 	$(BEARSSL_OBJECT_DIR)/%.o,$(BEARSSL_SOURCE))
 BEARSSL_LIB := $(SDK_BUILD_DIR)/lib/libbearssl.a
+TLS_HOST_BEARSSL_OBJECTS := $(patsubst vendor/bearssl/src/%.c,\
+	$(TEST_BUILD_DIR)/bearssl/%.o,$(BEARSSL_SOURCE))
+TLS_HOST_BEARSSL_LIB := $(TEST_BUILD_DIR)/libbearssl-host.a
 SDK_CFLAGS := --target=x86_64-unknown-none-elf -Isdk/include -Iinclude \
 	-Isdk/src -std=c11 -O2 -g -ffreestanding -fno-pie \
 	-fno-stack-protector -mcmodel=large -mno-red-zone -fno-builtin \
@@ -291,7 +297,7 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d)
 # They never create a file of their own name, so they rerun regardless.
 .PHONY: all capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios dynamic-elf-tests ext4-images ext4-tests fat32-images hooks \
 	iso kernel lint native-apps port-tests qemu-port-tests reproducible-sdk run \
-	package-repository-tests screenshot-proof sdk sdk-once smoke toolchain verify wall-clock-tests
+	package-repository-tests screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests
 
 all: kernel
 
@@ -311,6 +317,17 @@ $(SDK_OBJECT_DIR)/%.o: sdk/src/%.S | $(SDK_OBJECT_DIR)
 $(BEARSSL_OBJECT_DIR)/%.o: vendor/bearssl/src/%.c
 	mkdir -p $(dir $@)
 	$(SDK_CC) $(BEARSSL_CFLAGS) -c $< -o $@
+
+$(TEST_BUILD_DIR)/bearssl/%.o: vendor/bearssl/src/%.c
+	mkdir -p $(dir $@)
+	$(CC) -Ivendor/bearssl/inc -Ivendor/bearssl/src -std=c11 -O2 \
+		-DBR_USE_URANDOM=0 -DBR_USE_WIN32_RAND=0 \
+		-DBR_USE_UNIX_TIME=0 -DBR_USE_WIN32_TIME=0 \
+		-DBR_SSE2=0 -DBR_AES_X86NI=0 -DBR_POWER8=0 \
+		-Wall -Wextra -Werror -c $< -o $@
+
+$(TLS_HOST_BEARSSL_LIB): $(TLS_HOST_BEARSSL_OBJECTS)
+	$(SDK_AR) rcsD $@ $^
 
 $(SDK_CRT): sdk/crt/start.S | $(SDK_BUILD_DIR)/lib
 	$(SDK_CC) --target=x86_64-unknown-none-elf -ffreestanding -fno-pie \
@@ -832,6 +849,31 @@ dynamic-elf-tests: src/rust/elf64_dynamic.rs \
 		tools/elf64-dynamic-host-test.rs -o $(RUST_DYNAMIC_ELF64_TEST)
 	$(RUST_DYNAMIC_ELF64_TEST)
 
+$(TLS_HOST_WRAPPER_OBJECT): sdk/src/tls.c sdk/include/sapote/tls.h
+	mkdir -p $(dir $@)
+	$(CC) -Isdk/include -Iinclude -Ivendor/bearssl/inc -std=c11 -O2 \
+		-Wall -Wextra -Werror -Wpedantic -Wshadow -Wundef \
+		-Wstrict-prototypes -Wmissing-prototypes -c $< -o $@
+
+$(TLS_HOST_OBJECT): tools/tls-client-host-test.c \
+		sdk/include/sapote/tls.h
+	mkdir -p $(dir $@)
+	$(CC) -Iinclude -Ivendor/bearssl/inc -idirafter sdk/include \
+		-std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -Wshadow \
+		-Wundef -Wstrict-prototypes -Wmissing-prototypes -c $< -o $@
+
+$(TLS_HOST_TEST): $(TLS_HOST_OBJECT) $(TLS_HOST_WRAPPER_OBJECT) \
+		$(TLS_HOST_BEARSSL_LIB)
+	$(CC) $^ -o $@
+
+tls-tests: $(TLS_HOST_TEST) tools/tls_host_test.py \
+		tests/fixtures/tls/anchor.txt tests/fixtures/tls/ca.pem \
+		tests/fixtures/tls/valid.pem tests/fixtures/tls/valid-key.pem \
+		tests/fixtures/tls/expired.pem tests/fixtures/tls/expired-key.pem \
+		tests/fixtures/tls/future.pem tests/fixtures/tls/future-key.pem \
+		tests/fixtures/tls/untrusted.pem tests/fixtures/tls/untrusted-key.pem
+	$(PYTHON) -u tools/tls_host_test.py $(TLS_HOST_TEST)
+
 $(EXT4_FIXTURE): tools/ext4_image.py
 	mkdir -p $(dir $@)
 	$(PYTHON) tools/ext4_image.py build $@ --report $@.json
@@ -842,7 +884,7 @@ verify: toolchain lint
 	$(MAKE) clean
 	$(MAKE) kernel
 	$(MAKE) wall-clock-tests ext4-tests package-repository-tests \
-		dynamic-elf-tests
+		dynamic-elf-tests tls-tests
 	$(PYTHON) tools/verify-ui-assets.py
 	@test '$(LOGO_MAX_DIMENSION)' -eq 280
 	@test '$(STUDIO_ICON_MAX_DIMENSION)' -eq 80
