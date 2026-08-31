@@ -19,7 +19,8 @@ static void zero_bytes(void *pointer, size_t length)
 
 static bool valid_type(uint8_t type)
 {
-    return type >= SAPOTE_HANDLE_FILE && type <= SAPOTE_HANDLE_THREAD;
+    return type >= SAPOTE_HANDLE_FILE &&
+        type <= SAPOTE_HANDLE_AUDIO_OUTPUT;
 }
 
 static sapote_handle_t encode_handle(
@@ -311,6 +312,11 @@ bool native_handle_self_test(size_t *completed_tests)
         return false;
     }
     *completed_tests = 0U;
+    if (!valid_type(SAPOTE_HANDLE_AUDIO_OUTPUT) ||
+        valid_type((uint8_t)(SAPOTE_HANDLE_AUDIO_OUTPUT + 1U))) {
+        return false;
+    }
+    ++*completed_tests;
     if (native_handle_table_initialize(&table, 2U) != NATIVE_HANDLE_OK ||
         native_handle_install(&table, SAPOTE_HANDLE_FILE, &initial, &first) !=
             NATIVE_HANDLE_OK ||

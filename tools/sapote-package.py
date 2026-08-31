@@ -55,6 +55,7 @@ CAPABILITIES = {
     "input": 1 << 7,
     "network": 1 << 8,
     "threads": 1 << 9,
+    "audio": 1 << 10,
 }
 
 

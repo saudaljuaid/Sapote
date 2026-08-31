@@ -31,8 +31,10 @@ To add an application:
 The runtime supplies startup/exit, negative-error translation to `errno`, a
 page-backed heap, buffered `FILE`, FAT file/directory wrappers, time, entropy,
 pthread/TLS/futex support, Redwood surfaces/input, and typed networking
-wrappers. Familiar names are a source-porting layer; the kernel remains the
-Sapote ABI rather than a Linux personality.
+wrappers. `<sapote/audio.h>` exposes the fixed 48 kHz S16LE stereo output
+handle, whole-chunk submission, Q15 volume, drain, cancellation and close.
+Familiar names are a source-porting layer; the kernel remains the Sapote ABI
+rather than a Linux personality.
 
 Time APIs keep elapsed and civil time separate. `clock()` and
 `CLOCK_MONOTONIC` use boot-relative monotonic nanoseconds; `time()` and

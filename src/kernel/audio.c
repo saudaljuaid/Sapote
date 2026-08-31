@@ -172,6 +172,11 @@
 #define AUDIO_STREAM_FORMAT UINT16_C(0x0011)
 #define AUDIO_TONE_HALF_PERIOD_FRAMES 32U
 #define AUDIO_TONE_AMPLITUDE INT16_C(8192)
+#define AUDIO_NATIVE_COALESCE_NS UINT64_C(1000000)
+#define AUDIO_NATIVE_SERVICE_NS UINT64_C(100000)
+
+_Static_assert(AUDIO_NATIVE_STREAMS == 2U,
+    "the fixed mixer has exactly two logical inputs");
 
 struct hda_bdl_entry {
     uint64_t address;
@@ -235,8 +240,48 @@ struct audio_controller {
     bool controller_running;
 };
 
+enum audio_native_terminal {
+    AUDIO_NATIVE_TERMINAL_NONE = 0,
+    AUDIO_NATIVE_TERMINAL_COMPLETE,
+    AUDIO_NATIVE_TERMINAL_CANCELED,
+    AUDIO_NATIVE_TERMINAL_ERROR
+};
+
+struct audio_native_stream {
+    int16_t samples[AUDIO_PCM_FRAMES * AUDIO_PCM_CHANNELS];
+    uint64_t owner_generation;
+    uint64_t token;
+    uint32_t left_q15;
+    uint32_t right_q15;
+    enum audio_native_terminal terminal;
+    bool open;
+    bool queued;
+    bool active;
+    bool cancel_after_active;
+    bool closing;
+};
+
+struct audio_native_runtime {
+    struct audio_controller controller;
+    struct audio_proof_result proof;
+    struct audio_native_stream streams[AUDIO_NATIVE_STREAMS];
+    uint64_t owner_generation;
+    uint64_t coalesce_deadline;
+    uint64_t playback_deadline;
+    uint32_t active_mask;
+    uint32_t underrun_recoveries;
+    bool initialized;
+    bool stream_running;
+};
+
 static struct audio_proof_result installed_result;
 static bool audio_active;
+static bool audio_native_cleanup_clean = true;
+/* This generation is intentionally outside the zeroed controller runtime.
+ * A drain waiter may outlive the last close and must not resolve a newly
+ * opened stream with the same process generation through a recycled token. */
+static uint64_t audio_native_next_token = UINT64_C(1);
+static struct audio_native_runtime audio_native;
 
 static void zero_bytes(void *pointer, size_t length)
 {
@@ -314,9 +359,65 @@ static uint64_t fill_pcm_tone(volatile int16_t *samples, size_t frames)
     return hash;
 }
 
+static uint64_t pcm_hash(const volatile int16_t *samples, size_t sample_count)
+{
+    uint64_t hash = UINT64_C(1469598103934665603);
+
+    for (size_t index = 0U; index < sample_count; ++index) {
+        hash ^= (uint16_t)samples[index];
+        hash *= UINT64_C(1099511628211);
+    }
+    return hash;
+}
+
+static int16_t clamp_sample(int32_t value)
+{
+    if (value > INT16_MAX) {
+        return INT16_MAX;
+    }
+    if (value < INT16_MIN) {
+        return INT16_MIN;
+    }
+    return (int16_t)value;
+}
+
+static void mix_two_streams(
+    volatile int16_t *destination,
+    const int16_t *first,
+    uint32_t first_left,
+    uint32_t first_right,
+    const int16_t *second,
+    uint32_t second_left,
+    uint32_t second_right,
+    size_t frames
+)
+{
+    for (size_t frame = 0U; frame < frames; ++frame) {
+        for (size_t channel = 0U; channel < AUDIO_PCM_CHANNELS; ++channel) {
+            const size_t index = frame * AUDIO_PCM_CHANNELS + channel;
+            const uint32_t first_gain = channel == 0U ?
+                first_left : first_right;
+            const uint32_t second_gain = channel == 0U ?
+                second_left : second_right;
+            int32_t mixed = 0;
+
+            if (first != NULL) {
+                mixed += ((int32_t)first[index] * (int32_t)first_gain) /
+                    (int32_t)AUDIO_NATIVE_VOLUME_UNITY;
+            }
+            if (second != NULL) {
+                mixed += ((int32_t)second[index] * (int32_t)second_gain) /
+                    (int32_t)AUDIO_NATIVE_VOLUME_UNITY;
+            }
+            destination[index] = clamp_sample(mixed);
+        }
+    }
+}
+
 static bool fill_buffer_list(
     volatile struct hda_bdl_entry *entries,
-    uint64_t pcm_physical
+    uint64_t pcm_physical,
+    bool every_period_reports
 )
 {
     if (entries == NULL ||
@@ -330,7 +431,9 @@ static bool fill_buffer_list(
         entries[index].address = pcm_physical +
             index * AUDIO_PCM_PERIOD_BYTES;
         entries[index].length = AUDIO_PCM_PERIOD_BYTES;
-        entries[index].flags = HDA_BDL_INTERRUPT_ON_COMPLETION;
+        entries[index].flags = (every_period_reports ||
+            index + 1U == AUDIO_PCM_BDL_ENTRIES) ?
+                HDA_BDL_INTERRUPT_ON_COMPLETION : 0U;
     }
     return true;
 }
@@ -1279,7 +1382,8 @@ static enum audio_status prove_pcm_playback(
 static enum audio_status bring_up(
     struct audio_controller *controller,
     struct audio_proof_result *result,
-    const struct pci_function *function
+    const struct pci_function *function,
+    bool playback_proof
 )
 {
     struct pci_bus_master_request bus_master;
@@ -1422,10 +1526,13 @@ static enum audio_status bring_up(
     controller->pcm_physical =
         (uint64_t)controller->pcm_buffer.frames.physical_base;
     if (!fill_buffer_list(controller->descriptors,
-            controller->pcm_physical)) {
+            controller->pcm_physical, playback_proof)) {
         return AUDIO_STATUS_DMA_FAILURE;
     }
-    result->pcm_hash = fill_pcm_tone(controller->samples, AUDIO_PCM_FRAMES);
+    result->pcm_hash = playback_proof ?
+        fill_pcm_tone(controller->samples, AUDIO_PCM_FRAMES) :
+        pcm_hash(controller->samples,
+            AUDIO_PCM_FRAMES * AUDIO_PCM_CHANNELS);
     result->sample_rate = AUDIO_PCM_SAMPLE_RATE;
     result->channels = AUDIO_PCM_CHANNELS;
     result->bits_per_sample = AUDIO_PCM_BITS_PER_SAMPLE;
@@ -1545,9 +1652,11 @@ static enum audio_status bring_up(
         if (status != AUDIO_STATUS_OK) {
             return status;
         }
-        status = prove_pcm_playback(controller, result);
-        if (status != AUDIO_STATUS_OK) {
-            return status;
+        if (playback_proof) {
+            status = prove_pcm_playback(controller, result);
+            if (status != AUDIO_STATUS_OK) {
+                return status;
+            }
         }
     }
     result->device_wrote_response_ring = result->responses_received ==
@@ -1652,7 +1761,7 @@ bool audio_foundation_self_test(size_t *completed_tests)
     ++completed;
     /* Two legal periods cover the PCM page and both request status evidence. */
     zero_bytes(descriptors, sizeof(descriptors));
-    if (!fill_buffer_list(descriptors, UINT64_C(0x00100000)) ||
+    if (!fill_buffer_list(descriptors, UINT64_C(0x00100000), true) ||
         descriptors[0].address != UINT64_C(0x00100000) ||
         descriptors[1].address != UINT64_C(0x00100800) ||
         descriptors[0].length != AUDIO_PCM_PERIOD_BYTES ||
@@ -1745,7 +1854,7 @@ enum audio_status audio_prove(struct audio_proof_result *result)
     capture_census(&before);
     zero_bytes(&controller, sizeof(controller));
     audio_active = true;
-    status = bring_up(&controller, result, function);
+    status = bring_up(&controller, result, function, true);
     status = release_controller(&controller, result, status);
     capture_census(&after);
     if (restore_interrupts) {
@@ -1770,6 +1879,605 @@ enum audio_status audio_prove(struct audio_proof_result *result)
     }
     installed_result = *result;
     return AUDIO_STATUS_OK;
+}
+
+static struct audio_native_stream *native_stream(
+    uint64_t owner_generation,
+    uint64_t stream_token
+)
+{
+    if (!audio_native.initialized || owner_generation == 0U ||
+        stream_token == 0U ||
+        audio_native.owner_generation != owner_generation) {
+        return NULL;
+    }
+    for (size_t index = 0U; index < AUDIO_NATIVE_STREAMS; ++index) {
+        struct audio_native_stream *stream = &audio_native.streams[index];
+
+        if (stream->open && stream->owner_generation == owner_generation &&
+            stream->token == stream_token) {
+            return stream;
+        }
+    }
+    return NULL;
+}
+
+static size_t native_open_streams(void)
+{
+    size_t count = 0U;
+
+    for (size_t index = 0U; index < AUDIO_NATIVE_STREAMS; ++index) {
+        if (audio_native.streams[index].open) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+static size_t native_queued_streams(void)
+{
+    size_t count = 0U;
+
+    for (size_t index = 0U; index < AUDIO_NATIVE_STREAMS; ++index) {
+        if (audio_native.streams[index].open &&
+            audio_native.streams[index].queued &&
+            !audio_native.streams[index].active) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+static uint64_t native_allocate_token(void)
+{
+    uint64_t token = audio_native_next_token++;
+
+    if (token == 0U) {
+        token = audio_native_next_token++;
+    }
+    return token;
+}
+
+static bool native_release_runtime(void)
+{
+    enum audio_status status;
+    bool clean;
+
+    if (!audio_native.initialized) {
+        return true;
+    }
+    status = release_controller(&audio_native.controller,
+        &audio_native.proof, AUDIO_STATUS_OK);
+    clean = status == AUDIO_STATUS_OK &&
+        !audio_native.controller.claim.active &&
+        !audio_native.controller.command_ring.active &&
+        !audio_native.controller.response_ring.active &&
+        !audio_native.controller.buffer_list.active &&
+        !audio_native.controller.pcm_buffer.active &&
+        pci_resource_verify() == PCI_RESOURCE_STATUS_OK &&
+        dma_verify() == DMA_STATUS_OK;
+    zero_bytes(&audio_native, sizeof(audio_native));
+    audio_native_cleanup_clean = clean;
+    return clean;
+}
+
+static void native_finish_active(enum audio_native_terminal terminal)
+{
+    const uint32_t active = audio_native.active_mask;
+
+    for (size_t index = 0U; index < AUDIO_NATIVE_STREAMS; ++index) {
+        struct audio_native_stream *stream = &audio_native.streams[index];
+
+        if ((active & (UINT32_C(1) << index)) == 0U) {
+            continue;
+        }
+        stream->active = false;
+        stream->queued = false;
+        stream->terminal = stream->cancel_after_active ?
+            AUDIO_NATIVE_TERMINAL_CANCELED : terminal;
+        stream->cancel_after_active = false;
+        if (stream->closing) {
+            zero_bytes(stream, sizeof(*stream));
+        }
+    }
+    audio_native.active_mask = 0U;
+    audio_native.stream_running = false;
+    audio_native.playback_deadline = 0U;
+    audio_native.underrun_recoveries = 0U;
+    if (native_queued_streams() != 0U) {
+        const uint64_t now = clock_monotonic_ns();
+
+        audio_native.coalesce_deadline = now <=
+                UINT64_MAX - AUDIO_NATIVE_COALESCE_NS ?
+            now + AUDIO_NATIVE_COALESCE_NS : now;
+    } else {
+        audio_native.coalesce_deadline = 0U;
+    }
+}
+
+static void native_fail_queued(void)
+{
+    for (size_t index = 0U; index < AUDIO_NATIVE_STREAMS; ++index) {
+        struct audio_native_stream *stream = &audio_native.streams[index];
+
+        if (stream->open && stream->queued && !stream->active) {
+            stream->queued = false;
+            stream->terminal = AUDIO_NATIVE_TERMINAL_ERROR;
+            if (stream->closing) {
+                zero_bytes(stream, sizeof(*stream));
+            }
+        }
+    }
+    audio_native.coalesce_deadline = 0U;
+}
+
+static bool native_start_mix(void)
+{
+    const int16_t *sources[AUDIO_NATIVE_STREAMS] = {NULL, NULL};
+    uint32_t left[AUDIO_NATIVE_STREAMS] = {0U, 0U};
+    uint32_t right[AUDIO_NATIVE_STREAMS] = {0U, 0U};
+    uint32_t mask = 0U;
+    uint64_t now;
+
+    if (!audio_native.initialized || audio_native.stream_running ||
+        audio_native.controller.pcm_buffer.owner != DMA_OWNER_DEVICE ||
+        !reset_output_stream(&audio_native.controller,
+            &audio_native.proof)) {
+        return false;
+    }
+    for (size_t index = 0U; index < AUDIO_NATIVE_STREAMS; ++index) {
+        struct audio_native_stream *stream = &audio_native.streams[index];
+
+        if (!stream->open || !stream->queued || stream->active) {
+            continue;
+        }
+        sources[index] = stream->samples;
+        left[index] = stream->left_q15;
+        right[index] = stream->right_q15;
+        mask |= UINT32_C(1) << index;
+    }
+    if (mask == 0U ||
+        dma_transfer_to_cpu(&audio_native.controller.pcm_buffer) !=
+            DMA_STATUS_OK) {
+        return false;
+    }
+    mix_two_streams(audio_native.controller.samples,
+        sources[0], left[0], right[0], sources[1], left[1], right[1],
+        AUDIO_PCM_FRAMES);
+    audio_native.proof.pcm_hash = pcm_hash(
+        audio_native.controller.samples,
+        AUDIO_PCM_FRAMES * AUDIO_PCM_CHANNELS);
+    if (dma_transfer_to_device(&audio_native.controller.pcm_buffer) !=
+            DMA_STATUS_OK) {
+        return false;
+    }
+    cpu_store_fence();
+    if (!start_output_stream(&audio_native.controller,
+            &audio_native.proof)) {
+        (void)stop_output_stream(&audio_native.controller,
+            &audio_native.proof);
+        (void)reset_output_stream(&audio_native.controller,
+            &audio_native.proof);
+        return false;
+    }
+    for (size_t index = 0U; index < AUDIO_NATIVE_STREAMS; ++index) {
+        if ((mask & (UINT32_C(1) << index)) != 0U) {
+            audio_native.streams[index].active = true;
+        }
+    }
+    audio_native.active_mask = mask;
+    audio_native.stream_running = true;
+    audio_native.coalesce_deadline = 0U;
+    now = clock_monotonic_ns();
+    audio_native.playback_deadline = now <= UINT64_MAX - AUDIO_TIMEOUT_NS ?
+        now + AUDIO_TIMEOUT_NS : now;
+    return true;
+}
+
+enum audio_native_status audio_native_open(
+    uint64_t owner_generation,
+    uint64_t *stream_token
+)
+{
+    struct audio_native_stream *stream = NULL;
+
+    if (owner_generation == 0U || stream_token == NULL) {
+        return AUDIO_NATIVE_NULL_ARGUMENT;
+    }
+    *stream_token = 0U;
+    if (cpu_interrupts_enabled()) {
+        return AUDIO_NATIVE_IO;
+    }
+    if (!audio_native.initialized) {
+        const struct pci_function *function;
+        enum audio_status status;
+
+        if (audio_active) {
+            return AUDIO_NATIVE_BUSY;
+        }
+        function = discover_controller();
+        if (function == NULL) {
+            return AUDIO_NATIVE_ABSENT;
+        }
+        zero_bytes(&audio_native, sizeof(audio_native));
+        audio_active = true;
+        audio_native_cleanup_clean = false;
+        status = bring_up(&audio_native.controller, &audio_native.proof,
+            function, false);
+        if (status != AUDIO_STATUS_OK) {
+            const enum audio_status release_status = release_controller(
+                &audio_native.controller, &audio_native.proof, status);
+            const bool clean = release_status != AUDIO_STATUS_TEARDOWN &&
+                !audio_native.controller.claim.active &&
+                !audio_native.controller.command_ring.active &&
+                !audio_native.controller.response_ring.active &&
+                !audio_native.controller.buffer_list.active &&
+                !audio_native.controller.pcm_buffer.active &&
+                pci_resource_verify() == PCI_RESOURCE_STATUS_OK &&
+                dma_verify() == DMA_STATUS_OK;
+
+            zero_bytes(&audio_native, sizeof(audio_native));
+            audio_native_cleanup_clean = clean;
+            return status == AUDIO_STATUS_ABSENT ?
+                AUDIO_NATIVE_ABSENT : AUDIO_NATIVE_IO;
+        }
+        audio_native.initialized = true;
+        audio_native.owner_generation = owner_generation;
+    } else if (audio_native.owner_generation != owner_generation) {
+        return AUDIO_NATIVE_BUSY;
+    }
+    for (size_t index = 0U; index < AUDIO_NATIVE_STREAMS; ++index) {
+        if (!audio_native.streams[index].open) {
+            stream = &audio_native.streams[index];
+            break;
+        }
+    }
+    if (stream == NULL) {
+        return AUDIO_NATIVE_BUSY;
+    }
+    zero_bytes(stream, sizeof(*stream));
+    stream->open = true;
+    stream->owner_generation = owner_generation;
+    stream->left_q15 = AUDIO_NATIVE_VOLUME_UNITY;
+    stream->right_q15 = AUDIO_NATIVE_VOLUME_UNITY;
+    stream->token = native_allocate_token();
+    *stream_token = stream->token;
+    return AUDIO_NATIVE_OK;
+}
+
+enum audio_native_status audio_native_submit(
+    uint64_t owner_generation,
+    uint64_t stream_token,
+    const int16_t *samples,
+    size_t byte_length
+)
+{
+    struct audio_native_stream *stream = native_stream(owner_generation,
+        stream_token);
+
+    if (samples == NULL) {
+        return AUDIO_NATIVE_NULL_ARGUMENT;
+    }
+    if (stream == NULL) {
+        return AUDIO_NATIVE_STALE;
+    }
+    if (byte_length != AUDIO_PCM_BYTES || stream->closing) {
+        return AUDIO_NATIVE_INVALID;
+    }
+    if (stream->queued || stream->active) {
+        return AUDIO_NATIVE_BUSY;
+    }
+    for (size_t index = 0U;
+         index < AUDIO_PCM_FRAMES * AUDIO_PCM_CHANNELS; ++index) {
+        stream->samples[index] = samples[index];
+    }
+    stream->queued = true;
+    stream->terminal = AUDIO_NATIVE_TERMINAL_NONE;
+    stream->cancel_after_active = false;
+    if (!audio_native.stream_running) {
+        const uint64_t now = clock_monotonic_ns();
+
+        audio_native.coalesce_deadline = now <=
+                UINT64_MAX - AUDIO_NATIVE_COALESCE_NS ?
+            now + AUDIO_NATIVE_COALESCE_NS : now;
+    }
+    return AUDIO_NATIVE_OK;
+}
+
+enum audio_native_status audio_native_set_volume(
+    uint64_t owner_generation,
+    uint64_t stream_token,
+    uint32_t left_q15,
+    uint32_t right_q15
+)
+{
+    struct audio_native_stream *stream = native_stream(owner_generation,
+        stream_token);
+
+    if (stream == NULL) {
+        return AUDIO_NATIVE_STALE;
+    }
+    if (left_q15 > AUDIO_NATIVE_VOLUME_UNITY ||
+        right_q15 > AUDIO_NATIVE_VOLUME_UNITY || stream->closing) {
+        return AUDIO_NATIVE_INVALID;
+    }
+    stream->left_q15 = left_q15;
+    stream->right_q15 = right_q15;
+    return AUDIO_NATIVE_OK;
+}
+
+enum audio_native_status audio_native_cancel(
+    uint64_t owner_generation,
+    uint64_t stream_token
+)
+{
+    struct audio_native_stream *stream = native_stream(owner_generation,
+        stream_token);
+
+    if (stream == NULL) {
+        return AUDIO_NATIVE_STALE;
+    }
+    if (stream->active) {
+        /* One mixed DMA chunk is atomic once the controller owns it. */
+        stream->cancel_after_active = true;
+    } else {
+        stream->queued = false;
+        stream->terminal = AUDIO_NATIVE_TERMINAL_CANCELED;
+    }
+    return AUDIO_NATIVE_OK;
+}
+
+enum audio_native_status audio_native_close(
+    uint64_t owner_generation,
+    uint64_t stream_token
+)
+{
+    struct audio_native_stream *stream = native_stream(owner_generation,
+        stream_token);
+
+    if (stream == NULL) {
+        return AUDIO_NATIVE_STALE;
+    }
+    if (stream->active) {
+        stream->closing = true;
+        stream->cancel_after_active = true;
+    } else {
+        zero_bytes(stream, sizeof(*stream));
+    }
+    if (native_open_streams() == 0U && !audio_native.stream_running) {
+        return native_release_runtime() ? AUDIO_NATIVE_OK : AUDIO_NATIVE_IO;
+    }
+    return AUDIO_NATIVE_OK;
+}
+
+enum audio_native_drain_state audio_native_drain(
+    uint64_t owner_generation,
+    uint64_t stream_token
+)
+{
+    const struct audio_native_stream *stream = native_stream(
+        owner_generation, stream_token);
+
+    if (stream == NULL) {
+        return AUDIO_NATIVE_DRAIN_STALE;
+    }
+    if (stream->queued || stream->active) {
+        return AUDIO_NATIVE_DRAIN_PENDING;
+    }
+    if (stream->terminal == AUDIO_NATIVE_TERMINAL_CANCELED) {
+        return AUDIO_NATIVE_DRAIN_CANCELED;
+    }
+    if (stream->terminal == AUDIO_NATIVE_TERMINAL_ERROR) {
+        return AUDIO_NATIVE_DRAIN_ERROR;
+    }
+    return AUDIO_NATIVE_DRAIN_COMPLETE;
+}
+
+enum audio_native_status audio_native_poll(
+    uint64_t owner_generation,
+    uint64_t stream_token,
+    bool *writable,
+    bool *closed
+)
+{
+    const struct audio_native_stream *stream = native_stream(
+        owner_generation, stream_token);
+
+    if (writable == NULL || closed == NULL) {
+        return AUDIO_NATIVE_NULL_ARGUMENT;
+    }
+    *writable = false;
+    *closed = false;
+    if (stream == NULL) {
+        return AUDIO_NATIVE_STALE;
+    }
+    *writable = !stream->queued && !stream->active && !stream->closing;
+    *closed = stream->closing ||
+        stream->terminal == AUDIO_NATIVE_TERMINAL_CANCELED ||
+        stream->terminal == AUDIO_NATIVE_TERMINAL_ERROR;
+    return AUDIO_NATIVE_OK;
+}
+
+bool audio_native_service(void)
+{
+    uint64_t now;
+
+    if (!audio_native.initialized) {
+        return true;
+    }
+    if (cpu_interrupts_enabled()) {
+        return false;
+    }
+    now = clock_monotonic_ns();
+    if (audio_native.stream_running) {
+        const uint8_t status = mmio_read8(audio_native.controller.registers,
+            audio_native.controller.output_stream_base + HDA_SDSTS);
+        const enum audio_stream_event event = classify_stream_status(status);
+
+        if (event == AUDIO_STREAM_EVENT_COMPLETION) {
+            bool stopped;
+            bool reset;
+
+            mmio_write8(audio_native.controller.registers,
+                audio_native.controller.output_stream_base + HDA_SDSTS,
+                HDA_SDSTS_BUFFER_COMPLETE);
+            stopped = stop_output_stream(&audio_native.controller,
+                &audio_native.proof);
+            reset = reset_output_stream(&audio_native.controller,
+                &audio_native.proof);
+            if (!stopped || !reset) {
+                native_finish_active(AUDIO_NATIVE_TERMINAL_ERROR);
+            } else {
+                native_finish_active(AUDIO_NATIVE_TERMINAL_COMPLETE);
+            }
+        } else if (event == AUDIO_STREAM_EVENT_UNDERRUN &&
+            audio_native.underrun_recoveries <
+                AUDIO_MAX_UNDERRUN_RECOVERIES) {
+            mmio_write8(audio_native.controller.registers,
+                audio_native.controller.output_stream_base + HDA_SDSTS,
+                HDA_SDSTS_ACKNOWLEDGE);
+            ++audio_native.underrun_recoveries;
+            if (!reset_output_stream(&audio_native.controller,
+                    &audio_native.proof) ||
+                !start_output_stream(&audio_native.controller,
+                    &audio_native.proof)) {
+                native_finish_active(AUDIO_NATIVE_TERMINAL_ERROR);
+            }
+        } else if (event == AUDIO_STREAM_EVENT_FATAL ||
+            event == AUDIO_STREAM_EVENT_UNDERRUN ||
+            now >= audio_native.playback_deadline) {
+            mmio_write8(audio_native.controller.registers,
+                audio_native.controller.output_stream_base + HDA_SDSTS,
+                HDA_SDSTS_ACKNOWLEDGE);
+            (void)stop_output_stream(&audio_native.controller,
+                &audio_native.proof);
+            (void)reset_output_stream(&audio_native.controller,
+                &audio_native.proof);
+            native_finish_active(AUDIO_NATIVE_TERMINAL_ERROR);
+        }
+    }
+    if (!audio_native.stream_running && native_queued_streams() != 0U &&
+        (native_queued_streams() == AUDIO_NATIVE_STREAMS ||
+            now >= audio_native.coalesce_deadline)) {
+        if (!native_start_mix()) {
+            native_fail_queued();
+        }
+    }
+    if (native_open_streams() == 0U && !audio_native.stream_running &&
+        native_queued_streams() == 0U) {
+        return native_release_runtime();
+    }
+    return true;
+}
+
+bool audio_native_next_deadline(uint64_t *deadline_ns)
+{
+    uint64_t now;
+
+    if (deadline_ns == NULL || !audio_native.initialized) {
+        return false;
+    }
+    now = clock_monotonic_ns();
+    if (audio_native.stream_running) {
+        const uint64_t service = now <= UINT64_MAX - AUDIO_NATIVE_SERVICE_NS ?
+            now + AUDIO_NATIVE_SERVICE_NS : now;
+
+        *deadline_ns = service < audio_native.playback_deadline ?
+            service : audio_native.playback_deadline;
+        return true;
+    }
+    if (native_queued_streams() != 0U) {
+        *deadline_ns = audio_native.coalesce_deadline;
+        return true;
+    }
+    return false;
+}
+
+void audio_native_process_terminated(uint64_t owner_generation)
+{
+    if (!audio_native.initialized || owner_generation == 0U ||
+        audio_native.owner_generation != owner_generation) {
+        return;
+    }
+    if (audio_native.stream_running) {
+        (void)stop_output_stream(&audio_native.controller,
+            &audio_native.proof);
+        (void)reset_output_stream(&audio_native.controller,
+            &audio_native.proof);
+        audio_native.stream_running = false;
+    }
+    for (size_t index = 0U; index < AUDIO_NATIVE_STREAMS; ++index) {
+        zero_bytes(&audio_native.streams[index],
+            sizeof(audio_native.streams[index]));
+    }
+    audio_native.active_mask = 0U;
+    (void)native_release_runtime();
+}
+
+bool audio_native_resources_released(void)
+{
+    return !audio_native.initialized && audio_native_cleanup_clean &&
+        !audio_active;
+}
+
+bool audio_native_self_test(size_t *completed_tests)
+{
+    int16_t first[4] = {INT16_C(20000), -INT16_C(20000),
+        INT16_C(1000), -INT16_C(1000)};
+    int16_t second[4] = {INT16_C(20000), -INT16_C(20000),
+        -INT16_C(1000), INT16_C(1000)};
+    int16_t mixed[4] = {0, 0, 0, 0};
+    struct hda_bdl_entry descriptors[AUDIO_PCM_BDL_ENTRIES];
+    uint64_t first_token;
+    uint64_t second_token;
+    size_t completed = 0U;
+
+    if (completed_tests == NULL) {
+        return false;
+    }
+    *completed_tests = 0U;
+    mix_two_streams(mixed, first, AUDIO_NATIVE_VOLUME_UNITY,
+        AUDIO_NATIVE_VOLUME_UNITY, second, AUDIO_NATIVE_VOLUME_UNITY,
+        AUDIO_NATIVE_VOLUME_UNITY, 2U);
+    if (mixed[0] != INT16_MAX || mixed[1] != INT16_MIN ||
+        mixed[2] != 0 || mixed[3] != 0) {
+        return false;
+    }
+    ++completed;
+    mix_two_streams(mixed, first, AUDIO_NATIVE_VOLUME_UNITY / 2U,
+        AUDIO_NATIVE_VOLUME_UNITY / 2U, NULL, 0U, 0U, 2U);
+    if (mixed[0] != INT16_C(10000) || mixed[1] != -INT16_C(10000) ||
+        mixed[2] != INT16_C(500) || mixed[3] != -INT16_C(500)) {
+        return false;
+    }
+    ++completed;
+    mix_two_streams(mixed, first, 0U, 0U, second, 0U, 0U, 2U);
+    if (mixed[0] != 0 || mixed[1] != 0 || mixed[2] != 0 ||
+        mixed[3] != 0) {
+        return false;
+    }
+    ++completed;
+    zero_bytes(descriptors, sizeof(descriptors));
+    if (!fill_buffer_list(descriptors, UINT64_C(0x00200000), false) ||
+        descriptors[0].flags != 0U ||
+        descriptors[1].flags != HDA_BDL_INTERRUPT_ON_COMPLETION) {
+        return false;
+    }
+    ++completed;
+    if (AUDIO_NATIVE_STREAMS != 2U || AUDIO_PCM_BYTES != 4096U ||
+        AUDIO_NATIVE_VOLUME_UNITY != 32768U) {
+        return false;
+    }
+    ++completed;
+    first_token = native_allocate_token();
+    second_token = native_allocate_token();
+    if (first_token == 0U || second_token == 0U ||
+        first_token == second_token) {
+        return false;
+    }
+    ++completed;
+    *completed_tests = completed;
+    return completed == AUDIO_NATIVE_CONTROLLED_CONTROLS;
 }
 
 struct audio_proof_result audio_get_proof_result(void)

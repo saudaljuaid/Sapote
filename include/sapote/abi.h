@@ -3,6 +3,7 @@
 #define SAPOTE_ABI_H
 
 #include <sapote/abi/base.h>
+#include <sapote/abi/audio.h>
 #include <sapote/abi/event.h>
 #include <sapote/abi/memory.h>
 #include <sapote/abi/network.h>

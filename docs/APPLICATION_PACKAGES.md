@@ -18,7 +18,7 @@ admission boundary.
 | `memory_limit` | Page multiple from 64 KiB through 256 MiB. |
 | `max_handles` | 1–128, also bounded by the kernel table. |
 | `max_threads` | 1–8. |
-| `capabilities` | Names from `console`, `system-read`, `data-read`, `data-write`, `time`, `entropy`, `window`, `input`, `network`, and `threads`. |
+| `capabilities` | Names from `console`, `system-read`, `data-read`, `data-write`, `time`, `entropy`, `window`, `input`, `network`, `threads`, and `audio`. |
 | `resource_directory` | Optional immutable System 8.3 directory identifier. |
 | `data_namespace` | Required 1–8 character directory on Data; relative application paths are rooted here. |
 | `icon` | Optional System 8.3 path. |

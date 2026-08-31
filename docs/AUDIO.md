@@ -2,9 +2,10 @@
 
 # High Definition Audio
 
-Sapote has one deliberately narrow, kernel-owned PCM playback proof for the
-QEMU ICH9 controller and `hda-duplex` codec. It is a real converter route and a
-real cyclic output DMA stream, but it is not yet an application audio service.
+Sapote has a deliberately narrow PCM path for the QEMU ICH9 controller and
+`hda-duplex` codec. The boot proof remains a one-shot kernel-owned stream. The
+native ABI now reuses the same controller route through a persistent bounded
+owner; applications never see its DMA pages or registers.
 
 The implementation follows the Intel High Definition Audio 1.0a controller
 contract and derives its codec profile from QEMU's published `hda-codec.c` and
@@ -25,7 +26,8 @@ The only accepted profile is:
 - stream format `0x0011`;
 - stream tag 1, starting at channel 0;
 - 1,024 frames / 4,096 bytes in one page;
-- two 2,048-byte BDL periods, each with interrupt-on-completion status;
+- two 2,048-byte BDL periods; the proof marks both for status and native
+  playback marks only the final period so one completion means one whole chunk;
 - a deterministic 750 Hz square wave at amplitude +/-8192, identical on both
   channels.
 
@@ -66,26 +68,61 @@ emulated codec consumed the programmed PCM stream, not that a host speaker or
 WAV backend emitted audible sound. The deterministic PCM hash proves what bytes
 were made available to the device; it is not an acoustic-capture claim.
 
+## Native ABI, queueing and mixing
+
+An admitted application must request the distinct `audio` capability. It can
+open at most two generation-protected `SAPOTE_HANDLE_AUDIO_OUTPUT` objects. One
+process owns the controller at a time; another process receives `EBUSY`, not an
+implicitly shared global device.
+
+The public format is exactly the fixed profile above. `sapote_audio_submit()`
+accepts one complete 4,096-byte chunk. Lengths, request versions, flags, handle
+types, generations, and every input page are validated before the kernel copies
+the chunk into its own bounded queue. Submitting while that handle already owns
+a queued or active chunk returns `EBUSY`. There is no per-sample syscall and no
+userspace DMA.
+
+The scheduler gives the first queued chunk a one-millisecond coalescing window.
+If both handles queue during it, an integer-only two-input mixer applies an
+independent unsigned Q15 left/right gain to each stream, adds in signed 32-bit
+space, and saturates to signed 16-bit output. Unity is 32768 and zero is silent.
+At most two 4,096-byte source chunks and one 4,096-byte DMA mix exist.
+
+`SAPOTE_WAIT_WRITABLE` means the handle can accept another chunk;
+`SAPOTE_WAIT_CLOSED` reports cancellation or a stream error. Drain blocks only
+the calling native thread and has an absolute monotonic deadline. Cancel removes
+a chunk that has not entered DMA. Once a mixed chunk is device-owned it is
+atomic: cancel marks that handle canceled when the current 21.3 ms chunk
+finishes rather than rewriting memory under DMA. Close follows the same rule.
+Process death is stronger: because both streams must belong to that one process,
+it synchronously stops/resets the descriptor, clears both queues, and performs
+the full controller teardown.
+
 ## Bounded service and underrun recovery
 
-This increment intentionally polls one stream. Each service step performs a
-fixed number of MMIO reads/writes and the proof is bounded by both one second
-and 1,000,000 service steps. No stream or global interrupt is enabled.
+The boot proof polls synchronously and is bounded by both one second and
+1,000,000 service steps. Native playback is scheduler-polled at bounded
+deadlines of at most 100 microseconds while a chunk is active. No stream or
+global HDA interrupt is enabled.
 
 A buffer completion is acknowledged and counted. A FIFO error is acknowledged,
 then the descriptor is stopped, reset, completely reprogrammed and restarted.
-At most three such recoveries are allowed. A descriptor error, an out-of-range
-LPIB, a fourth FIFO error, or failure of any stop/reset/start handshake fails the
-proof. Pure controls independently exercise completion/underrun/fatal status
+At most three such recoveries are allowed. Native recovery replays the current
+whole chunk from its beginning; it never exposes a partially consumed source
+queue. A descriptor error, an out-of-range LPIB in the boot proof, a fourth
+FIFO error, or failure of any stop/reset/start handshake fails the operation.
+Pure controls independently exercise completion/underrun/fatal status
 classification; QEMU is not required to manufacture an underrun in a healthy
 run.
 
 ## Teardown and lock model
 
 `audio_active` is the one-controller lock. `audio_prove()` is synchronous and
-one-shot, and the PCI resource layer requires maskable interrupts disabled
-while the claim owns bus mastering. There is no background worker, callback,
-user mapping, shared mutable stream, or lock ordering with another subsystem.
+one-shot. Native playback holds that same exclusive claim between first open
+and final close, and the scheduler services it only in kernel address space
+with maskable interrupts disabled. Source queues are kernel BSS, the mixed PCM
+page changes ownership only while the output descriptor is stopped/reset, and
+no callback or user mapping can touch device-owned memory.
 
 Teardown has one allowed order:
 
@@ -109,20 +146,23 @@ the pre-proof census, with no claim, allocation, mapping or bus master left.
 Supported now:
 
 - one QEMU ICH9 HDA controller and one discovered fixed direct output route;
-- one cyclic kernel-owned 48 kHz / S16LE / stereo playback stream;
+- one hardware 48 kHz / S16LE / stereo playback stream;
+- two process-local logical output handles for one owning process, one queued
+  chunk per handle, Q15 stereo volume, bounded saturated software mixing;
+- native submit, wait readiness, drain, cancel, close, and process-death cleanup;
 - topology/format/read-back validation, polled completion service, bounded FIFO
   recovery, and complete resource teardown.
 
 Still explicitly refused:
 
-- any native/userspace audio handle or syscall;
-- application PCM writes, mixer, per-stream or master volume API;
-- more than one route or stream, input capture, hotplug or power management;
+- more than two logical streams, more than one queued chunk per handle, a
+  system-wide mixer, or cross-process sharing;
+- resampling, format conversion, master volume, input capture, hotplug or power
+  management;
 - codec connection ranges, selectable multi-input pins, unsolicited responses,
   and physical-codec compatibility claims;
 - interrupt-driven persistent playback, host WAV/acoustic validation, and
   production daily-driver audio.
 
-Those require a persistent controller owner, native readiness/cancellation,
-bounded per-process buffers, a fixed-point mixer, process-death cleanup, and a
-separate QEMU audio artifact. None is implied by this kernel proof.
+The existing `-audiodev none` scenario still proves DMA consumption only. It
+does not prove loudness, speaker selection, or an audible host artifact.

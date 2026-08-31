@@ -4,6 +4,7 @@
 #include <sapote/native_process.h>
 
 #include <sapote/abi.h>
+#include <sapote/audio.h>
 #include <sapote/clock.h>
 #include <sapote/console.h>
 #include <sapote/cpu.h>
@@ -51,6 +52,19 @@
 #define NATIVE_SURFACE_MAX_HEIGHT 720U
 #define NATIVE_SCHEDULER_MIN_SLEEP_NS UINT64_C(100000)
 
+_Static_assert(SAPOTE_AUDIO_SAMPLE_RATE == AUDIO_PCM_SAMPLE_RATE,
+    "kernel and public audio sample rates differ");
+_Static_assert(SAPOTE_AUDIO_CHANNELS == AUDIO_PCM_CHANNELS,
+    "kernel and public audio channel counts differ");
+_Static_assert(SAPOTE_AUDIO_BITS_PER_SAMPLE == AUDIO_PCM_BITS_PER_SAMPLE,
+    "kernel and public audio sample widths differ");
+_Static_assert(SAPOTE_AUDIO_CHUNK_BYTES == AUDIO_PCM_BYTES,
+    "kernel and public audio chunk sizes differ");
+_Static_assert(SAPOTE_AUDIO_MAX_STREAMS == AUDIO_NATIVE_STREAMS,
+    "kernel and public audio stream bounds differ");
+_Static_assert(SAPOTE_AUDIO_VOLUME_UNITY == AUDIO_NATIVE_VOLUME_UNITY,
+    "kernel and public audio gain scales differ");
+
 enum native_thread_state {
     NATIVE_THREAD_UNUSED = 0,
     NATIVE_THREAD_RUNNABLE,
@@ -59,6 +73,7 @@ enum native_thread_state {
     NATIVE_THREAD_FUTEX_WAIT,
     NATIVE_THREAD_CONSOLE_WAIT,
     NATIVE_THREAD_HANDLE_WAIT,
+    NATIVE_THREAD_AUDIO_DRAIN_WAIT,
     NATIVE_THREAD_EXITED,
     NATIVE_THREAD_FAULTED
 };
@@ -83,6 +98,7 @@ struct native_thread {
     uint64_t deadline_ns;
     uint64_t console_address;
     uint64_t wait_items_address;
+    uint64_t audio_token;
     size_t console_length;
     size_t wait_item_count;
     struct sapote_wait_item wait_items[SAPOTE_WAIT_MAX];
@@ -482,6 +498,29 @@ static int64_t handle_error(enum native_handle_status status)
     }
 }
 
+static int64_t audio_error(enum audio_native_status status)
+{
+    switch (status) {
+    case AUDIO_NATIVE_OK:
+        return 0;
+    case AUDIO_NATIVE_ABSENT:
+        return -SAPOTE_ENOTSUP;
+    case AUDIO_NATIVE_BUSY:
+        return -SAPOTE_EBUSY;
+    case AUDIO_NATIVE_STALE:
+        return -SAPOTE_ESTALE;
+    case AUDIO_NATIVE_CANCELED:
+        return -SAPOTE_ECANCELED;
+    case AUDIO_NATIVE_NULL_ARGUMENT:
+    case AUDIO_NATIVE_INVALID:
+        return -SAPOTE_EINVAL;
+    case AUDIO_NATIVE_IO:
+    case AUDIO_NATIVE_STATUS_COUNT:
+    default:
+        return -SAPOTE_EIO;
+    }
+}
+
 static int64_t filesystem_error(enum sapfs_status status)
 {
     switch (status) {
@@ -649,6 +688,18 @@ static bool close_resource(
         return true;
     case SAPOTE_HANDLE_THREAD:
         return true;
+    case SAPOTE_HANDLE_AUDIO_OUTPUT: {
+        const bool enabled = cpu_interrupts_enabled();
+        enum audio_native_status status;
+
+        cpu_interrupt_disable();
+        status = audio_native_close(process->generation,
+            resource->words[0]);
+        if (enabled) {
+            cpu_interrupt_enable();
+        }
+        return status == AUDIO_NATIVE_OK;
+    }
     default:
         return false;
     }
@@ -1171,6 +1222,7 @@ static bool process_cleanup(struct native_process *process)
     }
     network_process_terminated(process->generation);
     cpu_interrupt_disable();
+    audio_native_process_terminated(process->generation);
     for (size_t remaining = process->page_count; remaining > 0U; --remaining) {
         const struct native_page *page = &process->pages[remaining - 1U];
 
@@ -2434,6 +2486,27 @@ static int64_t poll_wait_items(
                 items[index].ready = items[index].interests &
                     SAPOTE_WAIT_READABLE;
             }
+        } else if (type == SAPOTE_HANDLE_AUDIO_OUTPUT) {
+            bool writable;
+            bool closed;
+            const enum audio_native_status audio_status = audio_native_poll(
+                process->generation, resource->words[0], &writable, &closed);
+
+            if ((items[index].interests &
+                    ~(SAPOTE_WAIT_WRITABLE | SAPOTE_WAIT_CLOSED)) != 0U) {
+                return -SAPOTE_EINVAL;
+            }
+            if (audio_status != AUDIO_NATIVE_OK) {
+                return audio_error(audio_status);
+            }
+            if (writable) {
+                items[index].ready |= items[index].interests &
+                    SAPOTE_WAIT_WRITABLE;
+            }
+            if (closed) {
+                items[index].ready |= items[index].interests &
+                    SAPOTE_WAIT_CLOSED;
+            }
         } else if (type == SAPOTE_HANDLE_STREAM ||
             type == SAPOTE_HANDLE_DATAGRAM) {
             network_requests[network_count].handle = resource->words[0];
@@ -3199,6 +3272,137 @@ static int64_t syscall_network_address(
         0 : -SAPOTE_EFAULT;
 }
 
+static int64_t syscall_audio_open(struct native_process *process)
+{
+    struct native_resource resource = {{0U, 0U, 0U, 0U}};
+    sapote_handle_t handle;
+    enum audio_native_status audio_status;
+    enum native_handle_status handle_status;
+
+    if ((process->manifest.capabilities & SAPOTE_CAP_AUDIO) == 0U) {
+        return -SAPOTE_EACCES;
+    }
+    audio_status = audio_native_open(process->generation,
+        &resource.words[0]);
+    if (audio_status != AUDIO_NATIVE_OK) {
+        return audio_error(audio_status);
+    }
+    handle_status = native_handle_install(&process->handles,
+        SAPOTE_HANDLE_AUDIO_OUTPUT, &resource, &handle);
+    if (handle_status != NATIVE_HANDLE_OK) {
+        (void)audio_native_close(process->generation, resource.words[0]);
+        return handle_error(handle_status);
+    }
+    if (process->handles.active_handles > process->peak_handles) {
+        process->peak_handles = process->handles.active_handles;
+    }
+    return (int64_t)handle;
+}
+
+static int64_t syscall_audio_submit(
+    struct native_process *process,
+    uint64_t request_address
+)
+{
+    struct sapote_audio_submit_request request;
+    struct native_resource *resource;
+    enum native_handle_status handle_status;
+    enum audio_native_status audio_status;
+
+    if (!copy_from_user(process, &request, request_address,
+            sizeof(request))) {
+        return -SAPOTE_EFAULT;
+    }
+    if (request.size != sizeof(request) ||
+        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
+        request.length != SAPOTE_AUDIO_CHUNK_BYTES) {
+        return -SAPOTE_EINVAL;
+    }
+    handle_status = native_handle_resolve(&process->handles, request.handle,
+        SAPOTE_HANDLE_AUDIO_OUTPUT, &resource);
+    if (handle_status != NATIVE_HANDLE_OK) {
+        return handle_error(handle_status);
+    }
+    if (!copy_from_user(process, process->transfer, request.buffer,
+            request.length)) {
+        return -SAPOTE_EFAULT;
+    }
+    audio_status = audio_native_submit(process->generation,
+        resource->words[0], (const int16_t *)(const void *)process->transfer,
+        request.length);
+    return audio_status == AUDIO_NATIVE_OK ? (int64_t)request.length :
+        audio_error(audio_status);
+}
+
+static int64_t syscall_audio_volume(
+    struct native_process *process,
+    uint64_t request_address
+)
+{
+    struct sapote_audio_volume_request request;
+    struct native_resource *resource;
+    enum native_handle_status handle_status;
+
+    if (!copy_from_user(process, &request, request_address,
+            sizeof(request))) {
+        return -SAPOTE_EFAULT;
+    }
+    if (request.size != sizeof(request) ||
+        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
+        request.reserved != 0U ||
+        request.left_q15 > SAPOTE_AUDIO_VOLUME_MAX ||
+        request.right_q15 > SAPOTE_AUDIO_VOLUME_MAX) {
+        return -SAPOTE_EINVAL;
+    }
+    handle_status = native_handle_resolve(&process->handles, request.handle,
+        SAPOTE_HANDLE_AUDIO_OUTPUT, &resource);
+    if (handle_status != NATIVE_HANDLE_OK) {
+        return handle_error(handle_status);
+    }
+    return audio_error(audio_native_set_volume(process->generation,
+        resource->words[0], request.left_q15, request.right_q15));
+}
+
+static int64_t syscall_audio_drain(
+    struct native_process *process,
+    sapote_handle_t handle,
+    uint64_t deadline_ns
+)
+{
+    struct native_resource *resource;
+    struct native_thread *thread = running_thread(process);
+    const enum native_handle_status handle_status = native_handle_resolve(
+        &process->handles, handle, SAPOTE_HANDLE_AUDIO_OUTPUT, &resource);
+    enum audio_native_drain_state state;
+
+    if (handle_status != NATIVE_HANDLE_OK) {
+        return handle_error(handle_status);
+    }
+    if (thread == NULL) {
+        return -SAPOTE_EIO;
+    }
+    state = audio_native_drain(process->generation, resource->words[0]);
+    if (state == AUDIO_NATIVE_DRAIN_COMPLETE) {
+        return 0;
+    }
+    if (state == AUDIO_NATIVE_DRAIN_CANCELED) {
+        return -SAPOTE_ECANCELED;
+    }
+    if (state == AUDIO_NATIVE_DRAIN_ERROR) {
+        return -SAPOTE_EIO;
+    }
+    if (state == AUDIO_NATIVE_DRAIN_STALE) {
+        return -SAPOTE_ESTALE;
+    }
+    if (deadline_ns != 0U && deadline_ns <= clock_monotonic_ns()) {
+        return -SAPOTE_ETIMEDOUT;
+    }
+    thread->audio_token = resource->words[0];
+    thread->deadline_ns = deadline_ns;
+    thread->state = NATIVE_THREAD_AUDIO_DRAIN_WAIT;
+    return 0;
+}
+
 static int64_t syscall_cancel(
     struct native_process *process,
     sapote_handle_t handle
@@ -3215,6 +3419,10 @@ static int64_t syscall_cancel(
     if (type == SAPOTE_HANDLE_TIMER) {
         resource->words[0] = 0U;
         return 0;
+    }
+    if (type == SAPOTE_HANDLE_AUDIO_OUTPUT) {
+        return audio_error(audio_native_cancel(process->generation,
+            resource->words[0]));
     }
     if (type != SAPOTE_HANDLE_STREAM && type != SAPOTE_HANDLE_DATAGRAM) {
         return -SAPOTE_ENOTSUP;
@@ -3718,6 +3926,14 @@ static int64_t dispatch_syscall(
         return syscall_futex_wait(process, frame->rdi);
     case SAPOTE_SYS_FUTEX_WAKE:
         return syscall_futex_wake(process, frame->rdi);
+    case SAPOTE_SYS_AUDIO_OPEN:
+        return syscall_audio_open(process);
+    case SAPOTE_SYS_AUDIO_SUBMIT:
+        return syscall_audio_submit(process, frame->rdi);
+    case SAPOTE_SYS_AUDIO_VOLUME:
+        return syscall_audio_volume(process, frame->rdi);
+    case SAPOTE_SYS_AUDIO_DRAIN:
+        return syscall_audio_drain(process, frame->rdi, frame->rsi);
     default:
         return -SAPOTE_ENOSYS;
     }
@@ -3956,6 +4172,31 @@ static void update_waiting_threads(
                 thread->context.rax = (uint64_t)ready;
                 thread->state = NATIVE_THREAD_RUNNABLE;
             }
+        } else if (thread->state == NATIVE_THREAD_AUDIO_DRAIN_WAIT) {
+            const enum audio_native_drain_state state = audio_native_drain(
+                process->generation, thread->audio_token);
+            const bool timed_out = thread->deadline_ns != 0U &&
+                now >= thread->deadline_ns;
+            int64_t result = 0;
+            bool complete = true;
+
+            if (state == AUDIO_NATIVE_DRAIN_PENDING && !timed_out) {
+                complete = false;
+            } else if (timed_out) {
+                result = -SAPOTE_ETIMEDOUT;
+            } else if (state == AUDIO_NATIVE_DRAIN_CANCELED) {
+                result = -SAPOTE_ECANCELED;
+            } else if (state == AUDIO_NATIVE_DRAIN_ERROR) {
+                result = -SAPOTE_EIO;
+            } else if (state == AUDIO_NATIVE_DRAIN_STALE) {
+                result = -SAPOTE_ESTALE;
+            }
+            if (complete) {
+                thread->audio_token = 0U;
+                thread->deadline_ns = 0U;
+                thread->context.rax = (uint64_t)result;
+                thread->state = NATIVE_THREAD_RUNNABLE;
+            }
         } else if (thread->state == NATIVE_THREAD_CONSOLE_WAIT &&
             process->console_input_count != 0U) {
             const size_t copied = console_input_copy(process,
@@ -3997,12 +4238,22 @@ static bool nearest_deadline(uint64_t *deadline)
 
             if ((thread->state == NATIVE_THREAD_SLEEP_WAIT ||
                     thread->state == NATIVE_THREAD_FUTEX_WAIT ||
-                    thread->state == NATIVE_THREAD_HANDLE_WAIT) &&
+                    thread->state == NATIVE_THREAD_HANDLE_WAIT ||
+                    thread->state == NATIVE_THREAD_AUDIO_DRAIN_WAIT) &&
                 thread->deadline_ns != 0U &&
                 (!found || thread->deadline_ns < *deadline)) {
                 *deadline = thread->deadline_ns;
                 found = true;
             }
+        }
+    }
+    {
+        uint64_t audio_deadline;
+
+        if (audio_native_next_deadline(&audio_deadline) &&
+            (!found || audio_deadline < *deadline)) {
+            *deadline = audio_deadline;
+            found = true;
         }
     }
     return found;
@@ -4128,7 +4379,9 @@ static bool any_handle_waiter(void)
         for (size_t thread_index = 0U;
              thread_index < process->thread_count; ++thread_index) {
             if (process->threads[thread_index].state ==
-                    NATIVE_THREAD_HANDLE_WAIT) {
+                    NATIVE_THREAD_HANDLE_WAIT ||
+                process->threads[thread_index].state ==
+                    NATIVE_THREAD_AUDIO_DRAIN_WAIT) {
                 return true;
             }
         }
@@ -4225,6 +4478,9 @@ static bool service_native_devices(void)
     }
     (void)network_service();
     cpu_interrupt_disable();
+    if (!audio_native_service()) {
+        success = false;
+    }
     return success;
 }
 
@@ -4407,6 +4663,7 @@ bool native_process_resources_released(void)
 
     return !scheduler_active && !any_active_process() &&
         !native_syscall_is_active() && !process_user_boundary_active() &&
+        audio_native_resources_released() &&
         interrupt_process_gate_resources_released() &&
         (!paging.active ||
             (cpu_read_cr3() & ~(PAGING_PAGE_SIZE - 1U)) ==
@@ -4417,6 +4674,7 @@ bool native_process_self_test(size_t *completed_tests)
 {
     size_t handle_tests;
     size_t fpu_tests;
+    size_t audio_tests;
     const uint32_t image_tests = sapote_native_image_self_test();
 
     if (completed_tests == NULL) {
@@ -4436,6 +4694,11 @@ bool native_process_self_test(size_t *completed_tests)
         return false;
     }
     *completed_tests += fpu_tests;
+    if (!audio_native_self_test(&audio_tests) ||
+        audio_tests != AUDIO_NATIVE_CONTROLLED_CONTROLS) {
+        return false;
+    }
+    *completed_tests += audio_tests;
     if (!process_user_context_layout_self_test() ||
         sizeof(struct native_syscall_frame) != 144U ||
         sizeof(struct sapote_event) != 56U) {

@@ -62,6 +62,11 @@ def main() -> int:
     assert report["arguments"] == [
         "PKGTEST.APP", "http://sapote.test/welcome.txt"
     ]
+    audio_spec = copy.deepcopy(spec)
+    audio_spec["capabilities"] = ["audio"]
+    audio_package = PACKAGE.build_package(audio_spec, executable)
+    _, _, _, audio_report = PACKAGE.parse_package(audio_package)
+    assert audio_report["capabilities"] == ["audio"]
     control_spec = copy.deepcopy(spec)
     control_spec["arguments"] = ["line\nbreak"]
     try:

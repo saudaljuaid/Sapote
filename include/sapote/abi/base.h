@@ -98,7 +98,12 @@ enum sapote_syscall_number {
     SAPOTE_SYS_TLS_SET = 0x0603,
     SAPOTE_SYS_TLS_GET = 0x0604,
     SAPOTE_SYS_FUTEX_WAIT = 0x0605,
-    SAPOTE_SYS_FUTEX_WAKE = 0x0606
+    SAPOTE_SYS_FUTEX_WAKE = 0x0606,
+
+    SAPOTE_SYS_AUDIO_OPEN = 0x0700,
+    SAPOTE_SYS_AUDIO_SUBMIT = 0x0701,
+    SAPOTE_SYS_AUDIO_VOLUME = 0x0702,
+    SAPOTE_SYS_AUDIO_DRAIN = 0x0703
 };
 
 enum sapote_capability {
@@ -111,10 +116,11 @@ enum sapote_capability {
     SAPOTE_CAP_WINDOW = UINT64_C(1) << 6,
     SAPOTE_CAP_INPUT = UINT64_C(1) << 7,
     SAPOTE_CAP_NETWORK = UINT64_C(1) << 8,
-    SAPOTE_CAP_THREADS = UINT64_C(1) << 9
+    SAPOTE_CAP_THREADS = UINT64_C(1) << 9,
+    SAPOTE_CAP_AUDIO = UINT64_C(1) << 10
 };
 
-#define SAPOTE_CAP_ALL_V1 ((UINT64_C(1) << 10) - UINT64_C(1))
+#define SAPOTE_CAP_ALL_V1 ((UINT64_C(1) << 11) - UINT64_C(1))
 
 enum sapote_handle_type {
     SAPOTE_HANDLE_FILE = 1,
@@ -124,7 +130,8 @@ enum sapote_handle_type {
     SAPOTE_HANDLE_STREAM = 5,
     SAPOTE_HANDLE_DATAGRAM = 6,
     SAPOTE_HANDLE_TIMER = 7,
-    SAPOTE_HANDLE_THREAD = 8
+    SAPOTE_HANDLE_THREAD = 8,
+    SAPOTE_HANDLE_AUDIO_OUTPUT = 9
 };
 
 #endif

@@ -57,6 +57,9 @@
 #define AUDIO_PCM_PERIOD_BYTES 2048U
 #define AUDIO_PCM_BDL_ENTRIES 2U
 #define AUDIO_PCM_STREAM_TAG 1U
+#define AUDIO_NATIVE_STREAMS 2U
+#define AUDIO_NATIVE_VOLUME_UNITY 32768U
+#define AUDIO_NATIVE_CONTROLLED_CONTROLS 6U
 
 /* Controls the pure foundation stage exercises before any device is touched. */
 #define AUDIO_CONTROLLED_CONTROLS 16U
@@ -156,10 +159,69 @@ struct audio_proof_result {
     struct audio_codec codecs[AUDIO_MAX_CODECS];
 };
 
+enum audio_native_status {
+    AUDIO_NATIVE_OK = 0,
+    AUDIO_NATIVE_NULL_ARGUMENT,
+    AUDIO_NATIVE_ABSENT,
+    AUDIO_NATIVE_BUSY,
+    AUDIO_NATIVE_STALE,
+    AUDIO_NATIVE_INVALID,
+    AUDIO_NATIVE_CANCELED,
+    AUDIO_NATIVE_IO,
+    AUDIO_NATIVE_STATUS_COUNT
+};
+
+enum audio_native_drain_state {
+    AUDIO_NATIVE_DRAIN_COMPLETE = 0,
+    AUDIO_NATIVE_DRAIN_PENDING,
+    AUDIO_NATIVE_DRAIN_CANCELED,
+    AUDIO_NATIVE_DRAIN_ERROR,
+    AUDIO_NATIVE_DRAIN_STALE
+};
+
 bool audio_foundation_self_test(size_t *completed_tests);
 enum audio_status audio_prove(struct audio_proof_result *result);
 struct audio_proof_result audio_get_proof_result(void);
 bool audio_resources_released(void);
 const char *audio_status_string(enum audio_status status);
+enum audio_native_status audio_native_open(
+    uint64_t owner_generation,
+    uint64_t *stream_token
+);
+enum audio_native_status audio_native_submit(
+    uint64_t owner_generation,
+    uint64_t stream_token,
+    const int16_t *samples,
+    size_t byte_length
+);
+enum audio_native_status audio_native_set_volume(
+    uint64_t owner_generation,
+    uint64_t stream_token,
+    uint32_t left_q15,
+    uint32_t right_q15
+);
+enum audio_native_status audio_native_cancel(
+    uint64_t owner_generation,
+    uint64_t stream_token
+);
+enum audio_native_status audio_native_close(
+    uint64_t owner_generation,
+    uint64_t stream_token
+);
+enum audio_native_drain_state audio_native_drain(
+    uint64_t owner_generation,
+    uint64_t stream_token
+);
+enum audio_native_status audio_native_poll(
+    uint64_t owner_generation,
+    uint64_t stream_token,
+    bool *writable,
+    bool *closed
+);
+bool audio_native_service(void);
+bool audio_native_next_deadline(uint64_t *deadline_ns);
+void audio_native_process_terminated(uint64_t owner_generation);
+bool audio_native_resources_released(void);
+bool audio_native_self_test(size_t *completed_tests);
 
 #endif
