@@ -644,15 +644,26 @@ enum sapfs_status sapfs_sync(enum sapfs_volume volume)
 struct sapfs_drive_info sapfs_drive(enum sapfs_volume volume)
 {
     const struct sapfs_drive_info absent = {0};
+    const struct vfs_backend_ops *backend;
 
-    return valid_volume(volume) && mounts[volume].active ?
-        mounts[volume].backend->drive(volume) : absent;
+    if (!valid_volume(volume)) {
+        return absent;
+    }
+    backend = mounts[volume].active ? mounts[volume].backend :
+        volume_backends[volume];
+    return backend != NULL ? backend->drive(volume) : absent;
 }
 
 uint64_t sapfs_completion_count(enum sapfs_volume volume)
 {
-    return valid_volume(volume) && mounts[volume].active ?
-        mounts[volume].backend->completion_count(volume) : 0U;
+    const struct vfs_backend_ops *backend;
+
+    if (!valid_volume(volume)) {
+        return 0U;
+    }
+    backend = mounts[volume].active ? mounts[volume].backend :
+        volume_backends[volume];
+    return backend != NULL ? backend->completion_count(volume) : 0U;
 }
 
 enum sapfs_status sapfs_open(
