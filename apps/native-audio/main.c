@@ -8,6 +8,7 @@
 #include <string.h>
 
 #define OPERATION_NS UINT64_C(3000000000)
+#define CAPTURE_SETTLE_NS UINT64_C(100000000)
 
 static int16_t first_pcm[SAPOTE_AUDIO_CHUNK_FRAMES * SAPOTE_AUDIO_CHANNELS];
 static int16_t second_pcm[SAPOTE_AUDIO_CHUNK_FRAMES * SAPOTE_AUDIO_CHANNELS];
@@ -99,7 +100,8 @@ static int run_proof(void)
             (long)sizeof(second_pcm) ||
         sapote_audio_drain(first, deadline()) != 0 ||
         sapote_audio_drain(second, deadline()) != 0 ||
-        wait_writable(first, second) != 0) {
+        wait_writable(first, second) != 0 ||
+        sapote_sleep_until(sapote_monotonic_ns() + CAPTURE_SETTLE_NS) != 0) {
         (void)sapote_audio_close(second);
         (void)sapote_audio_close(first);
         return 23;

@@ -197,6 +197,11 @@ signed-16 host output settings and independently verifies:
   `5864c13557496ba86294adbbfe8078e9f2c0b5e808e4d0c4f49738fd465d1261`;
 - non-silence and absence of the chunk canceled before DMA ownership.
 
+After both public drain calls complete, the proof yields through the public
+absolute-deadline sleep service for 100 ms before teardown. This bounded
+settle lets QEMU's host audio timer deliver its already-consumed backend
+buffer; it does not replace or relax either drain assertion.
+
 When the runner does not expose the WAV backend, the scenario uses the null
 backend and prints an explicit WAV skip while retaining all serial, refusal,
 DMA-consumption, and resource-census assertions. A matching WAV is digital
