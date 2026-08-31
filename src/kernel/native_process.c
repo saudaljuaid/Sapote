@@ -1599,10 +1599,20 @@ static enum native_process_status dynamic_build_scope(
         lifecycle_scope[index + 1U] =
             load->prepared[(size_t)order[index] + 1U];
     }
-    if (sapote_elf64_dynamic_relocate_scope(load->prepared,
-            load->object_count) != ELF64_DYNAMIC_OK ||
-        sapote_elf64_dynamic_lifecycle(lifecycle_scope, load->object_count,
-            &load->lifecycle) != ELF64_DYNAMIC_OK) {
+    dynamic_status = sapote_elf64_dynamic_relocate_scope(load->prepared,
+        load->object_count);
+    if (dynamic_status != ELF64_DYNAMIC_OK) {
+        console_write("Sapote: dynamic ELF relocation status ");
+        console_write_u64((uint64_t)dynamic_status);
+        console_putc('\n');
+        return NATIVE_PROCESS_IMAGE_REFUSED;
+    }
+    dynamic_status = sapote_elf64_dynamic_lifecycle(lifecycle_scope,
+        load->object_count, &load->lifecycle);
+    if (dynamic_status != ELF64_DYNAMIC_OK) {
+        console_write("Sapote: dynamic ELF lifecycle status ");
+        console_write_u64((uint64_t)dynamic_status);
+        console_putc('\n');
         return NATIVE_PROCESS_IMAGE_REFUSED;
     }
     return NATIVE_PROCESS_OK;

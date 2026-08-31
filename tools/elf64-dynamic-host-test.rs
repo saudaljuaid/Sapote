@@ -620,6 +620,46 @@ fn initial_exec_tls_relocation_uses_defining_object_offset() {
 }
 
 #[test]
+fn local_static_tls_relocation_uses_the_object_block_offset() {
+    let mut local_fixture = fixture("libroot.so", &[], true, FixtureHash::SysV, true);
+    put_u16(&mut local_fixture.bytes, 56, 7);
+    program(&mut local_fixture.bytes, 6, 7, 4, 0x2180, 0x2180, 4, 16, 8);
+    put_i64(&mut local_fixture.bytes, local_fixture.dynamic_null, 30);
+    put_u64(
+        &mut local_fixture.bytes,
+        local_fixture.dynamic_null + 8,
+        0x18,
+    );
+    put_u64(&mut local_fixture.bytes, RELA + 24 + 8, 18);
+    let image = elf64_dynamic::parse(&local_fixture.bytes).expect("local static TLS");
+    let scope = [Object {
+        image: &image,
+        file: &local_fixture.bytes,
+        load_bias: 0x4000_0000,
+        tls_offset: -32,
+    }];
+    let mut memory = vec![0u8; image.memory_bytes()];
+    elf64_dynamic::load_image(&image, &local_fixture.bytes, &mut memory).expect("load");
+    elf64_dynamic::apply_relocations(
+        &image,
+        &local_fixture.bytes,
+        &mut memory,
+        0x4000_0000,
+        &scope,
+    )
+    .expect("local TPOFF64");
+    assert_eq!(get_u64(&memory, 0x2108), (-32i64) as u64);
+
+    let mut outside_tls = local_fixture.bytes.clone();
+    put_i64(&mut outside_tls, RELA + 24 + 16, 16);
+    assert_refused(&outside_tls, Status::RelocationTarget);
+
+    let mut missing_tls = fixture("libroot.so", &[], true, FixtureHash::SysV, true);
+    put_u64(&mut missing_tls.bytes, RELA + 24 + 8, 18);
+    assert_refused(&missing_tls.bytes, Status::RelocationTarget);
+}
+
+#[test]
 fn lifecycle_requires_runtime_executable_targets_and_preserves_order() {
     let root_fixture = fixture("libroot.so", &[], true, FixtureHash::SysV, false);
     let mut root = elf64_dynamic::parse(&root_fixture.bytes).expect("root");

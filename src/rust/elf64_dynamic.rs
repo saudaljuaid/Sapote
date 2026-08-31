@@ -947,7 +947,14 @@ fn validate_relocations(image: &Image, input: &[u8]) -> Result<(), Status> {
                 return Err(Status::RelocationType);
             }
             if item.kind == R_X86_64_RELATIVE && item.symbol != 0
-                || item.kind != R_X86_64_RELATIVE && item.symbol == 0
+                || item.kind != R_X86_64_RELATIVE
+                    && item.kind != R_X86_64_TPOFF64
+                    && item.symbol == 0
+                || item.kind == R_X86_64_TPOFF64
+                    && item.symbol == 0
+                    && (image.tls.memory_size == 0
+                        || item.addend < 0
+                        || item.addend as u64 >= image.tls.memory_size)
                 || item.symbol >= image.symbol_count
                 || !loaded_range(image, item.offset, width, true)
             {
@@ -1886,6 +1893,20 @@ fn tls_relocation_value(
     addend: i64,
     scope: &[Object<'_>],
 ) -> Result<i64, Status> {
+    if symbol_index == 0 {
+        let object = scope
+            .iter()
+            .find(|object| core::ptr::eq(object.image, image))
+            .ok_or(Status::UndefinedSymbol)?;
+        if image.tls.memory_size == 0
+            || addend < 0
+            || addend as u64 >= image.tls.memory_size
+        {
+            return Err(Status::Symbol);
+        }
+        return i64::try_from(i128::from(object.tls_offset) + i128::from(addend))
+            .map_err(|_| Status::RelocationOverflow);
+    }
     let (object, symbol) = tls_symbol(image, input, symbol_index, scope)?;
     let value = i128::from(object.tls_offset)
         .checked_add(i128::from(symbol.value))
