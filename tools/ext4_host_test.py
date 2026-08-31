@@ -153,17 +153,47 @@ class ToolDiscoveryTests(unittest.TestCase):
 
 
 class FixtureScriptTests(unittest.TestCase):
+    def test_crc32c_and_journal_profile_upgrade(self) -> None:
+        self.assertEqual(ext4._crc32c_raw(b"123456789"), 0x1CF96D7C)
+        block = bytearray(ext4.JOURNAL_SUPERBLOCK_BYTES)
+        ext4._write_u32be(block, 0x00, ext4.JOURNAL_MAGIC)
+        ext4._write_u32be(block, 0x04, ext4.JOURNAL_SUPERBLOCK_V2)
+        ext4._write_u32be(block, 0x0C, ext4.BLOCK_BYTES)
+        ext4._write_u32be(block, 0x10, ext4.JOURNAL_BLOCK_COUNT)
+        ext4._write_u32be(block, 0x14, 1)
+        block[0x30:0x40] = uuid.UUID(ext4.FILESYSTEM_UUID).bytes
+        with tempfile.TemporaryDirectory(prefix="sapote-ext4-journal-test-") as raw:
+            image = Path(raw) / "journal.img"
+            image.write_bytes(block)
+            with mock.patch.object(ext4, "_journal_superblock_offset", return_value=0):
+                ext4._upgrade_journal_superblock(image, {})
+                report = ext4._inspect_journal_superblock(image, {})
+            upgraded = image.read_bytes()
+        self.assertEqual(report["feature_masks"]["incompat"], "0x00000013")
+        self.assertEqual(report["checksum_type"], "crc32c")
+        malformed = bytearray(upgraded)
+        malformed[0x2B] &= ~ext4.JOURNAL_FEATURE_CSUM_V3
+        with self.assertRaisesRegex(ext4.Ext4ImageError, "feature masks"):
+            ext4._parse_journal_superblock(malformed)
+        malformed = bytearray(upgraded)
+        malformed[0x80] ^= 0x80
+        with self.assertRaisesRegex(ext4.Ext4ImageError, "checksum mismatch"):
+            ext4._parse_journal_superblock(malformed)
+
     def test_format_invocation_and_debugfs_script_pin_reproducibility_inputs(self) -> None:
         completed = mock.Mock(returncode=0, stdout="")
         with tempfile.TemporaryDirectory(prefix="sapote-ext4-script-test-") as raw:
             root = Path(raw)
             image = root / "fixture.img"
-            with mock.patch.object(ext4, "_run", return_value=completed) as run:
+            with mock.patch.object(ext4, "_run", return_value=completed) as run, mock.patch.object(
+                ext4, "_upgrade_journal_superblock"
+            ) as upgrade:
                 ext4._format_image(
                     image,
                     {"mke2fs": "/bin/mke2fs", "debugfs": "/bin/debugfs", "e2fsck": "/bin/e2fsck"},
                     root,
                 )
+            upgrade.assert_called_once_with(image, mock.ANY)
 
             mkfs_argv = list(run.call_args_list[0].args[0])
             self.assertEqual(mkfs_argv[mkfs_argv.index("-b") + 1], "4096")
@@ -203,6 +233,8 @@ class E2fsprogsIntegrationTests(unittest.TestCase):
             self.assertEqual(first_report["large_sparse_bytes"], ext4.LARGE_SPARSE_BYTES)
             self.assertEqual(first_report["symlink_target"], "state.txt")
             self.assertEqual(first_report["xattr"], {"name": ext4.XATTR_NAME, "value": ext4.XATTR_VALUE})
+            self.assertEqual(first_report["journal"]["feature_masks"]["incompat"], "0x00000013")
+            self.assertEqual(first_report["journal"]["checksum_type"], "crc32c")
 
             rust_fixture = os.environ.get("SAPOTE_EXT4_RUST_FIXTURE")
             if rust_fixture:

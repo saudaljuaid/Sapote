@@ -115,7 +115,14 @@ same bounded extent/block-map iterator used by ext4plus, refuses holes,
 duplicates, truncation, excess blocks, and superblock-length disagreement, and
 reads logical block zero without consulting the replay overlay. The public host
 suite passes the deterministic e2fsprogs image from the Python profile test into
-Rust and proves that its real journal inode maps into the clean ring.
+Rust and proves that its real journal inode maps into the clean ring. Libext2fs
+creates a feature-zero journal and normally leaves its on-mount upgrade to
+Linux; because the fixture is deliberately never mounted, the generator
+performs that exact deterministic upgrade itself. It installs the admitted
+revoke/64-bit/checksum-v3 bits and CRC32C, then both e2fsck and the independent
+Python/Rust parsers revalidate the result. The fixture verifier pins the clean
+start, 4 MiB journal length, UUID match, feature masks, checksum type, and
+stored checksum.
 
 `recover_committed_ring` implements the bounded live-ring reader for Sapote's
 single-descriptor transaction profile. It starts at the admitted JBD2 sequence

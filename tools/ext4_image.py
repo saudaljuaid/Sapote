@@ -28,6 +28,15 @@ BLOCK_COUNT = 32768  # 128 MiB; the logical sparse fixture is larger than 4 GiB.
 INODE_COUNT = 4096
 BLOCKS_PER_GROUP = 8192
 INODE_BYTES = 256
+JOURNAL_SUPERBLOCK_BYTES = 1024
+JOURNAL_BLOCK_COUNT = 1024
+JOURNAL_MAGIC = 0xC03B3998
+JOURNAL_SUPERBLOCK_V2 = 4
+JOURNAL_FEATURE_REVOKE = 0x1
+JOURNAL_FEATURE_64BIT = 0x2
+JOURNAL_FEATURE_CSUM_V3 = 0x10
+JOURNAL_FEATURES = JOURNAL_FEATURE_REVOKE | JOURNAL_FEATURE_64BIT | JOURNAL_FEATURE_CSUM_V3
+JOURNAL_CHECKSUM_TYPE_CRC32C = 4
 FIXED_EPOCH = 1704067200  # 2024-01-01 00:00:00 UTC
 FILESYSTEM_UUID = "5a706f74-652d-4558-5434-000000000001"
 HASH_SEED_UUID = "5a706f74-652d-4841-5348-000000000001"
@@ -109,6 +118,24 @@ def _write_u16(data: bytearray, offset: int, value: int) -> None:
 
 def _write_u32(data: bytearray, offset: int, value: int) -> None:
     struct.pack_into("<I", data, offset, value)
+
+
+def _read_u32be(data: bytes | bytearray, offset: int) -> int:
+    return struct.unpack_from(">I", data, offset)[0]
+
+
+def _write_u32be(data: bytearray, offset: int, value: int) -> None:
+    struct.pack_into(">I", data, offset, value)
+
+
+def _crc32c_raw(data: bytes | bytearray, seed: int = 0xFFFFFFFF) -> int:
+    """Return the kernel/e2fsprogs CRC32C state without a final XOR."""
+    crc = seed
+    for value in data:
+        crc ^= value
+        for _ in range(8):
+            crc = (crc >> 1) ^ (0x82F63B78 if crc & 1 else 0)
+    return crc & 0xFFFFFFFF
 
 
 def _feature_names(mask: int, known: dict[int, str]) -> list[str]:
@@ -302,6 +329,104 @@ def _debugfs(tools: dict[str, str], image: Path, command: str) -> str:
     return output
 
 
+def _journal_superblock_offset(tools: dict[str, str], image: Path) -> int:
+    """Return the byte offset of logical block zero in internal journal inode 8."""
+    output = _debugfs(tools, image, "bmap <8> 0")
+    numbers = re.findall(r"\b(\d+)\b", output)
+    if not numbers:
+        raise Ext4ImageError(f"could not map internal journal inode 8:\n{output.strip()}")
+    return int(numbers[-1]) * BLOCK_BYTES
+
+
+def _parse_journal_superblock(data: bytes | bytearray) -> dict[str, object]:
+    """Validate the exact checksummed JBD2 profile required for writable work."""
+    if len(data) != JOURNAL_SUPERBLOCK_BYTES:
+        _refuse("journal superblock is not exactly 1024 bytes")
+    if _read_u32be(data, 0x00) != JOURNAL_MAGIC:
+        _refuse("bad JBD2 magic")
+    if _read_u32be(data, 0x04) != JOURNAL_SUPERBLOCK_V2:
+        _refuse("JBD2 superblock is not v2")
+    if _read_u32be(data, 0x0C) != BLOCK_BYTES:
+        _refuse("JBD2 block size does not match the ext4 profile")
+    maximum_length = _read_u32be(data, 0x10)
+    start_block = _read_u32be(data, 0x1C)
+    if maximum_length != JOURNAL_BLOCK_COUNT or _read_u32be(data, 0x14) != 1:
+        _refuse("JBD2 ring geometry is invalid")
+    if start_block != 0:
+        _refuse("deterministic fixture journal is not clean")
+    compat = _read_u32be(data, 0x24)
+    incompat = _read_u32be(data, 0x28)
+    ro_compat = _read_u32be(data, 0x2C)
+    if compat != 0 or incompat != JOURNAL_FEATURES or ro_compat != 0:
+        _refuse(
+            "JBD2 feature masks are outside the supported profile: "
+            f"compat=0x{compat:08x}, incompat=0x{incompat:08x}, "
+            f"ro_compat=0x{ro_compat:08x}"
+        )
+    if data[0x50] != JOURNAL_CHECKSUM_TYPE_CRC32C:
+        _refuse(f"JBD2 checksum type {data[0x50]} is not CRC32C")
+    journal_uuid = str(uuid.UUID(bytes=bytes(data[0x30:0x40])))
+    if journal_uuid != FILESYSTEM_UUID:
+        _refuse(f"JBD2 UUID {journal_uuid} does not match the ext4 UUID")
+    stored_checksum = _read_u32be(data, 0xFC)
+    check = bytearray(data)
+    _write_u32be(check, 0xFC, 0)
+    calculated_checksum = _crc32c_raw(check)
+    if stored_checksum != calculated_checksum:
+        _refuse(
+            "JBD2 superblock checksum mismatch: "
+            f"stored=0x{stored_checksum:08x}, calculated=0x{calculated_checksum:08x}"
+        )
+    return {
+        "block_size": _read_u32be(data, 0x0C),
+        "maximum_length": maximum_length,
+        "first_block": _read_u32be(data, 0x14),
+        "sequence": _read_u32be(data, 0x18),
+        "start_block": start_block,
+        "uuid": journal_uuid,
+        "feature_masks": {
+            "compat": f"0x{compat:08x}",
+            "incompat": f"0x{incompat:08x}",
+            "ro_compat": f"0x{ro_compat:08x}",
+        },
+        "checksum_type": "crc32c",
+        "checksum": f"0x{stored_checksum:08x}",
+    }
+
+
+def _upgrade_journal_superblock(image: Path, tools: dict[str, str]) -> None:
+    """Upgrade mke2fs's unmounted clean journal to Sapote's JBD2 profile."""
+    offset = _journal_superblock_offset(tools, image)
+    with image.open("r+b") as stream:
+        stream.seek(offset)
+        data = bytearray(stream.read(JOURNAL_SUPERBLOCK_BYTES))
+        if len(data) != JOURNAL_SUPERBLOCK_BYTES:
+            _refuse("internal journal superblock is truncated")
+        if _read_u32be(data, 0x00) != JOURNAL_MAGIC:
+            _refuse("bad JBD2 magic before profile upgrade")
+        if _read_u32be(data, 0x04) != JOURNAL_SUPERBLOCK_V2:
+            _refuse("JBD2 superblock is not v2 before profile upgrade")
+        if _read_u32be(data, 0x0C) != BLOCK_BYTES or _read_u32be(data, 0x14) != 1:
+            _refuse("JBD2 geometry is invalid before profile upgrade")
+        _write_u32be(data, 0x24, 0)
+        _write_u32be(data, 0x28, JOURNAL_FEATURES)
+        _write_u32be(data, 0x2C, 0)
+        data[0x50] = JOURNAL_CHECKSUM_TYPE_CRC32C
+        _write_u32be(data, 0xFC, 0)
+        _write_u32be(data, 0xFC, _crc32c_raw(data))
+        _parse_journal_superblock(data)
+        stream.seek(offset)
+        stream.write(data)
+
+
+def _inspect_journal_superblock(image: Path, tools: dict[str, str]) -> dict[str, object]:
+    offset = _journal_superblock_offset(tools, image)
+    with image.open("rb") as stream:
+        stream.seek(offset)
+        data = stream.read(JOURNAL_SUPERBLOCK_BYTES)
+    return _parse_journal_superblock(data)
+
+
 def _tool_versions(tools: dict[str, str]) -> dict[str, str]:
     versions: dict[str, str] = {}
     for name, executable in tools.items():
@@ -458,6 +583,10 @@ features = has_journal,extent,huge_file,metadata_csum,metadata_csum_seed,64bit,d
 
     # Fix link counts, refresh metadata checksums, and materialize /indexed's htree.
     _run((tools["e2fsck"], "-f", "-y", "-D", image), accepted=(0, 1))
+    # libext2fs intentionally creates a feature-zero journal superblock and
+    # normally relies on the first Linux mount to upgrade it. The deterministic
+    # fixture is never mounted, so perform that small, checksummed upgrade here.
+    _upgrade_journal_superblock(image, tools)
 
 
 def build_image(output: Path) -> dict[str, object]:
@@ -566,6 +695,7 @@ def inspect_image(image: Path, *, tools: dict[str, str] | None = None) -> dict[s
     report.update(
         {
             "e2fsck_clean": True,
+            "journal": _inspect_journal_superblock(image, tools),
             "e2fsprogs": _tool_versions(tools),
             "fixed_epoch": FIXED_EPOCH,
             "profile": {

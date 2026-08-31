@@ -44,7 +44,11 @@ e2fsprogs fixture produced immediately before the Cargo suite. Clean-ring
 admission additionally requires ext4's incompat-recovery bit to be clear; a
 zero JBD2 `s_start` is not treated as authoritative on its own. Superblock
 admission reports header, feature, checksum-type, and checksum failures
-separately so a real image is never weakened to fit an opaque refusal.
+separately so a real image is never weakened to fit an opaque refusal. The
+unmounted fixture explicitly upgrades libext2fs's initial feature-zero journal
+to the same revoke/64-bit/checksum-v3 profile that Sapote admits, then verifies
+the clean start, UUID, geometry, feature masks, checksum type, and CRC32C before
+the Rust handoff.
 
 `recover_committed_ring` scans Sapote's bounded single-descriptor transaction
 profile from the validated live start across at most one wrap. It validates
