@@ -21,6 +21,20 @@
 #define TEST_DN_BYTES 256U
 #define TEST_RSA_BYTES 512U
 
+/* The host adapter intentionally uses the kernel ABI declarations from
+ * include/ while host libc remains ahead of the freestanding SDK headers.
+ * Declare the SDK transport entry points that this translation unit mocks. */
+long sapote_dns_resolve(const char *hostname, uint64_t deadline_ns);
+long sapote_stream_open(void);
+long sapote_stream_connect(sapote_handle_t stream,
+    const struct sapote_ipv4_endpoint *endpoint, uint64_t deadline_ns);
+long sapote_stream_read(sapote_handle_t stream, void *buffer, size_t length,
+    uint64_t deadline_ns);
+long sapote_stream_write(sapote_handle_t stream, const void *buffer,
+    size_t length, uint64_t deadline_ns);
+long sapote_stream_shutdown(sapote_handle_t stream, uint32_t flags,
+    uint64_t deadline_ns);
+
 static uint16_t peer_port;
 
 static uint64_t host_now_ns(void)
