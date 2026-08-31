@@ -2,7 +2,18 @@
 #ifndef SAPOTE_USER_TLS_H
 #define SAPOTE_USER_TLS_H
 
+/* BearSSL 0.6 deliberately leaves BR_DOXYGEN_IGNORE undefined while using it
+ * in two #if expressions.  Isolate that exact upstream -Wundef diagnostic so
+ * Sapote applications can include this public header under -Werror without
+ * changing BearSSL's many #ifndef BR_DOXYGEN_IGNORE declarations. */
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wundef"
+#endif
 #include <bearssl.h>
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 #include <stddef.h>
 #include <stdint.h>
 
