@@ -124,6 +124,13 @@ Python/Rust parsers revalidate the result. The fixture verifier pins the clean
 start, 4 MiB journal length, UUID match, feature masks, checksum type, and
 stored checksum.
 
+The production Rust mount path performs the same journal-inode discovery and
+JBD2 admission before exposing the filesystem to VFS. A clean filesystem must
+map into a complete clean ring; a filesystem carrying ext4's recovery bit is
+admitted only after ext4plus has validated and installed its read overlay, and
+still has to pass Sapote's bounded journal map and superblock profile. This is
+runtime hostile-input enforcement, not writable-backend admission.
+
 `recover_committed_ring` implements the bounded live-ring reader for Sapote's
 single-descriptor transaction profile. It starts at the admitted JBD2 sequence
 and live block, follows consecutive committed records across one wrap, validates

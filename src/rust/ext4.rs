@@ -9,7 +9,9 @@ use core::error::Error;
 use core::fmt::{self, Display, Formatter};
 use ext4plus::error::Ext4Error;
 use ext4plus::path::Path;
-use ext4plus::{Ext4, Ext4Read, FileType, FollowSymlinks};
+use ext4plus::{
+    Ext4, Ext4Read, FileType, FollowSymlinks, JournalInodeMapError, load_journal_inode_map,
+};
 
 const SUPERBLOCK_BYTES: usize = 1024;
 const SUPERBLOCK_START: u64 = 1024;
@@ -205,6 +207,15 @@ fn map_error(error: Ext4Error) -> Status {
     }
 }
 
+fn map_journal_error(error: JournalInodeMapError) -> Status {
+    match error {
+        JournalInodeMapError::Filesystem(error) => map_error(error),
+        JournalInodeMapError::MissingJournal | JournalInodeMapError::Transaction(_) => {
+            Status::Invalid
+        }
+    }
+}
+
 fn validate_xattrs(filesystem: &Ext4, path: &[u8]) -> Result<(), Status> {
     let xattrs = filesystem.list_xattrs(path).map_err(map_error)?;
     for name in xattrs {
@@ -276,6 +287,10 @@ fn validate_namespace(filesystem: &Ext4) -> Result<(), Status> {
 pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, Identity), Status> {
     validate_profile(context, media_bytes)?;
     let filesystem = Ext4::load(Box::new(SapoteReader { context })).map_err(map_error)?;
+    let journal = load_journal_inode_map(&filesystem).map_err(map_journal_error)?;
+    if !journal.filesystem_needs_recovery() {
+        let _clean_ring = journal.into_clean_ring().map_err(|_| Status::Invalid)?;
+    }
     validate_namespace(&filesystem)?;
     let identity = Identity {
         label: *filesystem.label().as_bytes(),
