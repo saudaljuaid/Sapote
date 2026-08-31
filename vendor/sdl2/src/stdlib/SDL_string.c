@@ -235,15 +235,17 @@ static size_t SDL_ScanLongLong(const char *text, int count, int radix, Sint64 *v
 static size_t SDL_ScanUnsignedLongLong(const char *text, int count, int radix, Uint64 *valuep)
 {
     const unsigned long long ullong_max = ~0ULL;
+    unsigned long long value;
     SDL_bool negative;
-    size_t len = SDL_ScanUnsignedLongLongInternal(text, count, radix, valuep, &negative);
+    size_t len = SDL_ScanUnsignedLongLongInternal(text, count, radix, &value, &negative);
     if (negative) {
-        if (*valuep == 0) {
-            *valuep = ullong_max;
+        if (value == 0) {
+            value = ullong_max;
         } else {
-            *valuep = 0ULL - *valuep;
+            value = 0ULL - value;
         }
     }
+    *valuep = (Uint64)value;
     return len;
 }
 #endif
