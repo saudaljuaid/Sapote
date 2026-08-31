@@ -411,12 +411,12 @@ static int compare_semver(const struct semver *left, const struct semver *right)
     size_t left_cursor = 0U;
     size_t right_cursor = 0U;
     for (;;) {
-        const uint8_t *left_part;
-        const uint8_t *right_part;
-        size_t left_length;
-        size_t right_length;
-        bool left_numeric;
-        bool right_numeric;
+        const uint8_t *left_part = NULL;
+        const uint8_t *right_part = NULL;
+        size_t left_length = 0U;
+        size_t right_length = 0U;
+        bool left_numeric = false;
+        bool right_numeric = false;
         bool has_left = prerelease_part(&*left, &left_cursor, &left_part,
             &left_length, &left_numeric);
         bool has_right = prerelease_part(&*right, &right_cursor, &right_part,
@@ -449,8 +449,8 @@ static int compare_semver_text(
     const struct package_manager_text *right
 )
 {
-    struct semver left_value;
-    struct semver right_value;
+    struct semver left_value = { 0 };
+    struct semver right_value = { 0 };
     if (!semantic_version(left->bytes, left->length, &left_value) ||
         !semantic_version(right->bytes, right->length, &right_value)) {
         return 0;
@@ -494,7 +494,7 @@ static bool version_satisfies(
     const struct package_manager_text *constraint
 )
 {
-    struct semver version;
+    struct semver version = { 0 };
     size_t cursor = 0U;
     if (!semantic_version(version_text->bytes, version_text->length, &version)) {
         return false;
@@ -506,7 +506,7 @@ static bool version_satisfies(
         uint8_t operation = constraint->bytes[cursor++];
         bool equals = false;
         size_t start;
-        struct semver required;
+        struct semver required = { 0 };
         int comparison;
         if ((operation == (uint8_t)'>' || operation == (uint8_t)'<') &&
             cursor < constraint->length && constraint->bytes[cursor] == (uint8_t)'=') {
@@ -1225,21 +1225,33 @@ static enum package_manager_status selected_conflict(const struct solver *solver
 {
     for (uint32_t source_index = 0U; source_index < solver->selected_count;
         ++source_index) {
-        struct package_manager_catalog_entry source;
-        (void)package_manager_repository_entry(solver->repository,
-            solver->selected[source_index], &source);
+        struct package_manager_catalog_entry source = { 0 };
+
+        if (package_manager_repository_entry(solver->repository,
+                solver->selected[source_index], &source) !=
+                PACKAGE_MANAGER_STATUS_OK) {
+            return PACKAGE_MANAGER_STATUS_STATE;
+        }
         for (uint32_t conflict_index = 0U;
             conflict_index < source.conflict_count; ++conflict_index) {
-            struct package_manager_text conflict_id;
-            struct package_manager_text constraint;
-            (void)relation_at(solver->repository, source.conflict_start + conflict_index,
-                false, &conflict_id, &constraint);
+            struct package_manager_text conflict_id = { NULL, 0U };
+            struct package_manager_text constraint = { NULL, 0U };
+
+            if (relation_at(solver->repository,
+                    source.conflict_start + conflict_index, false,
+                    &conflict_id, &constraint) != PACKAGE_MANAGER_STATUS_OK) {
+                return PACKAGE_MANAGER_STATUS_STATE;
+            }
             for (uint32_t target_index = 0U;
                 target_index < solver->selected_count; ++target_index) {
-                struct package_manager_catalog_entry target;
-                struct package_manager_text provided_version;
-                (void)package_manager_repository_entry(solver->repository,
-                    solver->selected[target_index], &target);
+                struct package_manager_catalog_entry target = { 0 };
+                struct package_manager_text provided_version = { NULL, 0U };
+
+                if (package_manager_repository_entry(solver->repository,
+                        solver->selected[target_index], &target) !=
+                        PACKAGE_MANAGER_STATUS_OK) {
+                    return PACKAGE_MANAGER_STATUS_STATE;
+                }
                 if (entry_provides(solver->repository, &target, &conflict_id,
                     &provided_version) && version_satisfies(&provided_version,
                         &constraint)) {
