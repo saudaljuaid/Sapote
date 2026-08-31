@@ -34,6 +34,13 @@ pthread/TLS/futex support, Redwood surfaces/input, and typed networking
 wrappers. Familiar names are a source-porting layer; the kernel remains the
 Sapote ABI rather than a Linux personality.
 
+Time APIs keep elapsed and civil time separate. `clock()` and
+`CLOCK_MONOTONIC` use boot-relative monotonic nanoseconds; `time()` and
+`CLOCK_REALTIME` use validated RTC UTC with one-second resolution. `gmtime_r`
+and `localtime_r` support Unix seconds from 1970 through 9999, with local time
+defined as UTC until a timezone database exists. See
+[`WALL_CLOCK.md`](WALL_CLOCK.md).
+
 `make native-apps` builds the C proof, Lua, SQLite, Canvas, the native network
 client, and the Rust proof entirely from checked-in inputs. The Lua and SQLite
 scripts extract their pinned archives into disposable build directories and do

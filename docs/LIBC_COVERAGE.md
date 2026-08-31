@@ -13,7 +13,7 @@ musl, or glibc implementation.
 | Conversion | integer conversions, `qsort`, `bsearch`, deterministic abort/exit paths | No wide-character conversion. |
 | Formatted I/O | buffered `FILE`, stdin/stdout/stderr, `printf`/`fprintf`/`snprintf`, character/line/block I/O, seek/tell/flush | Formatting is the documented SDK subset; no locale formatting. |
 | Files | `open`-style flags through `fopen`, read/write/seek/stat, remove/rename, mkdir, directory enumeration, truncate, sync and free-space native calls | FAT32 ASCII 8.3 paths, 16 MiB files, application-rooted Data. |
-| Time | monotonic `clock_gettime`, `time`, `nanosleep`, native absolute sleep | No civil-time database or time zones. |
+| Time | realtime and monotonic `clock_gettime`, `time`, `gmtime[_r]`, UTC `localtime[_r]`, `nanosleep`, native absolute sleep | RTC resolution is one second; no timezone database, pre-1970 conversion, or anti-rollback policy. `strftime` and `mktime` remain unsupported. |
 | Events | native multi-handle wait, timer create/set/cancel, explicit timeout results | At most eight wait items; supported readiness is defined per typed handle. |
 | Threads | `pthread_create/join/exit/self/equal`, attributes, mutex, once, local-exec `_Thread_local` | One process, single core, at most eight threads; no cancellation API or condition variables yet. |
 | Math | scalar functions required by Lua/SQLite and compiler support | Userspace x87/SSE is preserved; kernel code never uses it. Coverage is not a full libm claim. |

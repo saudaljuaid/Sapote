@@ -13,7 +13,7 @@ must first provide:
 
 - a cryptographically strong, continuously health-checked entropy source and
   DRBG with explicit failure behavior;
-- trustworthy calendar time, including rollback handling;
+- the available validated RTC calendar time plus a policy for rollback;
 - a checksum-pinned root store with a documented update/revocation process;
 - strict DNS-name/SAN matching, SNI, certificate-chain limits, signature and
   key-size policy, expiry checks, unknown-critical-extension refusal, and test

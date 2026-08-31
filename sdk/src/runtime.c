@@ -285,6 +285,11 @@ uint64_t sapote_monotonic_ns(void)
     return (uint64_t)result;
 }
 
+long sapote_realtime_seconds(void)
+{
+    return sapote_syscall0(SAPOTE_SYS_TIME_REALTIME);
+}
+
 long sapote_sleep_until(uint64_t deadline_ns)
 {
     return sapote_syscall1(SAPOTE_SYS_SLEEP_UNTIL, deadline_ns);

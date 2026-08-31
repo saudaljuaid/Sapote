@@ -46,6 +46,7 @@
 #include <sapote/thread.h>
 #include <sapote/timer.h>
 #include <sapote/tsc.h>
+#include <sapote/wall_clock.h>
 #include <sapote/boot_stages.h>
 
 /*
@@ -564,6 +565,37 @@ void prove_monotonic_time(void)
     if (clock_get_state().backward_steps != 0U) {
         console_panic("monotonic clock had to repair a backwards reading");
     }
+}
+
+void prove_wall_clock(void)
+{
+    struct wall_clock_utc utc;
+    int64_t epoch_seconds;
+    enum wall_clock_status status = wall_clock_read_utc(&utc);
+
+    if (status != WALL_CLOCK_STATUS_OK) {
+        console_panic(wall_clock_status_string(status));
+    }
+    status = wall_clock_utc_to_unix(&utc, &epoch_seconds);
+    if (status != WALL_CLOCK_STATUS_OK) {
+        console_panic(wall_clock_status_string(status));
+    }
+
+    console_write("Sapote: RTC UTC ");
+    console_write_u64(utc.year);
+    console_putc('-');
+    if (utc.month < 10U) {
+        console_putc('0');
+    }
+    console_write_u64(utc.month);
+    console_putc('-');
+    if (utc.day < 10U) {
+        console_putc('0');
+    }
+    console_write_u64(utc.day);
+    console_write(" epoch ");
+    console_write_u64((uint64_t)epoch_seconds);
+    console_putc('\n');
 }
 
 /*

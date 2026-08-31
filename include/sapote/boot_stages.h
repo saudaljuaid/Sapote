@@ -78,6 +78,7 @@ void prove_tsc(void);
 void retire_pit(void);
 void prove_clocks_without_pit(void);
 void prove_monotonic_time(void);
+void prove_wall_clock(void);
 
 /*
  * The configuration window is passed in rather than read from a file-scope

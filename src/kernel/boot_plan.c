@@ -61,6 +61,7 @@
 #include <sapote/timer.h>
 #include <sapote/tsc.h>
 #include <sapote/ui.h>
+#include <sapote/wall_clock.h>
 #include <sapote/ui_font.h>
 #include <sapote/xhci.h>
 
@@ -319,6 +320,8 @@ static void execute_pure_self_tests(
         failure = "ACPI PM timer arithmetic self-test failed";
     } else if (!clock_self_test()) {
         failure = "monotonic clock self-test failed";
+    } else if (!wall_clock_self_test()) {
+        failure = "wall clock conversion self-test failed";
     } else if (!timer_self_test()) {
         failure = "deadline timer table self-test failed";
     } else if (!paging_self_test()) {
@@ -800,6 +803,7 @@ static void execute_timer_calibration(
     retire_pit();
     prove_clocks_without_pit();
     prove_monotonic_time();
+    prove_wall_clock();
     boot_stage_result_succeed(descriptor, result);
 }
 

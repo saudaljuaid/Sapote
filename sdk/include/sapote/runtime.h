@@ -63,6 +63,7 @@ long sapote_path_truncate(uint16_t volume, const char *path, uint64_t length);
 long sapote_volume_sync(uint16_t volume);
 long sapote_volume_space(uint16_t volume, struct sapote_volume_space *space);
 uint64_t sapote_monotonic_ns(void);
+long sapote_realtime_seconds(void);
 long sapote_sleep_until(uint64_t deadline_ns);
 long sapote_random(void *buffer, size_t length);
 

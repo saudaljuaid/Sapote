@@ -34,7 +34,7 @@ foreign-process, immutable executable, or read-only output mapping.
 | `0x0000` | ABI version, exit, console read/write, handle close/duplicate | Writes are immediate. Console read parks the thread until keyboard input. Close consumes one handle immediately; duplicate creates another reference to the same typed object. |
 | `0x0100` | anonymous map and unmap | Synchronous. Maps are private, page-granular, RW/NX or R/NX, optionally guarded, and charged to the manifest limit. Successful unmap consumes the complete named mapping. |
 | `0x0200` | file, directory, path mutation, stat, seek, sync, free space | Synchronous bounded FAT32 operations. Open calls return owned typed handles. Reads and writes may return a documented partial byte count; metadata mutations either publish a valid result or fail. |
-| `0x0300` | monotonic time, sleep, wait, entropy, timers, cancellation | Sleep and wait park only the calling native thread. Wait copies at most eight items into the kernel and copies the full set back on completion. Timeout is `-ETIMEDOUT`; cancellation is `-ECANCELED`. |
+| `0x0300` | monotonic/realtime clocks, sleep, wait, entropy, timers, cancellation | Realtime is UTC Unix seconds. Sleep, wait, and every deadline remain monotonic. Sleep and wait park only the calling native thread. Wait copies at most eight items into the kernel and copies the full set back on completion. Timeout is `-ETIMEDOUT`; cancellation is `-ECANCELED`. |
 | `0x0400` | window creation, surface present, event read, pointer capture | Window creation returns owned window and event-queue handles plus one process-local RW/NX surface mapping. Present consumes no ownership. Event read is nonblocking; wait on the queue before retrying. |
 | `0x0500` | DNS, TCP, UDP, address query | Open calls return owned stream/datagram handles. Deadlines are absolute monotonic nanoseconds. Shutdown changes stream direction state but does not close the handle. |
 | `0x0600` | thread create/exit/join, FS-base TLS, futex wait/wake | Create returns an owned thread handle. Join parks and reports the target exit status; the handle is still closed explicitly. Futex wait compares one aligned user `u32` before parking. |
@@ -96,6 +96,7 @@ is immutable; writable Data paths are rooted below the application namespace.
 | `0x0304 TIMER_CREATE()` | Owned timer handle | I | Creates an initially disarmed typed wait object. Close explicitly or at process exit. |
 | `0x0305 TIMER_SET(*request)` | `0` | I | Replaces the timer's absolute deadline. The timer remains owned and reusable; setting does not transfer it to a waiter. |
 | `0x0306 CANCEL(handle)` | `0` | K | Disarms a timer or sets cancellation on a stream/datagram object. It neither closes nor consumes the handle; unsupported handle types fail. |
+| `0x0307 TIME_REALTIME()` | UTC Unix seconds or `-EIO` | K | Performs one bounded coherent CMOS/RTC read. It owns no object. RTC validity does not affect monotonic deadlines. |
 
 ### Redwood window, surface, and input
 

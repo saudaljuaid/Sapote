@@ -24,6 +24,7 @@
 #include <sapote/timer.h>
 #include <sapote/tsc.h>
 #include <sapote/ui.h>
+#include <sapote/wall_clock.h>
 
 #define IA32_FS_BASE UINT32_C(0xC0000100)
 #define NATIVE_MAIN_STACK_GUARD PAGING_NATIVE_STACK_BASE
@@ -2302,6 +2303,17 @@ static int64_t syscall_random(
     return (int64_t)completed;
 }
 
+static int64_t syscall_time_realtime(const struct native_process *process)
+{
+    int64_t seconds;
+
+    if ((process->manifest.capabilities & SAPOTE_CAP_TIME) == 0U) {
+        return -SAPOTE_EACCES;
+    }
+    return wall_clock_read_unix_seconds(&seconds) == WALL_CLOCK_STATUS_OK ?
+        seconds : -SAPOTE_EIO;
+}
+
 static int64_t syscall_timer_create(struct native_process *process)
 {
     struct native_resource resource = {{0U, 0U, 0U, 0U}};
@@ -3625,6 +3637,8 @@ static int64_t dispatch_syscall(
     case SAPOTE_SYS_TIME_MONOTONIC:
         return (process->manifest.capabilities & SAPOTE_CAP_TIME) != 0U ?
             (int64_t)clock_monotonic_ns() : -SAPOTE_EACCES;
+    case SAPOTE_SYS_TIME_REALTIME:
+        return syscall_time_realtime(process);
     case SAPOTE_SYS_SLEEP_UNTIL:
         return syscall_sleep_until(process, frame->rdi);
     case SAPOTE_SYS_WAIT:

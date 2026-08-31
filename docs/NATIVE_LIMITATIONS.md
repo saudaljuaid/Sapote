@@ -20,6 +20,8 @@ profile:
   addresses;
 - a scoped C runtime and Rust `no_std` crate, not complete libc, full libm,
   POSIX sockets, C++ runtime, or Rust `std` support;
+- CMOS UTC has one-second resolution, a 1970-through-9999 range, no timezone
+  database, and no persistent anti-rollback policy;
 - HD Audio control-plane communication remains kernel-only and does not yet
   provide native sample streaming.
 

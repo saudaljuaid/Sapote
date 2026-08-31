@@ -51,6 +51,9 @@ vectors support MSI-X devices.
 The ACPI PM timer is the independent clock reference. The APIC timer drives
 preemption, the TSC supplies a second calibrated counter, and `clock.c` exposes
 one monotonic time source. `timer.c` builds bounded deadlines on it.
+`wall_clock.c` separately reads coherent, validated UTC from the CMOS/RTC for
+calendar-time consumers. Wall time is never used for deadlines; see
+[`WALL_CLOCK.md`](WALL_CLOCK.md).
 
 `thread.c` provides guarded kernel stacks, a small scheduler, and preemption.
 Sapote remains single-core.
