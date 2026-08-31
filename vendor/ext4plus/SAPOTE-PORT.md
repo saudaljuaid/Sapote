@@ -40,10 +40,21 @@ the admitted superblock does not advertise block revocations.
 checked inode and extent/block-map iterator, bounds the complete physical map,
 reads logical block zero without the replay overlay, and requires its length to
 agree with the JBD2 superblock. The public test consumes the real deterministic
-e2fsprogs fixture produced immediately before the Cargo suite.
+e2fsprogs fixture produced immediately before the Cargo suite. Clean-ring
+admission additionally requires ext4's incompat-recovery bit to be clear; a
+zero JBD2 `s_start` is not treated as authoritative on its own. Superblock
+admission reports header, feature, checksum-type, and checksum failures
+separately so a real image is never weakened to fit an opaque refusal.
 
-This planner does not issue superblock writes, recover a non-empty ring
-head/tail, bind a barrier to platform I/O,
+`recover_committed_ring` scans Sapote's bounded single-descriptor transaction
+profile from the validated live start across at most one wrap. It validates
+every record, discards an uncommitted tail, applies later revocations to older
+pending images, and returns a collapsed checkpoint set plus the checksummed
+clean superblock state. The ext4 recovery bit must agree with the JBD2 state;
+ambiguous or inconsistent combinations are refused.
+
+This planner does not issue home or superblock writes, bind a barrier to
+platform I/O,
 or redirect ext4 mutation methods away from their upstream home-block writes.
 Those gaps keep the Sapote backend read-only.
 

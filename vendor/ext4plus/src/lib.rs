@@ -187,9 +187,9 @@ pub use journal::transaction::{
     JOURNAL_TRANSACTION_MAX_REVOKED_BLOCKS,
     JournalBlockImage, JournalCommitOperation, JournalFlush, JournalRecordKind,
     JournalInodeMap, JournalInodeMapError, JournalPreparedTransaction,
-    JournalRing, JournalSuperblockImage, JournalTransaction,
+    JournalRecovery, JournalRing, JournalSuperblockImage, JournalTransaction,
     JournalTransactionError, load_journal_inode_map,
-    replay_committed_transaction,
+    recover_committed_ring, replay_committed_transaction,
 };
 pub use label::Label;
 pub use mem_io_error::MemIoError;

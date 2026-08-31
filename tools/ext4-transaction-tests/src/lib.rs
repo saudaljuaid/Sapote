@@ -2,9 +2,10 @@
 #![cfg(test)]
 
 use ext4plus::{
-    Ext4, JOURNAL_BLOCK_BYTES, JournalCommitOperation, JournalFlush, JournalRecordKind,
-    JournalRing, JournalSuperblockImage, JournalTransaction, JournalTransactionError,
-    load_journal_inode_map, replay_committed_transaction,
+    Ext4, JOURNAL_BLOCK_BYTES, JournalCommitOperation, JournalFlush, JournalPreparedTransaction,
+    JournalRecordKind, JournalRing, JournalSuperblockImage, JournalTransaction,
+    JournalTransactionError, load_journal_inode_map, recover_committed_ring,
+    replay_committed_transaction,
 };
 use std::collections::BTreeMap;
 
@@ -32,6 +33,27 @@ fn journal_images(operations: &[JournalCommitOperation]) -> Vec<Vec<u8>> {
             _ => None,
         })
         .collect()
+}
+
+fn install_journal_writes(
+    logical_slots: &[u64],
+    storage: &mut [Vec<u8>],
+    prepared: &JournalPreparedTransaction,
+) {
+    for operation in prepared.operations() {
+        if let JournalCommitOperation::WriteJournal {
+            journal_block,
+            bytes,
+            ..
+        } = operation
+        {
+            let index = logical_slots
+                .iter()
+                .position(|slot| slot == journal_block)
+                .unwrap();
+            storage[index] = bytes.clone();
+        }
+    }
 }
 
 #[test]
@@ -241,12 +263,44 @@ fn superblock_images_admit_only_a_complete_clean_inode_map() {
     assert_eq!(clean.sequence(), 71);
     assert_eq!(clean.start_block(), 0);
 
-    let mut corrupt = Vec::from(clean.bytes());
-    corrupt[128] ^= 0x80;
+    let mut malformed = Vec::from(clean.bytes());
+    malformed[0] = 0;
     assert_eq!(
-        JournalSuperblockImage::from_bytes(&corrupt),
-        Err(JournalTransactionError::CorruptSuperblock)
+        JournalSuperblockImage::from_bytes(&malformed),
+        Err(JournalTransactionError::CorruptSuperblockMagic)
     );
+    malformed = Vec::from(clean.bytes());
+    malformed[7] = 3;
+    assert_eq!(
+        JournalSuperblockImage::from_bytes(&malformed),
+        Err(JournalTransactionError::UnsupportedSuperblockType(3))
+    );
+    malformed = Vec::from(clean.bytes());
+    malformed[0x2b] &= !0x10;
+    assert_eq!(
+        JournalSuperblockImage::from_bytes(&malformed),
+        Err(JournalTransactionError::MissingSuperblockFeatures(0x10))
+    );
+    malformed = Vec::from(clean.bytes());
+    malformed[0x2b] |= 0x20;
+    assert_eq!(
+        JournalSuperblockImage::from_bytes(&malformed),
+        Err(JournalTransactionError::UnsupportedSuperblockFeatures(0x20))
+    );
+    malformed = Vec::from(clean.bytes());
+    malformed[0x50] = 1;
+    assert_eq!(
+        JournalSuperblockImage::from_bytes(&malformed),
+        Err(JournalTransactionError::UnsupportedSuperblockChecksumType(
+            1
+        ))
+    );
+    malformed = Vec::from(clean.bytes());
+    malformed[128] ^= 0x80;
+    assert!(matches!(
+        JournalSuperblockImage::from_bytes(&malformed),
+        Err(JournalTransactionError::CorruptSuperblockChecksum { .. })
+    ));
     assert_eq!(
         clean.with_state(71, 9),
         Err(JournalTransactionError::RingGeometry)
@@ -276,6 +330,7 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
     let filesystem = Ext4::load(Box::new(bytes)).unwrap();
     let journal = load_journal_inode_map(&filesystem).unwrap();
     assert_eq!(journal.superblock().start_block(), 0);
+    assert!(!journal.filesystem_needs_recovery());
     assert_eq!(
         usize::try_from(journal.superblock().maximum_length()).unwrap(),
         journal.physical_blocks().len()
@@ -294,6 +349,93 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
         .unwrap();
     let prepared = ring.prepare(&transaction).unwrap();
     assert_eq!(prepared.journal_blocks(), &physical[1..4]);
+}
+
+#[test]
+fn dirty_ring_recovery_wraps_replays_revokes_and_discards_an_uncommitted_tail() {
+    let physical = [3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008];
+    let logical_slots = &physical[1..];
+    let superblock = JournalSuperblockImage::new_clean(80, UUID, 9).unwrap();
+    let mut ring = superblock.map_clean_ring(MAXIMUM_BLOCK, &physical).unwrap();
+
+    let mut advance_three = ring.begin_transaction().unwrap();
+    advance_three.stage_metadata(10, &filled(1)).unwrap();
+    let advance_three = ring.prepare(&advance_three).unwrap();
+    ring.mark_commit_durable(advance_three.ticket()).unwrap();
+    ring.checkpoint_durable(advance_three.ticket()).unwrap();
+
+    let mut advance_four = ring.begin_transaction().unwrap();
+    advance_four.stage_metadata(11, &filled(2)).unwrap();
+    advance_four.stage_metadata(12, &filled(3)).unwrap();
+    let advance_four = ring.prepare(&advance_four).unwrap();
+    ring.mark_commit_durable(advance_four.ticket()).unwrap();
+    ring.checkpoint_durable(advance_four.ticket()).unwrap();
+
+    let mut first_live = ring.begin_transaction().unwrap();
+    first_live.stage_metadata(100, &filled(0x44)).unwrap();
+    let first_live = ring.prepare(&first_live).unwrap();
+    assert_eq!(first_live.journal_blocks(), &[3008, 3001, 3002]);
+    ring.mark_commit_durable(first_live.ticket()).unwrap();
+
+    let mut second_live = ring.begin_transaction().unwrap();
+    second_live.stage_metadata(101, &filled(0x55)).unwrap();
+    second_live.stage_revocation(100).unwrap();
+    let second_live = ring.prepare(&second_live).unwrap();
+    assert_eq!(second_live.journal_blocks(), &[3003, 3004, 3005, 3006]);
+    ring.mark_commit_durable(second_live.ticket()).unwrap();
+
+    let mut storage = vec![filled(0); logical_slots.len()];
+    install_journal_writes(logical_slots, &mut storage, &first_live);
+    install_journal_writes(logical_slots, &mut storage, &second_live);
+    let dirty = superblock.with_state(82, 8).unwrap();
+    let references: Vec<&[u8]> = storage.iter().map(Vec::as_slice).collect();
+    let recovered = recover_committed_ring(&dirty, true, MAXIMUM_BLOCK, &references).unwrap();
+    assert_eq!(recovered.committed_transactions(), 2);
+    assert_eq!(recovered.consumed_slots(), 7);
+    assert_eq!(recovered.clean_superblock().sequence(), 84);
+    assert_eq!(recovered.clean_superblock().start_block(), 0);
+    assert_eq!(recovered.replay_images().len(), 1);
+    assert_eq!(recovered.replay_images()[0].block_index(), 101);
+    assert_eq!(recovered.replay_images()[0].bytes(), filled(0x55));
+
+    let mut uncommitted = JournalTransaction::new(84, UUID, MAXIMUM_BLOCK).unwrap();
+    uncommitted.stage_metadata(102, &filled(0x66)).unwrap();
+    let uncommitted = uncommitted
+        .commit_plan(&[logical_slots[6], logical_slots[7], logical_slots[0]])
+        .unwrap();
+    let descriptor = uncommitted
+        .iter()
+        .find_map(|operation| match operation {
+            JournalCommitOperation::WriteJournal {
+                kind: JournalRecordKind::Descriptor,
+                bytes,
+                ..
+            } => Some(bytes.clone()),
+            _ => None,
+        })
+        .unwrap();
+    storage[6] = descriptor;
+    let references: Vec<&[u8]> = storage.iter().map(Vec::as_slice).collect();
+    let recovered = recover_committed_ring(&dirty, true, MAXIMUM_BLOCK, &references).unwrap();
+    assert_eq!(recovered.committed_transactions(), 2);
+    assert_eq!(recovered.consumed_slots(), 7);
+
+    storage[5][128] ^= 0x80;
+    let references: Vec<&[u8]> = storage.iter().map(Vec::as_slice).collect();
+    assert_eq!(
+        recover_committed_ring(&dirty, true, MAXIMUM_BLOCK, &references),
+        Err(JournalTransactionError::CorruptCommit)
+    );
+
+    let clean = superblock.with_state(84, 0).unwrap();
+    assert_eq!(
+        recover_committed_ring(&clean, true, MAXIMUM_BLOCK, &references),
+        Err(JournalTransactionError::RecoveryStateMismatch)
+    );
+    assert_eq!(
+        recover_committed_ring(&dirty, false, MAXIMUM_BLOCK, &references),
+        Err(JournalTransactionError::RecoveryStateMismatch)
+    );
 }
 
 #[test]
@@ -324,5 +466,18 @@ fn hostile_geometry_duplicates_escape_and_slot_overlap_are_refused() {
     assert_eq!(
         ring.prepare(&transaction),
         Err(JournalTransactionError::RevocationsUnsupported)
+    );
+    assert_eq!(
+        JournalRing::new_clean(9, UUID, MAXIMUM_BLOCK, true, &[0, 101, 102]),
+        Err(JournalTransactionError::RingGeometry)
+    );
+
+    let mut exhausted =
+        JournalRing::new_clean(u32::MAX - 1, UUID, MAXIMUM_BLOCK, true, &[100, 101, 102]).unwrap();
+    let mut final_sequence = exhausted.begin_transaction().unwrap();
+    final_sequence.stage_metadata(2, &filled(2)).unwrap();
+    assert_eq!(
+        exhausted.prepare(&final_sequence),
+        Err(JournalTransactionError::SequenceOverflow)
     );
 }

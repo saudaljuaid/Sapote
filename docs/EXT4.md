@@ -101,12 +101,14 @@ replay suppression.
 `JournalSuperblockImage` closes the next hostile-input boundary. It validates
 the exact 1,024-byte JBD2 v2 superblock header, checksum-v3/64-bit feature set,
 CRC32C checksum, 4 KiB block size, sequence, clean/live start, and a bounded
-logical journal length. Deterministic tooling can build the canonical clean
-image or derive checksummed clean/live sequence-and-start images without
-changing other admitted bytes. Clean admission requires a complete, distinct,
-in-range physical map of the journal inode (including its superblock), and the
-mapped ring refuses home metadata that aliases that superblock or revoke records
-when the corresponding incompatible-feature bit is absent.
+logical journal length. Header, feature, checksum-type, and stored/calculated
+checksum refusals remain distinct at the public boundary. Deterministic tooling
+can build the canonical clean image or derive checksummed clean/live
+sequence-and-start images without changing other admitted bytes. Clean
+admission requires a complete, distinct, in-range physical map of the journal
+inode (including its superblock), and the mapped ring refuses home metadata
+that aliases that superblock or revoke records when the corresponding
+incompatible-feature bit is absent.
 
 `load_journal_inode_map` now follows the admitted ext4 journal inode through the
 same bounded extent/block-map iterator used by ext4plus, refuses holes,
@@ -114,6 +116,18 @@ duplicates, truncation, excess blocks, and superblock-length disagreement, and
 reads logical block zero without consulting the replay overlay. The public host
 suite passes the deterministic e2fsprogs image from the Python profile test into
 Rust and proves that its real journal inode maps into the clean ring.
+
+`recover_committed_ring` implements the bounded live-ring reader for Sapote's
+single-descriptor transaction profile. It starts at the admitted JBD2 sequence
+and live block, follows consecutive committed records across one wrap, validates
+every descriptor, data tag, optional revoke, and commit checksum, discards an
+uncommitted tail, and collapses later images and revocations into the final
+checkpoint set. A corrupt record that claims the expected transaction is
+refused. Recovery also requires the caller to provide ext4's incompat-recovery
+feature state: Sapote will not infer cleanliness from a zero JBD2 `s_start`,
+because that field alone is not authoritative. Tests cover wrap, cross-
+transaction revocation, an uncommitted tail, a corrupt committed record, and
+ext4/JBD2 state disagreement.
 
 The caller must supply a distinct physical journal block for the descriptor,
 each metadata image, and the commit. The resulting operation list has one legal
@@ -143,11 +157,11 @@ only the committed Cargo source mirror.
 
 Sapote's NVMe layer already exposes the required `nvme_volume_flush()` fence,
 but the ext4 backend deliberately does not bind the plan to it yet. The ring
-planner operates only on an already-admitted clean journal. It can validate a
-discovered journal-inode map and construct superblock state images, but it does
-not recover a non-empty head/tail or issue the state writes. The remaining work
-is not a small wrapper: it needs live-ring
-recovery, binding operations and barriers to the platform writer,
+planner can validate a discovered journal-inode map, construct superblock state
+images, and derive the replay/checkpoint set for its bounded live-ring profile,
+but it does not issue the home or superblock writes. The remaining work is not
+a small wrapper: it needs binding recovery, operations, and barriers to the
+platform writer,
 redirecting ext4plus mutations away from immediate home writes, allocation
 rollback, a writable Rust/C volume lease, VFS-level mutation/handle coherency,
 and power-cut QEMU coverage. Until all of those are integrated,

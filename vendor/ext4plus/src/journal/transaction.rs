@@ -10,11 +10,11 @@
 //!
 //! This module deliberately stops below ext4 namespace mutation. It provides
 //! checked descriptor/data/revoke/commit serialization, explicit durability
-//! barriers, replay validation for one transaction, discovery of the internal
-//! journal inode, and allocation within a clean-journal ring. It does not
-//! recover or persist live ring state. A caller must execute the returned
-//! operations in order and reclaim a reservation only after its checkpoint
-//! flush.
+//! barriers, replay validation for one transaction or a bounded live ring,
+//! discovery of the internal journal inode, and allocation within a
+//! clean-journal ring. It does not persist live ring state. A caller must
+//! execute the returned operations in order and reclaim a reservation only
+//! after its checkpoint flush.
 
 use super::block_header::{JournalBlockHeader, JournalBlockType};
 use super::commit_block::validate_commit_block_checksum;
@@ -30,7 +30,7 @@ use crate::iters::AsyncIterator;
 use crate::iters::file_blocks::FileBlocks;
 use crate::util::read_u32be;
 use crate::uuid::Uuid;
-use alloc::collections::VecDeque;
+use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::error::Error;
@@ -64,6 +64,9 @@ const JOURNAL_SUPERBLOCK_CHECKSUM_OFFSET: usize = 0xfc;
 const JOURNAL_FEATURE_BLOCK_REVOCATIONS: u32 = 0x1;
 const JOURNAL_FEATURE_64_BIT: u32 = 0x2;
 const JOURNAL_FEATURE_CHECKSUM_V3: u32 = 0x10;
+const JOURNAL_REQUIRED_FEATURES: u32 = JOURNAL_FEATURE_64_BIT | JOURNAL_FEATURE_CHECKSUM_V3;
+const JOURNAL_ALLOWED_FEATURES: u32 =
+    JOURNAL_REQUIRED_FEATURES | JOURNAL_FEATURE_BLOCK_REVOCATIONS;
 const JOURNAL_CHECKSUM_TYPE_CRC32C: u8 = 4;
 
 /// A checked block image owned by a transaction or replay result.
@@ -164,10 +167,29 @@ pub enum JournalTransactionError {
     CorruptCommit,
     /// A revocation header, table, sequence, or checksum is invalid.
     CorruptRevocation,
-    /// A journal superblock header, feature set, or checksum is invalid.
+    /// A journal superblock image is not exactly 1,024 bytes.
     CorruptSuperblock,
+    /// The JBD2 magic is absent from the journal superblock header.
+    CorruptSuperblockMagic,
+    /// The journal superblock type is not the admitted JBD2 v2 type.
+    UnsupportedSuperblockType(u32),
+    /// Required JBD2 incompatible feature bits are absent.
+    MissingSuperblockFeatures(u32),
+    /// JBD2 incompatible feature bits outside the admitted profile are present.
+    UnsupportedSuperblockFeatures(u32),
+    /// The journal superblock checksum algorithm is not CRC32C.
+    UnsupportedSuperblockChecksumType(u8),
+    /// The journal superblock's stored CRC32C does not match its contents.
+    CorruptSuperblockChecksum {
+        /// CRC32C stored in the on-disk journal superblock.
+        stored: u32,
+        /// CRC32C calculated over the admitted superblock image.
+        calculated: u32,
+    },
     /// A clean-only operation was requested for a live journal.
     JournalNotClean,
+    /// The ext4 recovery bit and the JBD2 live-start field do not prove one state.
+    RecoveryStateMismatch,
     /// A transaction requested revokes without the journal feature bit.
     RevocationsUnsupported,
     /// The clean-journal ring geometry is too small, too large, or malformed.
@@ -203,8 +225,25 @@ impl Display for JournalTransactionError {
             Self::MissingCommit => "durable journal commit is missing",
             Self::CorruptCommit => "journal commit is corrupt",
             Self::CorruptRevocation => "journal revocation record is corrupt",
-            Self::CorruptSuperblock => "journal superblock is corrupt or incompatible",
+            Self::CorruptSuperblock => "journal superblock is not exactly 1024 bytes",
+            Self::CorruptSuperblockMagic => "journal superblock magic is invalid",
+            Self::UnsupportedSuperblockType(_) => "journal superblock type is unsupported",
+            Self::MissingSuperblockFeatures(_) => {
+                "journal superblock is missing required incompatible features"
+            }
+            Self::UnsupportedSuperblockFeatures(_) => {
+                "journal superblock advertises unsupported incompatible features"
+            }
+            Self::UnsupportedSuperblockChecksumType(_) => {
+                "journal superblock checksum type is unsupported"
+            }
+            Self::CorruptSuperblockChecksum { .. } => {
+                "journal superblock checksum is invalid"
+            }
             Self::JournalNotClean => "journal contains a live transaction",
+            Self::RecoveryStateMismatch => {
+                "ext4 and JBD2 recovery state do not prove a supported journal state"
+            }
             Self::RevocationsUnsupported => "journal does not advertise block revocations",
             Self::RingGeometry => "journal ring geometry is invalid",
             Self::RingFull => "journal ring has insufficient free slots",
@@ -283,6 +322,42 @@ pub struct JournalInodeMap {
     superblock: JournalSuperblockImage,
     maximum_block: u64,
     physical_blocks: Vec<u64>,
+    filesystem_needs_recovery: bool,
+}
+
+/// A bounded replay result for every committed transaction in one journal ring.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JournalRecovery {
+    committed_transactions: usize,
+    consumed_slots: usize,
+    replay_images: Vec<JournalBlockImage>,
+    clean_superblock: JournalSuperblockImage,
+}
+
+impl JournalRecovery {
+    /// Return the number of consecutive committed transactions admitted.
+    #[must_use]
+    pub fn committed_transactions(&self) -> usize {
+        self.committed_transactions
+    }
+
+    /// Return the number of logical journal data slots consumed by replay.
+    #[must_use]
+    pub fn consumed_slots(&self) -> usize {
+        self.consumed_slots
+    }
+
+    /// Return the final metadata images to checkpoint to their home blocks.
+    #[must_use]
+    pub fn replay_images(&self) -> &[JournalBlockImage] {
+        &self.replay_images
+    }
+
+    /// Return the checksummed clean state to persist after checkpointing.
+    #[must_use]
+    pub fn clean_superblock(&self) -> &JournalSuperblockImage {
+        &self.clean_superblock
+    }
 }
 
 impl JournalInodeMap {
@@ -298,8 +373,17 @@ impl JournalInodeMap {
         &self.physical_blocks
     }
 
-    /// Admit the discovered map only when the on-disk journal is clean.
+    /// Return the authoritative ext4 incompat-recovery feature state.
+    #[must_use]
+    pub fn filesystem_needs_recovery(&self) -> bool {
+        self.filesystem_needs_recovery
+    }
+
+    /// Admit the discovered map only when ext4 and JBD2 both prove it clean.
     pub fn into_clean_ring(self) -> Result<JournalRing, JournalTransactionError> {
+        if self.filesystem_needs_recovery {
+            return Err(JournalTransactionError::RecoveryStateMismatch);
+        }
         self.superblock
             .map_clean_ring(self.maximum_block, &self.physical_blocks)
     }
@@ -333,6 +417,12 @@ pub async fn load_journal_inode_map(fs: &Ext4) -> Result<JournalInodeMap, Journa
     if physical_blocks.len() != logical_blocks {
         return Err(JournalTransactionError::RingGeometry.into());
     }
+    let maximum_block =
+        fs.0.superblock
+            .blocks_count()
+            .checked_sub(1)
+            .ok_or(JournalTransactionError::RingGeometry)?;
+    validate_physical_journal_blocks(maximum_block, logical_blocks, &physical_blocks)?;
     let mut superblock_bytes = vec![0; JOURNAL_SUPERBLOCK_BYTES];
     fs.read_from_block_raw(physical_blocks[0], 0, &mut superblock_bytes)
         .await?;
@@ -343,16 +433,11 @@ pub async fn load_journal_inode_map(fs: &Ext4) -> Result<JournalInodeMap, Journa
     {
         return Err(JournalTransactionError::RingGeometry.into());
     }
-    let maximum_block =
-        fs.0.superblock
-            .blocks_count()
-            .checked_sub(1)
-            .ok_or(JournalTransactionError::RingGeometry)?;
-    superblock.map_clean_ring(maximum_block, &physical_blocks)?;
     Ok(JournalInodeMap {
         superblock,
         maximum_block,
         physical_blocks,
+        filesystem_needs_recovery: fs.0.superblock.needs_recovery(),
     })
 }
 
@@ -414,13 +499,46 @@ impl JournalSuperblockImage {
         if bytes.len() != JOURNAL_SUPERBLOCK_BYTES {
             return Err(JournalTransactionError::CorruptSuperblock);
         }
+        let header = JournalBlockHeader::read_bytes(bytes)
+            .ok_or(JournalTransactionError::CorruptSuperblockMagic)?;
+        if header.block_type != JournalBlockType::SUPERBLOCK_V2 {
+            return Err(JournalTransactionError::UnsupportedSuperblockType(
+                header.block_type.0,
+            ));
+        }
+        let incompat = read_u32be(bytes, JOURNAL_SUPERBLOCK_FEATURE_INCOMPAT_OFFSET);
+        let missing = JOURNAL_REQUIRED_FEATURES & !incompat;
+        if missing != 0 {
+            return Err(JournalTransactionError::MissingSuperblockFeatures(
+                missing,
+            ));
+        }
+        let unsupported = incompat & !JOURNAL_ALLOWED_FEATURES;
+        if unsupported != 0 {
+            return Err(JournalTransactionError::UnsupportedSuperblockFeatures(
+                unsupported,
+            ));
+        }
+        let checksum_type = bytes[JOURNAL_SUPERBLOCK_CHECKSUM_TYPE_OFFSET];
+        if checksum_type != JOURNAL_CHECKSUM_TYPE_CRC32C {
+            return Err(JournalTransactionError::UnsupportedSuperblockChecksumType(
+                checksum_type,
+            ));
+        }
+        let stored_checksum = read_u32be(bytes, JOURNAL_SUPERBLOCK_CHECKSUM_OFFSET);
+        let calculated_checksum = journal_superblock_checksum(bytes);
+        if stored_checksum != calculated_checksum {
+            return Err(JournalTransactionError::CorruptSuperblockChecksum {
+                stored: stored_checksum,
+                calculated: calculated_checksum,
+            });
+        }
         let superblock = JournalSuperblock::read_bytes(bytes)
             .map_err(|_| JournalTransactionError::CorruptSuperblock)?;
         let maximum_length = read_u32be(bytes, JOURNAL_SUPERBLOCK_MAX_LENGTH_OFFSET);
         let first_block = read_u32be(bytes, JOURNAL_SUPERBLOCK_FIRST_BLOCK_OFFSET);
         let sequence = read_u32be(bytes, JOURNAL_SUPERBLOCK_SEQUENCE_OFFSET);
         let start_block = read_u32be(bytes, JOURNAL_SUPERBLOCK_START_BLOCK_OFFSET);
-        let incompat = read_u32be(bytes, JOURNAL_SUPERBLOCK_FEATURE_INCOMPAT_OFFSET);
         let data_slots = maximum_length
             .checked_sub(first_block)
             .ok_or(JournalTransactionError::RingGeometry)?;
@@ -510,18 +628,7 @@ impl JournalSuperblockImage {
         }
         let maximum_length = usize::try_from(self.maximum_length)
             .map_err(|_| JournalTransactionError::RingGeometry)?;
-        if physical_journal_blocks.len() != maximum_length
-            || physical_journal_blocks
-                .iter()
-                .any(|block| *block == 0 || *block > maximum_block)
-        {
-            return Err(JournalTransactionError::RingGeometry);
-        }
-        let mut sorted = Vec::from(physical_journal_blocks);
-        sorted.sort_unstable();
-        if sorted.windows(2).any(|pair| pair[0] == pair[1]) {
-            return Err(JournalTransactionError::RingGeometry);
-        }
+        validate_physical_journal_blocks(maximum_block, maximum_length, physical_journal_blocks)?;
         let mut ring = JournalRing::new_clean(
             self.sequence,
             *self.uuid.as_bytes(),
@@ -532,6 +639,26 @@ impl JournalSuperblockImage {
         ring.superblock_block = Some(physical_journal_blocks[0]);
         Ok(ring)
     }
+}
+
+fn validate_physical_journal_blocks(
+    maximum_block: u64,
+    expected_length: usize,
+    physical_journal_blocks: &[u64],
+) -> Result<(), JournalTransactionError> {
+    if physical_journal_blocks.len() != expected_length
+        || physical_journal_blocks
+            .iter()
+            .any(|block| *block == 0 || *block > maximum_block)
+    {
+        return Err(JournalTransactionError::RingGeometry);
+    }
+    let mut sorted = Vec::from(physical_journal_blocks);
+    sorted.sort_unstable();
+    if sorted.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(JournalTransactionError::RingGeometry);
+    }
+    Ok(())
 }
 
 impl Error for JournalTransactionError {}
@@ -671,7 +798,7 @@ impl JournalTransaction {
             return Err(JournalTransactionError::JournalSlotCount);
         }
         for (index, block) in journal_blocks.iter().enumerate() {
-            if *block > self.maximum_block {
+            if *block == 0 || *block > self.maximum_block {
                 return Err(JournalTransactionError::BlockOutOfRange);
             }
             if journal_blocks[..index].contains(block) {
@@ -917,7 +1044,9 @@ impl JournalRing {
         }
         if journal_slots.len() < 3
             || journal_slots.len() > JOURNAL_RING_MAX_SLOTS
-            || journal_slots.iter().any(|slot| *slot > maximum_block)
+            || journal_slots
+                .iter()
+                .any(|slot| *slot == 0 || *slot > maximum_block)
         {
             return Err(JournalTransactionError::RingGeometry);
         }
@@ -991,6 +1120,9 @@ impl JournalRing {
             .next_sequence
             .checked_add(1)
             .ok_or(JournalTransactionError::SequenceOverflow)?;
+        if next_sequence == u32::MAX {
+            return Err(JournalTransactionError::SequenceOverflow);
+        }
         let mut journal_blocks = Vec::new();
         journal_blocks
             .try_reserve_exact(required)
@@ -1125,6 +1257,194 @@ impl JournalRing {
     }
 }
 
+/// Replay every consecutive committed transaction in one bounded journal ring.
+///
+/// `journal_blocks` contains logical journal blocks one through
+/// `superblock.maximum_length() - 1`, in order. The scan begins at the
+/// superblock's live start, wraps at most once, and stops at a stale sequence or
+/// a transaction that has no commit record. A transaction with a present but
+/// corrupt commit, descriptor, data image, or revocation record is refused.
+/// Later revocations suppress earlier pending home-block images. The caller
+/// must pass the ext4 incompat-recovery feature state; a disagreement with the
+/// JBD2 start field is refused because a zero JBD2 start alone does not prove a
+/// clean journal.
+pub fn recover_committed_ring(
+    superblock: &JournalSuperblockImage,
+    filesystem_needs_recovery: bool,
+    maximum_block: u64,
+    journal_blocks: &[&[u8]],
+) -> Result<JournalRecovery, JournalTransactionError> {
+    let expected_slots = usize::try_from(
+        superblock
+            .maximum_length
+            .checked_sub(1)
+            .ok_or(JournalTransactionError::RingGeometry)?,
+    )
+    .map_err(|_| JournalTransactionError::RingGeometry)?;
+    if journal_blocks.len() != expected_slots
+        || journal_blocks
+            .iter()
+            .any(|block| block.len() != JOURNAL_BLOCK_BYTES)
+    {
+        return Err(JournalTransactionError::RingGeometry);
+    }
+    if !filesystem_needs_recovery {
+        if superblock.start_block != 0 {
+            return Err(JournalTransactionError::RecoveryStateMismatch);
+        }
+        return Ok(JournalRecovery {
+            committed_transactions: 0,
+            consumed_slots: 0,
+            replay_images: Vec::new(),
+            clean_superblock: superblock.clone(),
+        });
+    }
+    if superblock.start_block == 0 {
+        return Err(JournalTransactionError::RecoveryStateMismatch);
+    }
+
+    let mut cursor = usize::try_from(superblock.start_block - 1)
+        .map_err(|_| JournalTransactionError::RingGeometry)?;
+    let mut consumed_slots = 0usize;
+    let mut committed_transactions = 0usize;
+    let mut sequence = superblock.sequence;
+    let mut replay = BTreeMap::new();
+
+    while consumed_slots < journal_blocks.len() {
+        let descriptor = journal_blocks[cursor];
+        let Some(descriptor_header) = JournalBlockHeader::read_bytes(descriptor) else {
+            if committed_transactions == 0 {
+                return Err(JournalTransactionError::CorruptDescriptor);
+            }
+            break;
+        };
+        if descriptor_header.block_type != JournalBlockType::DESCRIPTOR
+            || descriptor_header.sequence != sequence
+        {
+            if committed_transactions == 0 {
+                return Err(JournalTransactionError::CorruptDescriptor);
+            }
+            break;
+        }
+        let replay_superblock = JournalSuperblock {
+            block_size: u32::try_from(JOURNAL_BLOCK_BYTES).expect("4096 fits u32"),
+            sequence,
+            start_block: 0,
+            uuid: superblock.uuid,
+        };
+        validate_descriptor_block_checksum(&replay_superblock, descriptor)
+            .map_err(|_| JournalTransactionError::CorruptDescriptor)?;
+        let mut tag_count = 0usize;
+        for tag in DescriptorBlockTagIter::new(&descriptor[JournalBlockHeader::SIZE..]) {
+            let _ = tag.map_err(|_| JournalTransactionError::CorruptDescriptor)?;
+            tag_count = tag_count
+                .checked_add(1)
+                .ok_or(JournalTransactionError::TooManyBlocks)?;
+        }
+        if tag_count == 0 || tag_count > JOURNAL_TRANSACTION_MAX_METADATA_BLOCKS {
+            return Err(JournalTransactionError::CorruptDescriptor);
+        }
+
+        let record_offset = tag_count
+            .checked_add(1)
+            .ok_or(JournalTransactionError::TooManyBlocks)?;
+        let minimum_slots = record_offset
+            .checked_add(1)
+            .ok_or(JournalTransactionError::TooManyBlocks)?;
+        if minimum_slots > journal_blocks.len() - consumed_slots {
+            if committed_transactions == 0 {
+                return Err(JournalTransactionError::MissingCommit);
+            }
+            break;
+        }
+        let record_index = (cursor + record_offset) % journal_blocks.len();
+        let record_header = JournalBlockHeader::read_bytes(journal_blocks[record_index]);
+        let has_revocation = record_header.is_some_and(|header| {
+            header.block_type == JournalBlockType::REVOCATION && header.sequence == sequence
+        });
+        if has_revocation && !superblock.block_revocations {
+            return Err(JournalTransactionError::RevocationsUnsupported);
+        }
+        let commit_offset = record_offset + usize::from(has_revocation);
+        let transaction_slots = commit_offset
+            .checked_add(1)
+            .ok_or(JournalTransactionError::TooManyBlocks)?;
+        if transaction_slots > journal_blocks.len() - consumed_slots {
+            if committed_transactions == 0 {
+                return Err(JournalTransactionError::MissingCommit);
+            }
+            break;
+        }
+        let commit_index = (cursor + commit_offset) % journal_blocks.len();
+        let commit_header = JournalBlockHeader::read_bytes(journal_blocks[commit_index]);
+        let commit_present = commit_header.is_some_and(|header| {
+            header.block_type == JournalBlockType::COMMIT && header.sequence == sequence
+        });
+        if !commit_present {
+            if !has_revocation {
+                let possible_commit_index = (commit_index + 1) % journal_blocks.len();
+                let possible_commit =
+                    JournalBlockHeader::read_bytes(journal_blocks[possible_commit_index]);
+                if possible_commit.is_some_and(|header| {
+                    header.block_type == JournalBlockType::COMMIT && header.sequence == sequence
+                }) {
+                    return Err(JournalTransactionError::CorruptRevocation);
+                }
+            }
+            if committed_transactions == 0 {
+                return Err(JournalTransactionError::MissingCommit);
+            }
+            break;
+        }
+
+        let mut transaction = Vec::new();
+        transaction
+            .try_reserve_exact(transaction_slots)
+            .map_err(|_| JournalTransactionError::TooManyBlocks)?;
+        for offset in 0..transaction_slots {
+            transaction.push(journal_blocks[(cursor + offset) % journal_blocks.len()]);
+        }
+        let images = replay_committed_transaction(
+            *superblock.uuid.as_bytes(),
+            sequence,
+            maximum_block,
+            &transaction,
+        )?;
+        if has_revocation {
+            let mut revoked_blocks = Vec::new();
+            read_revocation_block_table(transaction[record_offset], &mut revoked_blocks)
+                .map_err(|_| JournalTransactionError::CorruptRevocation)?;
+            for revoked in revoked_blocks {
+                let _ = replay.remove(&revoked);
+            }
+        }
+        for image in images {
+            replay.insert(image.block_index, image);
+        }
+
+        consumed_slots = consumed_slots
+            .checked_add(transaction_slots)
+            .ok_or(JournalTransactionError::RingGeometry)?;
+        committed_transactions = committed_transactions
+            .checked_add(1)
+            .ok_or(JournalTransactionError::TooManyBlocks)?;
+        cursor = (cursor + transaction_slots) % journal_blocks.len();
+        sequence = sequence
+            .checked_add(1)
+            .ok_or(JournalTransactionError::SequenceOverflow)?;
+        if sequence == u32::MAX {
+            return Err(JournalTransactionError::SequenceOverflow);
+        }
+    }
+
+    Ok(JournalRecovery {
+        committed_transactions,
+        consumed_slots,
+        replay_images: replay.into_values().collect(),
+        clean_superblock: superblock.with_state(sequence, 0)?,
+    })
+}
+
 /// Validate and replay one complete descriptor/data/commit transaction.
 ///
 /// No home-block images are returned unless the final commit header, sequence,
@@ -1251,13 +1571,16 @@ fn write_u32be(bytes: &mut [u8], offset: usize, value: u32) {
 
 fn update_journal_superblock_checksum(bytes: &mut [u8]) {
     write_u32be(bytes, JOURNAL_SUPERBLOCK_CHECKSUM_OFFSET, 0);
+    let checksum = journal_superblock_checksum(bytes);
+    write_u32be(bytes, JOURNAL_SUPERBLOCK_CHECKSUM_OFFSET, checksum);
+}
+
+fn journal_superblock_checksum(bytes: &[u8]) -> u32 {
     let mut checksum = Checksum::new();
-    checksum.update(bytes);
-    write_u32be(
-        bytes,
-        JOURNAL_SUPERBLOCK_CHECKSUM_OFFSET,
-        checksum.finalize(),
-    );
+    checksum.update(&bytes[..JOURNAL_SUPERBLOCK_CHECKSUM_OFFSET]);
+    checksum.update_u32_be(0);
+    checksum.update(&bytes[JOURNAL_SUPERBLOCK_CHECKSUM_OFFSET + 4..]);
+    checksum.finalize()
 }
 
 #[cfg(test)]
