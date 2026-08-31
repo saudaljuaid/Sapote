@@ -1028,11 +1028,17 @@ verify: toolchain lint
 	# unwinding runtime: require every one to terminate through Sapote's panic
 	# handler and reject any linked exception personality or unwinder.
 	@if $(NM) $(KERNEL) | grep -Eq 'panic_bounds_check'; then \
-		$(NM) $(KERNEL) | grep -Eq ' [tT] .*rust_begin_unwind$$' && \
+		$(NM) $(KERNEL) | grep -Eq ' [tT] .*rust_begin_unwind' && \
 		$(OBJDUMP) -d $(KERNEL) | \
-			awk '/<[^>]*rust_begin_unwind>:/ { inside = 1 } \
-				inside { print } inside && /^$$/ { exit }' | \
-			grep -Eq '[[:space:]]call.*<console_panic>'; \
+			awk '/^[[:space:]]*[0-9a-f]+ <[^>]*rust_begin_unwind>:/ { inside = 1; next } \
+				inside && /^[[:space:]]*[0-9a-f]+ <[^>]+>:/ { inside = 0 } \
+				inside && /[[:space:]]call.*<[^>]*sapote3abi5panic>/ { found = 1 } \
+				END { exit !found }' && \
+		$(OBJDUMP) -d $(KERNEL) | \
+			awk '/^[[:space:]]*[0-9a-f]+ <[^>]*sapote3abi5panic>:/ { inside = 1; next } \
+				inside && /^[[:space:]]*[0-9a-f]+ <[^>]+>:/ { inside = 0 } \
+				inside && /[[:space:]]call.*<console_panic>/ { found = 1 } \
+				END { exit !found }'; \
 	fi
 	@if $(NM) $(KERNEL) | grep -Eq \
 		'(_Unwind_|rust_eh_personality|__gcc_personality_v0|panic_unwind)'; then \
