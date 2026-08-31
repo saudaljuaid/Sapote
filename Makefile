@@ -31,10 +31,10 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	multiprocess multiprocess-slots driver-matrix driver-matrix-builtin audio \
 	nvidia nvidia-builtin native native-lua native-sqlite native-canvas \
 	native-rust native-crash native-elf-refusal native-digest-refusal \
-	native-abi-refusal native-relaunch native-audio
+	native-abi-refusal native-relaunch native-audio native-sdl
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 113
-EXPECTED_SHELL_ASSERTION_COUNT := 448
+EXPECTED_TEST_SCENARIO_COUNT := 114
+EXPECTED_SHELL_ASSERTION_COUNT := 454
 
 CC := gcc
 LD := ld
@@ -730,8 +730,8 @@ qemu-port-tests: qemu-test-native qemu-test-native-lua qemu-test-native-sqlite \
 	qemu-test-native-canvas qemu-test-network-native qemu-test-native-rust \
 	qemu-test-native-crash qemu-test-native-elf-refusal \
 	qemu-test-native-digest-refusal qemu-test-native-abi-refusal \
-	qemu-test-native-relaunch qemu-test-native-audio
-	@echo 'native userspace, Lua, SQLite, Canvas, network, audio and Rust QEMU scenarios passed'
+	qemu-test-native-relaunch qemu-test-native-audio qemu-test-native-sdl
+	@echo 'native userspace, Lua, SQLite, Canvas, network, audio, SDL and Rust QEMU scenarios passed'
 
 contract-counts:
 	@printf '%s %s\n' '$(EXPECTED_TEST_SCENARIO_COUNT)' \
@@ -2013,6 +2013,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		native-abi-refusal) expected=1 ;; \
 		native-relaunch) expected=3 ;; \
 		native-audio) expected=5 ;; \
+		native-sdl) expected=7 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -2041,6 +2042,15 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 					audio_backend="-audiodev wav,id=wav0,path=$$audio_wav"; \
 				else audio_backend='-audiodev none,id=wav0'; fi; \
 				hardware="-boot order=d -blockdev driver=file,filename=$(AUDIO_SYSTEM_IMAGE),node-name=audio-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=audio-system-file,node-name=audio-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=audio-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=audio-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=audio-data-file,node-name=audio-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=audio-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -device ich9-intel-hda,id=hda -device hda-duplex,bus=hda.0,audiodev=wav0 $$audio_backend" ;; \
+			native-sdl) \
+				$(MAKE) '$(SDL_PROOF_SYSTEM_IMAGE)' '$(SDL_PROOF_DATA_IMAGE)' || exit 1; \
+				cp '$(SDL_PROOF_DATA_IMAGE)' '$(TEST_BUILD_DIR)/$*/data.raw' || exit 1; \
+				audio_wav='$(abspath $(TEST_BUILD_DIR)/$*/native-sdl.wav)'; rm -f "$$audio_wav"; audio_capture=false; \
+				if qemu-system-x86_64 -audiodev help 2>&1 | grep -Eq '(^|[[:space:]])wav([[:space:]]|$$)'; then \
+					audio_capture=true; \
+					audio_backend="-audiodev wav,id=wav0,path=$$audio_wav"; \
+				else audio_backend='-audiodev none,id=wav0'; fi; \
+				hardware="-boot order=d -blockdev driver=file,filename=$(SDL_PROOF_SYSTEM_IMAGE),node-name=sdl-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=sdl-system-file,node-name=sdl-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=sdl-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=sdl-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=sdl-data-file,node-name=sdl-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=sdl-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -device ich9-intel-hda,id=hda -device hda-duplex,bus=hda.0,audiodev=wav0 $$audio_backend" ;; \
 			# No emulator models an NVIDIA part, so the nvidia scenario \
 			# attaches display and HD Audio functions of exactly the classes \
 			# these drivers match on, from vendors that are not NVIDIA. \
@@ -2143,6 +2153,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		native-sqlite) timeout_seconds=240 ;; \
 		native-canvas) timeout_seconds=180 ;; \
 		native-crash|native-relaunch|native-audio) timeout_seconds=180 ;; \
+		native-sdl) timeout_seconds=240 ;; \
 		native-rust|native-*-refusal) timeout_seconds=120 ;; \
 	esac; \
 	if test '$*' = fat32-persistence -o '$*' = native-sqlite; then reboot_control=''; fi; \
@@ -2167,6 +2178,19 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			--screenshot '$(abspath $(TEST_BUILD_DIR)/$*/canvas.png)' \
 			--video '$(abspath $(TEST_BUILD_DIR)/$*/canvas.mp4)' \
 			--ffmpeg '$(FFMPEG)' --timeout 150 \
+			& injector=$$!; \
+	elif test '$*' = native-sdl; then \
+		monitor_socket='$(TEST_BUILD_DIR)/$*/monitor.sock'; \
+		rm -f "$$monitor_socket"; \
+		monitor_argument="-monitor unix:$$monitor_socket,server=on,wait=off"; \
+		$(PYTHON) tools/qemu-send-keys.py --monitor "$$monitor_socket" \
+			--serial "$$log" --marker 'SAPOTE SDL READY run=1' \
+			--text s --hmp 'mouse_move 28 -16' --hmp 'mouse_button 1' \
+			--hmp 'mouse_button 0' \
+			--capture-dir '$(abspath $(TEST_BUILD_DIR)/$*/sdl-frames)' \
+			--screenshot '$(abspath $(TEST_BUILD_DIR)/$*/sdl.png)' \
+			--video '$(abspath $(TEST_BUILD_DIR)/$*/sdl.mp4)' \
+			--ffmpeg '$(FFMPEG)' --timeout 180 \
 			& injector=$$!; \
 	fi; \
 	set +e; \
@@ -2560,6 +2584,17 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			if test "$$audio_capture" = true; then \
 				$(PYTHON) -S tools/audio-wav-host-test.py "$$audio_wav" || diagnostics_ok=false; \
 			else echo 'SAPOTE AUDIO WAV SKIP qemu wav backend unavailable'; fi ;; \
+		native-sdl) \
+			test -s '$(TEST_BUILD_DIR)/$*/sdl.png' && \
+			test -s '$(TEST_BUILD_DIR)/$*/sdl.mp4' && \
+			grep -Fxq 'SAPOTE SDL READY run=1 video=sapote audio=sapote pref=Data:SDL/B54465F3/' "$$log" && \
+			grep -Fxq 'SAPOTE SDL PASS run=1 present=partial input=key-pointer audio=non-silent persistent=yes' "$$log" && \
+			grep -Fxq 'SAPOTE SDL READY run=2 video=sapote audio=sapote pref=Data:SDL/B54465F3/' "$$log" && \
+			grep -Fxq 'SAPOTE SDL PASS run=2 present=partial input=prior-run audio=non-silent persistent=yes' "$$log" && \
+			grep -Fxq 'Sapote: SDL 2 window, input, partial damage, PCM and persistence passed' "$$log" || diagnostics_ok=false; \
+			if test "$$audio_capture" = true; then \
+				$(PYTHON) -S tools/audio-wav-host-test.py "$$audio_wav" || diagnostics_ok=false; \
+			else echo 'SAPOTE SDL WAV SKIP qemu wav backend unavailable'; fi ;; \
 	esac; \
 	if test "$$diagnostics_ok" != true; then \
 		echo 'QEMU scenario $* omitted its required diagnostic'; \

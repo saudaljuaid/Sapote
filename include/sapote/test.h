@@ -125,6 +125,7 @@ enum kernel_test_scenario {
     KERNEL_TEST_NATIVE_ABI_REFUSAL,
     KERNEL_TEST_NATIVE_RELAUNCH,
     KERNEL_TEST_NATIVE_AUDIO,
+    KERNEL_TEST_NATIVE_SDL,
     KERNEL_TEST_INVALID
 };
 
@@ -192,6 +193,7 @@ _Noreturn void kernel_test_complete_native_crash(void);
 _Noreturn void kernel_test_complete_native_admission_refusal(void);
 _Noreturn void kernel_test_complete_native_relaunch(void);
 _Noreturn void kernel_test_complete_native_audio(void);
+_Noreturn void kernel_test_complete_native_sdl(void);
 bool kernel_test_audio_exit_self_test(void);
 bool kernel_test_nvidia_exit_self_test(void);
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame);

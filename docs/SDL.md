@@ -34,6 +34,8 @@ detach blocks until join because Sapote ABI v1 cannot reclaim a detached native
 thread safely. These are explicit compatibility gaps, not silent dummy-driver
 fallbacks.
 
-The repository does not call the SDL application layer complete until its QEMU
-proof exercises window creation/presentation, injected input, non-silent PCM,
-persistent state across reboot, clean exit, and resource census from Ring 3.
+The `native-sdl` QEMU proof exercises window creation and partial presentation,
+injected keyboard and pointer input, non-silent PCM, synchronized persistent
+state across a second process launch, clean exit, and resource census from
+Ring 3. It retains the guest serial log, screenshot, video, data volume, and
+WAV capture when QEMU exposes its WAV backend.

@@ -4,6 +4,8 @@ The `include/` and `src/` trees originate from the pinned SDL 2.32.10 commit
 recorded in `UPSTREAM-COMMIT.txt`. Sapote adds a platform configuration and
 small backends below the upstream platform registries. Those additions remain
 under SDL's zlib license and are visibly marked as Sapote changes.
+The source also carries a semantics-preserving `sizeof` cast in `SDL_guid.c`
+so the pinned release compiles under Sapote's `-Werror` policy.
 
 The supported first profile is deliberately narrow:
 

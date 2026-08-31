@@ -44,8 +44,9 @@ clean-census assertion rather than treating continued boot as success.
 | 26. Every handle type live | `network-native` | The teardown fixture leaves file, directory, window, event queue, stream, datagram, timer, and thread handles plus an anonymous mapping live; the kernel requires all classes gone after exit. |
 | 27. Repeated launch | `native-relaunch` | Launches the same unmodified package twice, requires a strictly newer process generation, and checks a clean census after both exits. |
 | 28. Public audio | `native-audio` | Proves capability refusal, two typed Ring 3 PCM handles, deterministic Q15 mixing, readiness, drain, cancellation, close and process-exit cleanup; verifies a QEMU WAV artifact when that backend is available. |
+| 29. SDL 2 application lifecycle | `native-sdl` | Runs the real SDL Sapote video, event, timer, thread, filesystem, and audio backends twice; requires partial presentation, injected key and pointer input, non-silent queued PCM, synchronized preference state on relaunch, and a clean resource census. |
 
 The Makefile owns the expected debug-exit values and exact serial expressions.
-The native-porting workflow retains serial logs, writable Data images, the
-Canvas media, an available native-audio WAV, the Lua ELF/map, and the
-native-network packet capture and peer log from the same commit.
+The native-porting workflow retains serial logs, writable Data images, Canvas
+and SDL media, available native-audio and SDL WAV captures, the Lua ELF/map,
+and the native-network packet capture and peer log from the same commit.

@@ -568,6 +568,9 @@ static enum kernel_test_scenario scenario_from_value(
     if (token_equals(value, length, "native-audio")) {
         return KERNEL_TEST_NATIVE_AUDIO;
     }
+    if (token_equals(value, length, "native-sdl")) {
+        return KERNEL_TEST_NATIVE_SDL;
+    }
 
     return KERNEL_TEST_INVALID;
 }
@@ -756,6 +759,7 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
     case KERNEL_TEST_NATIVE_ABI_REFUSAL: return UINT8_C(0x80);
     case KERNEL_TEST_NATIVE_RELAUNCH: return UINT8_C(0x81);
     case KERNEL_TEST_NATIVE_AUDIO: return UINT8_C(0x82);
+    case KERNEL_TEST_NATIVE_SDL: return UINT8_C(0x83);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -4729,6 +4733,7 @@ void kernel_test_run(
     case KERNEL_TEST_NATIVE_ABI_REFUSAL:
     case KERNEL_TEST_NATIVE_RELAUNCH:
     case KERNEL_TEST_NATIVE_AUDIO:
+    case KERNEL_TEST_NATIVE_SDL:
         /* Deferred until Sapote Redwood and the Boot Ledger are published. */
         return;
     case KERNEL_TEST_MULTIPROCESS_SLOTS:
@@ -5218,6 +5223,52 @@ _Noreturn void kernel_test_complete_native_audio(void)
     }
     console_write(
         "Sapote: native audio ABI capability, mixing, cancellation and teardown passed\n");
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_native_sdl(void)
+{
+    static const char state_path[] = "SDLPROOF/SDL/B54465F3/STATE.BIN";
+    struct native_process_result first = { 0 };
+    struct native_process_result second = { 0 };
+    struct sapfs_stat state;
+    sapfs_handle file;
+    uint8_t bytes[4];
+    size_t read_bytes = 0U;
+
+    if (active_scenario != KERNEL_TEST_NATIVE_SDL) {
+        kernel_test_fail("native SDL completion used outside its scenario");
+    }
+    if (native_process_launch("SDLPROOF.MAN", &first) != NATIVE_PROCESS_OK ||
+        !first.exited || first.faulted || first.exit_status != 0 ||
+        !first.resources_released || first.peak_handles < 4U ||
+        first.syscall_count < 20U || first.thread_switches == 0U ||
+        !native_process_resources_released() ||
+        !audio_native_resources_released() ||
+        ui_native_window_is_open(0U) || ui_native_window_is_open(1U)) {
+        kernel_test_fail("first SDL process did not leave a clean census");
+    }
+    if (native_process_launch("SDLPROOF.MAN", &second) != NATIVE_PROCESS_OK ||
+        !second.exited || second.faulted || second.exit_status != 0 ||
+        !second.resources_released || second.generation <= first.generation ||
+        second.peak_handles < 4U || second.syscall_count < 20U ||
+        second.thread_switches == 0U ||
+        !native_process_resources_released() ||
+        !audio_native_resources_released() || !audio_resources_released() ||
+        ui_native_window_is_open(0U) || ui_native_window_is_open(1U)) {
+        kernel_test_fail("second SDL process did not leave a clean census");
+    }
+    if (sapfs_stat_path(SAPFS_VOLUME_DATA, state_path, &state) !=
+            SAPFS_STATUS_OK || state.directory || state.size != sizeof(bytes) ||
+        sapfs_open(SAPFS_VOLUME_DATA, state_path, SAPFS_ACCESS_READ, &file) !=
+            SAPFS_STATUS_OK ||
+        sapfs_read(file, bytes, sizeof(bytes), &read_bytes) != SAPFS_STATUS_OK ||
+        read_bytes != sizeof(bytes) || sapfs_close(file) != SAPFS_STATUS_OK ||
+        bytes[0] != 2U || bytes[1] != 0U || bytes[2] != 0U || bytes[3] != 0U) {
+        kernel_test_fail("SDL preference state did not survive process relaunch");
+    }
+    console_write(
+        "Sapote: SDL 2 window, input, partial damage, PCM and persistence passed\n");
     kernel_test_pass();
 }
 
@@ -8787,6 +8838,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "native-relaunch";
     case KERNEL_TEST_NATIVE_AUDIO:
         return "native-audio";
+    case KERNEL_TEST_NATIVE_SDL:
+        return "native-sdl";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

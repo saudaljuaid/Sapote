@@ -16,7 +16,7 @@ jobs:
     bounded-evidence:
         name: bounded-nvme-evidence
         runs-on: ubuntu-24.04
-        # Ten complete 113-scenario TCG sweeps take about 105 minutes on the
+        # Ten complete 114-scenario TCG sweeps take about 105 minutes on the
         # hosted runner.  Keep enough headroom for evidence assembly instead
         # of cancelling a healthy ninth sweep at the old 90-minute ceiling.
         timeout-minutes: 150
