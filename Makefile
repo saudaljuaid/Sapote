@@ -276,7 +276,7 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d)
 # They never create a file of their own name, so they rerun regardless.
 .PHONY: all capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios ext4-images ext4-tests fat32-images hooks \
 	iso kernel lint native-apps port-tests qemu-port-tests reproducible-sdk run \
-	screenshot-proof sdk sdk-once smoke toolchain verify wall-clock-tests
+	package-repository-tests screenshot-proof sdk sdk-once smoke toolchain verify wall-clock-tests
 
 all: kernel
 
@@ -797,6 +797,10 @@ wall-clock-tests: $(WALL_CLOCK_HOST_TEST) $(SDK_TIME_HOST_TEST)
 ext4-tests: tools/ext4_image.py tools/ext4_host_test.py
 	$(PYTHON) -u tools/ext4_host_test.py
 
+package-repository-tests: tools/sapote-repository.py \
+		tools/sapote_repository_host_test.py tools/sapote-package.py
+	SAPOTE_REQUIRE_ED25519=1 $(PYTHON) -u tools/sapote_repository_host_test.py
+
 $(EXT4_FIXTURE): tools/ext4_image.py
 	mkdir -p $(dir $@)
 	$(PYTHON) tools/ext4_image.py build $@ --report $@.json
@@ -806,7 +810,7 @@ ext4-images: $(EXT4_FIXTURE)
 verify: toolchain lint
 	$(MAKE) clean
 	$(MAKE) kernel
-	$(MAKE) wall-clock-tests ext4-tests
+	$(MAKE) wall-clock-tests ext4-tests package-repository-tests
 	$(PYTHON) tools/verify-ui-assets.py
 	@test '$(LOGO_MAX_DIMENSION)' -eq 280
 	@test '$(STUDIO_ICON_MAX_DIMENSION)' -eq 80
