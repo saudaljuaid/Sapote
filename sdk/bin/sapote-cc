@@ -26,7 +26,8 @@ link)
     exec "$linker" -nostdlib -static --gc-sections --build-id=none \
         -z max-page-size=0x1000 -z noexecstack --fatal-warnings \
         --orphan-handling=error -T "$sdk_root/linker.ld" -o "$output" \
-        "$sdk_root/lib/crt0.o" "$@" "$sdk_root/lib/libsapote.a"
+        "$sdk_root/lib/crt0.o" "$@" "$sdk_root/lib/libsapote.a" \
+        "$sdk_root/lib/libbearssl.a"
     ;;
 *)
     echo "usage: sapote-cc compile OUTPUT SOURCE... | link OUTPUT OBJECT..." >&2

@@ -42,6 +42,21 @@ single upstream implementation. Sapote disables ext4plus's async and
 multi-threaded paths; Cargo still resolves the published dependency closure.
 No upstream test images, hosted adapters, or task runner are included.
 
+## TLS implementation
+
+BearSSL 0.6 is pinned to upstream commit
+`8ef7680081c61b486622f2d983c0d3d21e83caad` and is available under the MIT
+license. The SDK builds the unmodified `inc` and `src` trees into a separate
+deterministic `libbearssl.a`; `vendor/bearssl/UPSTREAM-COMMIT.txt` records the
+official source, tag, commit date, and Git tree.
+
+Sapote disables BearSSL's host `/dev/urandom`, Win32 random, host-time, SSE2,
+AES-NI, and POWER8 compile-time paths. A Sapote client must inject kernel-backed
+entropy and explicitly set the validated realtime clock. Merely linking the
+archive is not a TLS or HTTPS success claim: hostname, chain, time, transport,
+shutdown, and negative-path evidence belong to the client integration and QEMU
+tests.
+
 ## Host signature implementation
 
 Format-v3 package construction and inspection use the distribution-provided

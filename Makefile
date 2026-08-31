@@ -175,12 +175,26 @@ SDK_ASM_SOURCES := $(wildcard sdk/src/*.S)
 SDK_C_OBJECTS := $(patsubst sdk/src/%.c,$(SDK_OBJECT_DIR)/%.o,$(SDK_C_SOURCES))
 SDK_ASM_OBJECTS := $(patsubst sdk/src/%.S,$(SDK_OBJECT_DIR)/%.o,$(SDK_ASM_SOURCES))
 SDK_OBJECTS := $(SDK_C_OBJECTS) $(SDK_ASM_OBJECTS)
+BEARSSL_SOURCE := $(shell find vendor/bearssl/src -name '*.c' -print | \
+	LC_ALL=C sort)
+BEARSSL_OBJECT_DIR := $(SDK_BUILD_DIR)/bearssl
+BEARSSL_OBJECTS := $(patsubst vendor/bearssl/src/%.c,\
+	$(BEARSSL_OBJECT_DIR)/%.o,$(BEARSSL_SOURCE))
+BEARSSL_LIB := $(SDK_BUILD_DIR)/lib/libbearssl.a
 SDK_CFLAGS := --target=x86_64-unknown-none-elf -Isdk/include -Iinclude \
 	-Isdk/src -std=c11 -O2 -g -ffreestanding -fno-pie \
 	-fno-stack-protector -mcmodel=large -mno-red-zone -fno-builtin \
 	-ffunction-sections -fdata-sections -ftls-model=local-exec \
 	-Wall -Wextra -Werror -Wpedantic -Wshadow -Wundef \
 	-Wstrict-prototypes -Wmissing-prototypes
+BEARSSL_CFLAGS := --target=x86_64-unknown-none-elf -Ivendor/bearssl/inc \
+	-Ivendor/bearssl/src -std=c11 -O2 -g -ffreestanding -fno-pie \
+	-fno-stack-protector -mcmodel=large -mno-red-zone -fno-builtin \
+	-ffunction-sections -fdata-sections \
+	-DBR_USE_URANDOM=0 -DBR_USE_WIN32_RAND=0 \
+	-DBR_USE_UNIX_TIME=0 -DBR_USE_WIN32_TIME=0 \
+	-DBR_SSE2=0 -DBR_AES_X86NI=0 -DBR_POWER8=0 \
+	-Wall -Wextra -Werror
 SDK_LDFLAGS := -nostdlib -static --gc-sections --build-id=none \
 	-z max-page-size=0x1000 -z noexecstack --fatal-warnings \
 	--orphan-handling=error -T sdk/linker.ld
@@ -293,6 +307,10 @@ $(SDK_OBJECT_DIR)/%.o: sdk/src/%.S | $(SDK_OBJECT_DIR)
 	$(SDK_CC) --target=x86_64-unknown-none-elf -ffreestanding -fno-pie \
 		-mcmodel=large -mno-red-zone -c $< -o $@
 
+$(BEARSSL_OBJECT_DIR)/%.o: vendor/bearssl/src/%.c
+	mkdir -p $(dir $@)
+	$(SDK_CC) $(BEARSSL_CFLAGS) -c $< -o $@
+
 $(SDK_CRT): sdk/crt/start.S | $(SDK_BUILD_DIR)/lib
 	$(SDK_CC) --target=x86_64-unknown-none-elf -ffreestanding -fno-pie \
 		-mcmodel=large -mno-red-zone -c $< -o $@
@@ -300,9 +318,14 @@ $(SDK_CRT): sdk/crt/start.S | $(SDK_BUILD_DIR)/lib
 $(SDK_LIB): $(SDK_OBJECTS) | $(SDK_BUILD_DIR)/lib
 	$(SDK_AR) rcsD $@ $(SDK_OBJECTS)
 
-$(SDK_BUILD_DIR)/.installed: Makefile $(SDK_LIB) $(SDK_CRT) sdk/linker.ld \
+$(BEARSSL_LIB): $(BEARSSL_OBJECTS) | $(SDK_BUILD_DIR)/lib
+	$(SDK_AR) rcsD $@ $(BEARSSL_OBJECTS)
+
+$(SDK_BUILD_DIR)/.installed: Makefile $(SDK_LIB) $(BEARSSL_LIB) $(SDK_CRT) \
+		sdk/linker.ld \
 		sdk/bin/sapote-cc $(wildcard sdk/include/*.h) \
 		$(wildcard sdk/include/sapote/*.h) $(wildcard sdk/include/sys/*.h) \
+		$(wildcard vendor/bearssl/inc/*.h) \
 		$(wildcard include/sapote/abi/*.h) \
 		include/sapote/abi.h | $(SDK_BUILD_DIR)/include $(SDK_BUILD_DIR)/bin
 	mkdir -p $(SDK_BUILD_DIR)/include/sapote/abi $(SDK_BUILD_DIR)/include/sys
@@ -311,6 +334,7 @@ $(SDK_BUILD_DIR)/.installed: Makefile $(SDK_LIB) $(SDK_CRT) sdk/linker.ld \
 	cp sdk/include/sys/*.h $(SDK_BUILD_DIR)/include/sys/
 	cp include/sapote/abi.h $(SDK_BUILD_DIR)/include/sapote/
 	cp include/sapote/abi/*.h $(SDK_BUILD_DIR)/include/sapote/abi/
+	cp vendor/bearssl/inc/*.h $(SDK_BUILD_DIR)/include/
 	cp sdk/linker.ld $(SDK_BUILD_DIR)/linker.ld
 	cp sdk/bin/sapote-cc $(SDK_BUILD_DIR)/bin/sapote-cc
 	touch $@
@@ -1004,9 +1028,11 @@ verify: toolchain lint
 	# unwinding runtime: require every one to terminate through Sapote's panic
 	# handler and reject any linked exception personality or unwinder.
 	@if $(NM) $(KERNEL) | grep -Eq 'panic_bounds_check'; then \
-		$(NM) $(KERNEL) | grep -Eq ' [tT] rust_begin_unwind$$' && \
-		$(OBJDUMP) -d --disassemble=rust_begin_unwind $(KERNEL) | \
-			grep -Eq '<console_panic>'; \
+		$(NM) $(KERNEL) | grep -Eq ' [tT] .*rust_begin_unwind$$' && \
+		$(OBJDUMP) -d $(KERNEL) | \
+			awk '/<[^>]*rust_begin_unwind>:/ { inside = 1 } \
+				inside { print } inside && /^$$/ { exit }' | \
+			grep -Eq '[[:space:]]call.*<console_panic>'; \
 	fi
 	@if $(NM) $(KERNEL) | grep -Eq \
 		'(_Unwind_|rust_eh_personality|__gcc_personality_v0|panic_unwind)'; then \
