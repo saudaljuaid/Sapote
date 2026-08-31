@@ -51,7 +51,7 @@ jobs:
                       | tee "$log_dir/network-fixture-self-test.log"
                   make verify | tee "$log_dir/make-verify.log"
                   git diff --check
-            - name: Run all 115 production QEMU scenarios
+            - name: Run all 116 production QEMU scenarios
               shell: bash
               run: |
                   set -euo pipefail
@@ -68,14 +68,14 @@ jobs:
                           | grep -c '^network-'
                   )
                   assertion_count=$(grep -c 'grep -F\|grep -E' Makefile)
-                  test "$expected_scenarios" -eq 115
-                  test "$scenario_count" -eq 115
+                  test "$expected_scenarios" -eq 116
+                  test "$scenario_count" -eq 116
                   test "$network_count" -eq 37
                   test "$assertion_count" -eq "$expected_assertions"
                   make qemu-tests QEMU_ACCEL=tcg \
                       | tee "$log_dir/all-qemu-scenarios.txt"
                   test "$(grep -Ec '^QEMU scenario [a-z0-9-]+ passed$' \
-                      "$log_dir/all-qemu-scenarios.txt")" -eq 115
+                      "$log_dir/all-qemu-scenarios.txt")" -eq 116
                   test "$(grep -Ec '^QEMU scenario network-[a-z0-9-]+ passed$' \
                       "$log_dir/all-qemu-scenarios.txt")" -eq 37
                   cp build/tests/network-http-length/network.pcap \
@@ -146,7 +146,7 @@ jobs:
                   done < <(find build/tests -mindepth 2 -maxdepth 2 \
                       -name serial.log -print | sort)
                   test "$(find "$release/qemu-transcripts" -type f | wc -l)" \
-                      -eq 115
+                      -eq 116
                   cp tools/network_fixture.py tools/network_packet_audit.py \
                       tools/run_network_scenario.py tools/capture-networking.py \
                       docs/NETWORKING.md docs/BROWSER_PORT.md \
@@ -160,7 +160,7 @@ jobs:
                       printf 'commit: %s\n' "$GITHUB_SHA"
                       printf 'tree: %s\n' "$(git rev-parse 'HEAD^{tree}')"
                       printf 'make verify: passed without warnings\n'
-                      printf 'QEMU scenarios: 115 passed individually; 37 networking\n'
+                      printf 'QEMU scenarios: 116 passed individually; 37 networking\n'
                       printf 'packet path: Ethernet/ARP/IPv4/ICMP/UDP/DHCP/DNS/TCP/HTTP reconstructed\n'
                       printf 'syscall v1: authenticated HTTP-to-FAT32 and teardown passed\n'
                       printf 'FAT32: streamed, synchronized, reopened and host-verified\n'

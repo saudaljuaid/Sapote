@@ -46,9 +46,11 @@ clean-census assertion rather than treating continued boot as success.
 | 28. Public audio | `native-audio` | Proves capability refusal, two typed Ring 3 PCM handles, deterministic Q15 mixing, readiness, drain, cancellation, close and process-exit cleanup; verifies a QEMU WAV artifact when that backend is available. |
 | 29. SDL 2 application lifecycle | `native-sdl` | Runs the real SDL Sapote video, event, timer, thread, filesystem, and audio backends twice; requires partial presentation, injected key and pointer input, non-silent queued PCM, synchronized preference state on relaunch, and a clean resource census. |
 | 30. Dynamic shared object, TLS, and lifecycle | `native-dynamic` | Installs one PIE/DSO package, authenticates its catalog and SONAME digest, relocates with root-first lookup scope, proves library initial-exec plus root local-exec TLS, and requires dependency/root constructors and reverse destructors in exact order before the clean census. |
+| 31. Validated HTTPS download | `native-https` | Uses fail-closed strong hardware entropy plus the pinned-RTC offline Ethernet/DHCP/DNS/TCP/TLS peer, validates the pinned chain, hostname, certificate time, strict Content-Length body, authenticated close and encrypted PCAP, synchronizes the exact body to Data, and requires clean process/network censuses. |
 
 The Makefile owns the expected debug-exit values and exact serial expressions.
 The native-porting workflow retains serial logs, writable Data images, Canvas
 and SDL media, available native-audio and SDL WAV captures, the Lua ELF/map,
-the dynamic root/library/catalog and `readelf` reports, and the native-network
-packet capture and peer log from the same commit.
+the dynamic root/library/catalog and `readelf` reports, HTTPS encrypted packet
+capture and peer log, and the native-network packet capture and peer log from
+the same commit.

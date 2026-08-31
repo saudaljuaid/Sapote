@@ -246,7 +246,7 @@ keeping development diaries in the active documentation set.
 
 ## Current limits
 
-Sapote has no SMP, IPv6, transport TLS, firewall, routing, Wi-Fi, IOMMU,
+Sapote has no SMP, IPv6, general-purpose transport TLS, firewall, routing, Wi-Fi, IOMMU,
 general Unix VFS, journaled crash recovery, hosted `ld.so`/`dlopen`, signals,
 ambient Unix descriptor table, broad hardware support, or browser. Native ABI
 v1 is stable within its documented static and bounded PIE/DSO profiles, not a

@@ -61,11 +61,16 @@ jobs:
                       build/tests/native-sdl/sdl.png
                       build/tests/native-sdl/sdl.mp4
                       build/tests/native-sdl/native-sdl.wav
+                      build/tests/native-https/network.pcap
+                      build/tests/native-https/fixture.log
+                      build/tests/native-https/packet-audit.json
                       build/native-dynamic/DYNROOT.APP
                       build/native-dynamic/DYNLIB.SO
                       build/native-dynamic/DYNROOT.CAT
                       build/native-dynamic/DYNROOT.readelf
                       build/native-dynamic/DYNLIB.readelf
+                      build/native-https/HTTPS.APP
+                      build/native-https/HTTPS.map
                       build/tests/network-native/serial.log
                       build/tests/network-native/data.raw
                       build/tests/network-native/network.pcap

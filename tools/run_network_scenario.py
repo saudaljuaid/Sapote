@@ -38,9 +38,11 @@ STORAGE = {
     "network-studio",
     "network-persistence",
     "network-native",
+    "native-https",
 }
 
 FIXTURE_MODE = {
+    "native-https": "https",
     "network-dhcp-timeout": "dhcp-timeout",
     "network-icmp-timeout": "silent",
     "network-dns-cname": "dns-cname",
@@ -225,6 +227,11 @@ def run(args: argparse.Namespace) -> int:
         "-monitor", "none", "-serial", "stdio", "-device",
         "isa-debug-exit,iobase=0xf4,iosize=0x04",
     ]
+    if args.scenario == "native-https":
+        qemu.extend([
+            "-cpu", "max",
+            "-rtc", "base=2026-08-31T00:00:00,clock=vm",
+        ])
     qemu.extend(boot_arguments(args, output))
     qemu.extend(storage_arguments(args, output))
     if args.scenario not in NO_NIC:
@@ -291,6 +298,23 @@ def run(args: argparse.Namespace) -> int:
                 "cancellation passed\n"
             ) == 1
         )
+    if args.scenario == "native-https" and healthy:
+        required = (
+            "SAPOTE HTTPSAPP PHASE start\n",
+            "SAPOTE HTTPSAPP PHASE authenticated-download PASS\n",
+            "SAPOTE HTTPSAPP PHASE durable-output PASS\n",
+            "SAPOTE HTTPSAPP PASS hostname time trust length close\n",
+            "Sapote: HTTPS strong hardware entropy passed\n",
+            "Sapote: HTTPS TLS 1.2 hostname time trust framing close and "
+            "teardown passed\n",
+        )
+        healthy = all(transcript.count(marker) == 1 for marker in required)
+        if healthy:
+            audited = subprocess.run([
+                args.python, str(args.audit.resolve()), str(capture),
+                "--https", "--json", str(audit),
+            ], check=False)
+            healthy = audited.returncode == 0
     if args.scenario == "network-http-length" and healthy:
         audited = subprocess.run([
             args.python, str(args.audit.resolve()), str(capture),

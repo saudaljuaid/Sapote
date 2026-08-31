@@ -20,7 +20,7 @@ rejects warnings, unresolved symbols, unexpected sections, W+X mappings,
 floating-point or SIMD instructions in the kernel, modified pinned assets, and
 non-reproducible filesystem images.
 
-`make qemu-tests` runs the complete 115-scenario guest suite. The Makefile is
+`make qemu-tests` runs the complete 116-scenario guest suite. The Makefile is
 the source of truth for scenario names and expected results.
 
 The `native-canvas` scenario captures `canvas.png` and `canvas.mp4` directly
@@ -39,6 +39,14 @@ The `native-dynamic` scenario installs one package containing a PIE root,
 an authenticated dependency catalog, and `DYNLIB.SO`. It requires library
 then root constructors, the Ring 3 TLS proof, root then library destructors,
 and the kernel's clean resource census in that exact serial order.
+
+The `native-https` scenario uses a deterministic offline Ethernet/DHCP/DNS/
+TCP/TLS peer. Ring 3 validates the pinned chain, hostname, wall-clock validity,
+HTTP/1.1 framing and authenticated close, synchronizes the exact body to Data,
+and then passes only after the kernel observes a clean process/network census.
+Its independent PCAP audit requires port-443 TLS records and rejects plaintext
+request, response-line, or body bytes. The scenario uses QEMU's `max` CPU and a
+pinned in-certificate RTC, and it requires the strong-hardware-entropy marker.
 
 [`NATIVE_SCENARIOS.md`](NATIVE_SCENARIOS.md) maps each required native
 application proof to its Ring 3 action, exact QEMU scenario, and retained

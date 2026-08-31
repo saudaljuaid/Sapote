@@ -31,9 +31,10 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	multiprocess multiprocess-slots driver-matrix driver-matrix-builtin audio \
 	nvidia nvidia-builtin native native-lua native-sqlite native-canvas \
 	native-rust native-crash native-elf-refusal native-digest-refusal \
-	native-abi-refusal native-relaunch native-audio native-sdl native-dynamic
+	native-abi-refusal native-relaunch native-audio native-sdl native-dynamic \
+	native-https
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 115
+EXPECTED_TEST_SCENARIO_COUNT := 116
 EXPECTED_SHELL_ASSERTION_COUNT := 454
 
 CC := gcc
@@ -48,6 +49,9 @@ SDK_LD ?= ld.lld
 SDK_AR ?= ar
 READELF ?= readelf
 FFMPEG ?= ffmpeg
+HOST_EXEEXT := $(if $(filter Windows_NT,$(OS)),.exe,)
+HOST_SOCKET_LIBS := $(if $(filter Windows_NT,$(OS)),-lws2_32,)
+HOST_THREAD_FLAGS := $(if $(filter Windows_NT,$(OS)),,-pthread)
 QEMU_ACCEL ?= tcg
 GRUB_MKRESCUE ?= grub-mkrescue
 GRUB_MODULE_DIR ?=
@@ -73,9 +77,11 @@ WALL_CLOCK_HOST_TEST := $(TEST_BUILD_DIR)/wall-clock-host-test
 SDK_TIME_HOST_TEST := $(TEST_BUILD_DIR)/sdk-time-host-test
 PACKAGE_STATE_HOST_TEST := $(TEST_BUILD_DIR)/package-state-host-test
 PACKAGE_SERVICE_HOST_TEST := $(TEST_BUILD_DIR)/package-service-host-test
-TLS_HOST_TEST := $(TEST_BUILD_DIR)/tls-client-host-test
+TLS_HOST_TEST := $(TEST_BUILD_DIR)/tls-client-host-test$(HOST_EXEEXT)
 TLS_HOST_OBJECT := $(TEST_BUILD_DIR)/tls-client.o
 TLS_HOST_WRAPPER_OBJECT := $(TEST_BUILD_DIR)/tls-wrapper.o
+HTTPS_HOST_TEST := $(TEST_BUILD_DIR)/https-client-host-test$(HOST_EXEEXT)
+HTTPS_HOST_OBJECT := $(TEST_BUILD_DIR)/https-client-host.o
 ZLIB_HOST_TEST := $(TEST_BUILD_DIR)/zlib-host-test
 EXT4_FIXTURE := $(TEST_BUILD_DIR)/ext4/sapote-ext4.raw
 RUST_SOURCES := $(wildcard src/rust/*.rs)
@@ -271,6 +277,11 @@ NETAPP_APP := $(NETAPP_DIR)/NETAPP.APP
 NETAPP_PACKAGE := $(NETAPP_DIR)/NETAPP.SPK
 NETAPP_SYSTEM_IMAGE := $(NETAPP_DIR)/system.raw
 NETAPP_DATA_IMAGE := $(NETAPP_DIR)/data.raw
+HTTPSAPP_DIR := $(BUILD_DIR)/native-https
+HTTPSAPP_APP := $(HTTPSAPP_DIR)/HTTPS.APP
+HTTPSAPP_PACKAGE := $(HTTPSAPP_DIR)/HTTPSAPP.SPK
+HTTPSAPP_SYSTEM_IMAGE := $(HTTPSAPP_DIR)/system.raw
+HTTPSAPP_DATA_IMAGE := $(HTTPSAPP_DIR)/data.raw
 AUDIO_APP_DIR := $(BUILD_DIR)/native-audio
 AUDIO_APP := $(AUDIO_APP_DIR)/AUDIO.APP
 AUDIO_PACKAGE := $(AUDIO_APP_DIR)/AUDIO.SPK
@@ -351,8 +362,8 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d) $(SDL2_OBJECTS:.o=.d)
 # implicit and pattern rule search for a phony target, so declaring them phony
 # makes every scenario resolve to "nothing to be done" and pass without booting.
 # They never create a file of their own name, so they rerun regardless.
-.PHONY: all audio-wav-tests capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios dynamic-elf-tests ext4-images ext4-tests fat32-images hooks \
-	iso kernel lint native-apps native-audio-proof native-dynamic-proof native-sdl-proof port-tests qemu-port-tests reproducible-sdk run \
+.PHONY: all audio-wav-tests capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios dynamic-elf-tests ext4-images ext4-tests fat32-images hooks https-tests \
+	iso kernel lint native-apps native-audio-proof native-dynamic-proof native-https-proof native-sdl-proof port-tests qemu-port-tests reproducible-sdk run \
 	package-repository-tests package-service-tests package-state-tests package-transaction-tests screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests zlib-tests
 
 all: kernel
@@ -458,6 +469,9 @@ $(CANVAS_APP_DIR):
 	mkdir -p $@
 
 $(NETAPP_DIR):
+	mkdir -p $@
+
+$(HTTPSAPP_DIR):
 	mkdir -p $@
 
 $(AUDIO_APP_DIR):
@@ -599,6 +613,27 @@ $(NETAPP_SYSTEM_IMAGE): $(NETAPP_PACKAGE) tools/sapote-package.py \
 $(NETAPP_DATA_IMAGE): tools/fat32_image.py | $(NETAPP_DIR)
 	$(PYTHON) tools/fat32_image.py format data $@
 
+$(HTTPSAPP_DIR)/main.o: apps/native-https/main.c \
+		apps/native-https/trust_anchor.h $(SDK_BUILD_DIR)/.installed | \
+		$(HTTPSAPP_DIR)
+	$(SDK_CC) $(SDK_CFLAGS) -c $< -o $@
+
+$(HTTPSAPP_APP): $(HTTPSAPP_DIR)/main.o $(SDK_BUILD_DIR)/.installed
+	$(SDK_LD) $(SDK_LDFLAGS) -Map=$(HTTPSAPP_DIR)/HTTPS.map \
+		-o $@ $(SDK_CRT) $< $(SDK_LIB) $(BEARSSL_LIB)
+
+$(HTTPSAPP_PACKAGE): $(HTTPSAPP_APP) apps/native-https/manifest.json
+	$(PYTHON) tools/sapote-package.py build \
+		--spec apps/native-https/manifest.json --executable $< --output $@
+
+$(HTTPSAPP_SYSTEM_IMAGE): $(HTTPSAPP_PACKAGE) tools/sapote-package.py \
+		tools/fat32_image.py
+	$(PYTHON) tools/sapote-package.py install-system \
+		--output $@ $(HTTPSAPP_PACKAGE)
+
+$(HTTPSAPP_DATA_IMAGE): tools/fat32_image.py | $(HTTPSAPP_DIR)
+	$(PYTHON) tools/fat32_image.py format data $@
+
 $(AUDIO_APP_DIR)/main.o: apps/native-audio/main.c \
 		$(SDK_BUILD_DIR)/.installed | $(AUDIO_APP_DIR)
 	$(SDK_CC) $(SDK_CFLAGS) -c $< -o $@
@@ -718,6 +753,7 @@ $(ADMISSION_DATA_IMAGE): tools/fat32_image.py | $(ADMISSION_DIR)
 
 native-apps: $(NATIVE_TEST_PACKAGE) $(LUA_PACKAGE) $(SQLITE_PACKAGE) \
 	$(CANVAS_PACKAGE) $(CANVAS_PROOF_PACKAGE) $(NETAPP_PACKAGE) \
+	$(HTTPSAPP_PACKAGE) \
 	$(AUDIO_PACKAGE) $(AUDIO_REFUSAL_PACKAGE) $(RUST_APP_PACKAGE) \
 	$(CRASH_PACKAGE) $(SDL_PROOF_PACKAGE) $(DYNAMIC_PACKAGE)
 
@@ -734,6 +770,10 @@ native-dynamic-proof: $(DYNAMIC_SYSTEM_IMAGE) $(DYNAMIC_DATA_IMAGE) \
 		dynamic-elf-tests
 	@echo 'native dynamic ELF package and images built'
 
+native-https-proof: $(HTTPSAPP_SYSTEM_IMAGE) $(HTTPSAPP_DATA_IMAGE) \
+		https-tests
+	@echo 'native authenticated HTTPS package and images built'
+
 port-tests: native-apps audio-wav-tests
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(NATIVE_TEST_APP)' \
 		$(RUSTC) --edition 2024 --test -D warnings \
@@ -746,6 +786,8 @@ port-tests: native-apps audio-wav-tests
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(CANVAS_APP)' \
 		$(RUST_NATIVE_IMAGE_TEST)
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(NETAPP_APP)' \
+		$(RUST_NATIVE_IMAGE_TEST)
+	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(HTTPSAPP_APP)' \
 		$(RUST_NATIVE_IMAGE_TEST)
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(AUDIO_APP)' \
 		$(RUST_NATIVE_IMAGE_TEST)
@@ -762,6 +804,7 @@ port-tests: native-apps audio-wav-tests
 	$(PYTHON) tools/sapote-package.py inspect $(CANVAS_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(CANVAS_PROOF_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(NETAPP_PACKAGE)
+	$(PYTHON) tools/sapote-package.py inspect $(HTTPSAPP_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(AUDIO_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(AUDIO_REFUSAL_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(SDL_PROOF_PACKAGE)
@@ -774,8 +817,8 @@ qemu-port-tests: qemu-test-native qemu-test-native-lua qemu-test-native-sqlite \
 	qemu-test-native-crash qemu-test-native-elf-refusal \
 	qemu-test-native-digest-refusal qemu-test-native-abi-refusal \
 	qemu-test-native-relaunch qemu-test-native-audio qemu-test-native-sdl \
-	qemu-test-native-dynamic
-	@echo 'native userspace, Lua, SQLite, Canvas, network, audio, SDL, dynamic ELF and Rust QEMU scenarios passed'
+	qemu-test-native-dynamic qemu-test-native-https
+	@echo 'native userspace, Lua, SQLite, Canvas, network, HTTPS, audio, SDL, dynamic ELF and Rust QEMU scenarios passed'
 
 contract-counts:
 	@printf '%s %s\n' '$(EXPECTED_TEST_SCENARIO_COUNT)' \
@@ -1084,11 +1127,12 @@ $(TLS_HOST_OBJECT): tools/tls-client-host-test.c \
 	mkdir -p $(dir $@)
 	$(CC) -Iinclude -Ivendor/bearssl/inc -idirafter sdk/include \
 		-std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -Wshadow \
-		-Wundef -Wstrict-prototypes -Wmissing-prototypes -c $< -o $@
+		-Wundef -Wstrict-prototypes -Wmissing-prototypes \
+		$(HOST_THREAD_FLAGS) -c $< -o $@
 
 $(TLS_HOST_TEST): $(TLS_HOST_OBJECT) $(TLS_HOST_WRAPPER_OBJECT) \
 		$(TLS_HOST_BEARSSL_LIB)
-	$(CC) $^ -o $@
+	$(CC) $^ $(HOST_THREAD_FLAGS) $(HOST_SOCKET_LIBS) -o $@
 
 tls-tests: $(TLS_HOST_TEST) tools/tls_host_test.py \
 		tests/fixtures/tls/anchor.txt tests/fixtures/tls/ca.pem \
@@ -1097,6 +1141,29 @@ tls-tests: $(TLS_HOST_TEST) tools/tls_host_test.py \
 		tests/fixtures/tls/future.pem tests/fixtures/tls/future-key.pem \
 		tests/fixtures/tls/untrusted.pem tests/fixtures/tls/untrusted-key.pem
 	$(PYTHON) -u tools/tls_host_test.py $(TLS_HOST_TEST)
+
+$(HTTPS_HOST_OBJECT): tools/https-client-host-test.c \
+		apps/native-https/trust_anchor.h sdk/include/sapote/tls.h
+	mkdir -p $(dir $@)
+	$(CC) -Iinclude -Ivendor/bearssl/inc -idirafter sdk/include \
+		-std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -Wshadow \
+		-Wundef -Wstrict-prototypes -Wmissing-prototypes \
+		$(HOST_THREAD_FLAGS) -c $< -o $@
+
+$(HTTPS_HOST_TEST): $(HTTPS_HOST_OBJECT) $(TLS_HOST_WRAPPER_OBJECT) \
+		$(TLS_HOST_BEARSSL_LIB)
+	$(CC) $^ $(HOST_THREAD_FLAGS) $(HOST_SOCKET_LIBS) -o $@
+
+https-tests: $(HTTPS_HOST_TEST) tools/https_host_test.py \
+		tools/https_anchor.py tools/https_network_fixture.py \
+		tests/fixtures/tls/ca.pem tests/fixtures/tls/valid.pem \
+		tests/fixtures/tls/valid-key.pem tests/fixtures/tls/expired.pem \
+		tests/fixtures/tls/expired-key.pem tests/fixtures/tls/future.pem \
+		tests/fixtures/tls/future-key.pem tests/fixtures/tls/untrusted.pem \
+		tests/fixtures/tls/untrusted-key.pem
+	$(PYTHON) tools/https_anchor.py audit
+	$(PYTHON) tools/https_network_fixture.py --self-test
+	$(PYTHON) -u tools/https_host_test.py $(HTTPS_HOST_TEST)
 
 $(EXT4_FIXTURE): tools/ext4_image.py
 	mkdir -p $(dir $@)
@@ -1110,7 +1177,7 @@ verify: toolchain lint
 	$(MAKE) wall-clock-tests ext4-tests package-repository-tests \
 		package-transaction-tests package-state-tests package-service-tests \
 		dynamic-elf-tests \
-		tls-tests zlib-tests
+		https-tests tls-tests zlib-tests
 	$(PYTHON) tools/verify-ui-assets.py
 	@test '$(LOGO_MAX_DIMENSION)' -eq 280
 	@test '$(STUDIO_ICON_MAX_DIMENSION)' -eq 80
@@ -1973,6 +2040,18 @@ qemu-test-network-%: $(TEST_BUILD_DIR)/network-%/sapote.iso
 		--system "$$system" --data "$$data" \
 		--full '$(FAT32_FULL_IMAGE)' --qemu qemu-system-x86_64 \
 		--python '$(PYTHON)' --accel '$(QEMU_ACCEL)' --timeout "$$timeout"
+
+qemu-test-native-https: $(TEST_BUILD_DIR)/native-https/sapote.iso
+	$(MAKE) '$(HTTPSAPP_SYSTEM_IMAGE)' '$(HTTPSAPP_DATA_IMAGE)'
+	$(PYTHON) tools/run_network_scenario.py \
+		--scenario native-https --expected 11 --iso '$<' \
+		--output '$(TEST_BUILD_DIR)/native-https' \
+		--fixture tools/https_network_fixture.py \
+		--audit tools/network_packet_audit.py \
+		--system '$(HTTPSAPP_SYSTEM_IMAGE)' \
+		--data '$(HTTPSAPP_DATA_IMAGE)' --full '$(FAT32_FULL_IMAGE)' \
+		--qemu qemu-system-x86_64 --python '$(PYTHON)' \
+		--accel '$(QEMU_ACCEL)' --timeout 180
 
 qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 	@for tool in qemu-system-x86_64 timeout grep; do \

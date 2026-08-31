@@ -92,11 +92,12 @@ is immutable; writable Data paths are rooted below the application namespace.
 | `0x0300 TIME_MONOTONIC()` | Nanoseconds | I | Reads the monotonic clock; no resource change. |
 | `0x0301 SLEEP_UNTIL(deadline_ns)` | `0` | P | Parks the caller until the absolute deadline. Process teardown cancels the saved wait state. A past deadline returns immediately. |
 | `0x0302 WAIT(*request)` | Ready count or `-ETIMEDOUT` | P | Copies at most eight items before parking and copies the complete set back on wake. Handles remain caller-owned; close or cancellation makes the observed item report its defined state. |
-| `0x0303 RANDOM(buffer, length)` | Bytes written | K | Borrows a writable range and fills it in bounded chunks. A positive partial result is reported only for bytes already copied. |
+| `0x0303 RANDOM(buffer, length)` | Bytes written | K | Borrows a writable range and fills it from the bounded non-cryptographic generator. A positive partial result is reported only for bytes already copied; cryptographic callers use `RANDOM_STRONG`. |
 | `0x0304 TIMER_CREATE()` | Owned timer handle | I | Creates an initially disarmed typed wait object. Close explicitly or at process exit. |
 | `0x0305 TIMER_SET(*request)` | `0` | I | Replaces the timer's absolute deadline. The timer remains owned and reusable; setting does not transfer it to a waiter. |
 | `0x0306 CANCEL(handle)` | `0` | K | Disarms a timer or sets cancellation on a stream/datagram object. It neither closes nor consumes the handle; unsupported handle types fail. |
 | `0x0307 TIME_REALTIME()` | UTC Unix seconds or `-EIO` | K | Performs one bounded coherent CMOS/RTC read. It owns no object. RTC validity does not affect monotonic deadlines. |
+| `0x0308 RANDOM_STRONG(buffer, length)` | Bytes written or `-EIO` | K | Bypasses the non-cryptographic generator and copies only repetition-checked RDSEED/RDRAND output. It fails closed when strong hardware entropy is unavailable. |
 
 ### Redwood window, surface, and input
 

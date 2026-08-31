@@ -41,9 +41,10 @@ libraries before any NetSurf code enters this repository.
 5. **Resource loader.** Add read-only application resources on the System
    volume and a separate bounded cache on Data. Cache writes use temporary-file
    sync-and-replace. No web content may write System.
-6. **TLS gate.** HTTPS remains disabled until every prerequisite in
-   `TLS_EVALUATION.md` is implemented and independently tested. Plain HTTP UI
-   must visibly state that transport is unauthenticated.
+6. **TLS gate.** Browser HTTPS remains disabled until the wider release gate in
+   `TLS_EVALUATION.md` is implemented and independently tested. The bounded SDK
+   client is not a browser root-store, origin-policy, or update solution. Plain
+   HTTP UI must visibly state that transport is unauthenticated.
 7. **Content isolation.** Run the frontend and fetched content in a private
    process generation. Add per-origin storage only after path, quota, eviction,
    and teardown policies exist. Downloads require an explicit user action and
@@ -53,20 +54,21 @@ libraries before any NetSurf code enters this repository.
 
 The current kernel lacks several services a browser engine normally assumes:
 
-- a general allocator ABI and more than one long-lived native process;
-- threads, thread-local storage, mutexes/condition variables, and asynchronous
-  worker completion;
+- a browser-scale allocator and a policy for many long-lived native processes;
+- condition variables and browser-scale asynchronous worker completion beyond
+  the bounded native thread, TLS, and mutex services;
 - locale, Unicode normalization/shaping, scalable fonts, clipboard and IME;
 - dynamic loading, sockets compatible with a hosted libc, signals and files as
   general descriptors;
-- wall-clock/calendar time and a maintained root certificate store;
-- TLS, compression/content-encoding, cookies, cache policy and same-origin
-  storage;
+- a maintained browser root certificate store and clock rollback policy;
+- browser-integrated/release-gated TLS, compression/content-encoding, cookies,
+  cache policy and same-origin storage;
 - robust crash containment, watchdogs, per-process quotas, and update delivery.
 
 The first executable target is an offline, pinned HTML/CSS fixture rendered in
 a private process with no networking. Plain HTTP against the offline peer comes
-next. Internet URLs, JavaScript, downloads, and HTTPS remain separate projects.
+next. Internet URLs, JavaScript, downloads, and browser HTTPS remain separate
+projects.
 
 ## Acceptance sequence
 

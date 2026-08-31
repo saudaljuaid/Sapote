@@ -3327,13 +3327,17 @@ static enum network_status prepare_native_network(
 static int64_t syscall_random(
     struct native_process *process,
     uint64_t address,
-    size_t length
+    size_t length,
+    bool require_strong
 )
 {
     size_t completed = 0U;
 
     if ((process->manifest.capabilities & SAPOTE_CAP_ENTROPY) == 0U) {
         return -SAPOTE_EACCES;
+    }
+    if (length > RANDOM_MAX_REQUEST_BYTES) {
+        return -SAPOTE_EINVAL;
     }
     if (length == 0U) {
         return 0;
@@ -3347,7 +3351,11 @@ static int64_t syscall_random(
         if (chunk > RANDOM_MAX_REQUEST_BYTES) {
             chunk = RANDOM_MAX_REQUEST_BYTES;
         }
-        if (random_bytes(process->transfer, chunk) != RANDOM_STATUS_OK ||
+        const enum random_status status = require_strong ?
+            random_strong_bytes(process->transfer, chunk) :
+            random_bytes(process->transfer, chunk);
+
+        if (status != RANDOM_STATUS_OK ||
             !copy_to_user(process, address + completed, process->transfer,
                 chunk)) {
             return completed == 0U ? -SAPOTE_EIO : (int64_t)completed;
@@ -4884,7 +4892,9 @@ static int64_t dispatch_syscall(
     case SAPOTE_SYS_WAIT:
         return syscall_wait(process, frame->rdi);
     case SAPOTE_SYS_RANDOM:
-        return syscall_random(process, frame->rdi, (size_t)frame->rsi);
+        return syscall_random(process, frame->rdi, (size_t)frame->rsi, false);
+    case SAPOTE_SYS_RANDOM_STRONG:
+        return syscall_random(process, frame->rdi, (size_t)frame->rsi, true);
     case SAPOTE_SYS_TIMER_CREATE:
         return (process->manifest.capabilities & SAPOTE_CAP_TIME) != 0U ?
             syscall_timer_create(process) : -SAPOTE_EACCES;

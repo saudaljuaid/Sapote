@@ -66,6 +66,7 @@ uint64_t sapote_monotonic_ns(void);
 long sapote_realtime_seconds(void);
 long sapote_sleep_until(uint64_t deadline_ns);
 long sapote_random(void *buffer, size_t length);
+long sapote_random_strong(void *buffer, size_t length);
 
 #ifdef __cplusplus
 }

@@ -8,8 +8,10 @@ BAR, MSI-X, split virtqueue, DMA-ownership, protocol, syscall or Terminal, and
 FAT32/NVMe paths. The deterministic peer is a host-side Ethernet endpoint; it
 does not inject results into private kernel helpers.
 
-This is not an Internet-security claim. Sapote has no IPv6, TLS, firewall,
-routing, Wi-Fi, physical-NIC support, or browser.
+This is not an Internet-security claim. Sapote has no IPv6, general-purpose
+transport TLS, firewall, routing, Wi-Fi, physical-NIC support, or browser. A
+separate bounded TLS 1.2/HTTPS SDK profile is documented in `TLS.md` and
+`HTTPS.md`.
 
 ## Device contract
 
@@ -179,9 +181,10 @@ packets, and IPv4 checksum failures.
 `random.c` mixes RDSEED and RDRAND when available with calibrated timing and
 monotonic state. Boot explicitly records `strong`, `hardware`, or `degraded`.
 The API never claims cryptographic strength when only the degraded source is
-available. DHCP/DNS/TCP identifiers still avoid fixed constants, but HTTPS and
-other cryptographic protocols remain prohibited until the TLS prerequisites are
-met.
+available. DHCP/DNS/TCP identifiers still avoid fixed constants. The bounded
+TLS client instead uses the fail-closed `RANDOM_STRONG` call, which bypasses the
+non-cryptographic generator and samples repetition-checked RDSEED/RDRAND output
+directly. Other cryptographic protocols remain outside this networking profile.
 
 ## Deterministic evidence
 

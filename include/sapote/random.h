@@ -19,6 +19,7 @@ enum random_status {
     RANDOM_STATUS_NULL_ARGUMENT,
     RANDOM_STATUS_TOO_LARGE,
     RANDOM_STATUS_NOT_INITIALIZED,
+    RANDOM_STATUS_NOT_STRONG,
     RANDOM_STATUS_COUNT
 };
 
@@ -32,6 +33,7 @@ struct random_state {
 
 void random_initialize(void);
 enum random_status random_bytes(void *destination, size_t length);
+enum random_status random_strong_bytes(void *destination, size_t length);
 uint16_t random_u16(void);
 uint32_t random_u32(void);
 struct random_state random_get_state(void);

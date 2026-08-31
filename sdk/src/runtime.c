@@ -301,6 +301,12 @@ long sapote_random(void *buffer, size_t length)
         length);
 }
 
+long sapote_random_strong(void *buffer, size_t length)
+{
+    return sapote_syscall2(SAPOTE_SYS_RANDOM_STRONG,
+        (uint64_t)(uintptr_t)buffer, length);
+}
+
 int sapote_runtime_path(const char *input, struct sapote_runtime_path *result)
 {
     if (input == NULL || result == NULL || *input == '\0') {

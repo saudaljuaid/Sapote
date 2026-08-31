@@ -38,6 +38,7 @@
 #include <sapote/pit.h>
 #include <sapote/pointer.h>
 #include <sapote/process.h>
+#include <sapote/random.h>
 #include <sapote/keyboard.h>
 #include <sapote/linux_abi.h>
 #include <sapote/linux_cat.h>
@@ -574,6 +575,9 @@ static enum kernel_test_scenario scenario_from_value(
     if (token_equals(value, length, "native-dynamic")) {
         return KERNEL_TEST_NATIVE_DYNAMIC;
     }
+    if (token_equals(value, length, "native-https")) {
+        return KERNEL_TEST_NATIVE_HTTPS;
+    }
 
     return KERNEL_TEST_INVALID;
 }
@@ -764,6 +768,7 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
     case KERNEL_TEST_NATIVE_AUDIO: return UINT8_C(0x82);
     case KERNEL_TEST_NATIVE_SDL: return UINT8_C(0x83);
     case KERNEL_TEST_NATIVE_DYNAMIC: return UINT8_C(0x84);
+    case KERNEL_TEST_NATIVE_HTTPS: return UINT8_C(0x85);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -4739,6 +4744,7 @@ void kernel_test_run(
     case KERNEL_TEST_NATIVE_AUDIO:
     case KERNEL_TEST_NATIVE_SDL:
     case KERNEL_TEST_NATIVE_DYNAMIC:
+    case KERNEL_TEST_NATIVE_HTTPS:
         /* Deferred until Sapote Redwood and the Boot Ledger are published. */
         return;
     case KERNEL_TEST_MULTIPROCESS_SLOTS:
@@ -5293,6 +5299,56 @@ _Noreturn void kernel_test_complete_native_dynamic(void)
     }
     console_write(
         "Sapote: dynamic ELF shared library, TLS and lifecycle passed\n");
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_native_https(void)
+{
+    static const uint8_t expected[] =
+        "hello from the Sapote HTTPS peer\n";
+    struct native_process_result proof = { 0 };
+    struct sapfs_stat output;
+    struct network_state network;
+    sapfs_handle file;
+    uint8_t bytes[sizeof(expected) - 1U];
+    size_t read_bytes = 0U;
+    bool matches = true;
+
+    if (active_scenario != KERNEL_TEST_NATIVE_HTTPS) {
+        kernel_test_fail("native HTTPS completion used outside its scenario");
+    }
+    if (random_get_state().capability != RANDOM_CAPABILITY_INITIALIZED) {
+        kernel_test_fail("native HTTPS did not retain strong hardware entropy");
+    }
+    if (native_process_launch("HTTPSAPP.MAN", &proof) != NATIVE_PROCESS_OK ||
+        !proof.exited || proof.faulted || proof.exit_status != 0 ||
+        !proof.resources_released || proof.syscall_count < 15U ||
+        proof.thread_switches == 0U || !native_process_resources_released()) {
+        kernel_test_fail("native HTTPS client did not leave a clean census");
+    }
+    network = network_get_state();
+    if (network.udp_sockets != 0U || network.tcp_connections != 0U ||
+        network.timers != 0U) {
+        kernel_test_fail("native HTTPS network resources survived teardown");
+    }
+    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "HTTPSAPP/HTTPS.TXT", &output) !=
+            SAPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
+        sapfs_open(SAPFS_VOLUME_DATA, "HTTPSAPP/HTTPS.TXT", SAPFS_ACCESS_READ,
+            &file) != SAPFS_STATUS_OK ||
+        sapfs_read(file, bytes, sizeof(bytes), &read_bytes) != SAPFS_STATUS_OK ||
+        read_bytes != sizeof(bytes)) {
+        kernel_test_fail("authenticated HTTPS body is missing from Data");
+    }
+    for (size_t index = 0U; index < sizeof(bytes); ++index) {
+        matches = matches && bytes[index] == expected[index];
+    }
+    if (sapfs_close(file) != SAPFS_STATUS_OK || !matches) {
+        kernel_test_fail("authenticated HTTPS body contents are wrong");
+    }
+    console_write("Sapote: HTTPS strong hardware entropy passed\n");
+    console_write(
+        "Sapote: HTTPS TLS 1.2 hostname time trust framing close and teardown passed\n");
+    console_write("ST NETWORK production path bounded and recoverable\n");
     kernel_test_pass();
 }
 
@@ -8866,6 +8922,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "native-sdl";
     case KERNEL_TEST_NATIVE_DYNAMIC:
         return "native-dynamic";
+    case KERNEL_TEST_NATIVE_HTTPS:
+        return "native-https";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

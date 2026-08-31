@@ -281,6 +281,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         kernel_test_complete_native_dynamic();
     }
 
+    if (installed_context.test_scenario == KERNEL_TEST_NATIVE_HTTPS) {
+        kernel_test_complete_native_https();
+    }
+
     if (installed_context.test_scenario >=
             KERNEL_TEST_NETWORK_NIC_DISCOVERY &&
         installed_context.test_scenario <=

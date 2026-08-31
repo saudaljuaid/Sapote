@@ -1,15 +1,18 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
 
-# TLS evaluation
+# TLS evaluation and release gate
 
-Sapote 2.1.0 does not implement TLS or HTTPS. `https://` is rejected by the
-HTTP parser, and degraded entropy is reported honestly. Plain HTTP provides no
-server authentication, confidentiality, or integrity against an active peer.
+Sapote now has a pinned, bounded BearSSL TLS 1.2 SDK client and strict
+single-response HTTPS download profile. The desktop HTTP parser remains a
+separate plaintext facility and does not upgrade `https://` URLs. This SDK
+slice is not yet a general Internet or release-ready HTTPS claim; see `TLS.md`
+and `HTTPS.md` for its implemented boundary and evidence.
 
-## Required platform work
+## Platform requirements
 
-TLS cannot be enabled by adding a cipher implementation alone. The platform
-must first provide:
+TLS was not enabled by adding a cipher implementation alone. The bounded SDK
+profile consumes kernel entropy, validated realtime, DNS, stream, deadline,
+cancellation, and handle services. Release work still includes:
 
 - a cryptographically strong, continuously health-checked entropy source and
   DRBG with explicit failure behavior;
@@ -27,7 +30,7 @@ must first provide:
 
 ## Library assessment
 
-BearSSL is the closest architectural fit for an initial experiment. Its
+BearSSL is the selected architectural fit for the bounded client. Its
 [documented design](https://bearssl.org/) uses a caller-driven state machine,
 does no dynamic allocation, is intended for small and bare-metal systems, and
 can integrate with polling outside the engine. Its
@@ -35,12 +38,11 @@ can integrate with polling outside the engine. Its
 all context and record buffers, which is compatible with Sapote's explicit
 bounds.
 
-It is not ready to ship unchanged. The published release is TLS 1.2-focused;
+It is not a complete web stack. The published release is TLS 1.2-focused;
 the project describes TLS 1.3 and richer X.509 path building as unresolved
-design work. Sapote would still own entropy, time, trust anchors, hostname
-policy, I/O adaptation, updates, zeroization, and security response. A pinned
-BearSSL experiment must therefore remain disabled by default and cannot justify
-an HTTPS claim.
+design work. Sapote still owns entropy, time, trust anchors, hostname policy,
+I/O adaptation, updates, zeroization, and security response. The pinned
+profile therefore cannot by itself justify a release-wide HTTPS claim.
 
 Other options are less suitable today:
 
@@ -51,14 +53,14 @@ Other options are less suitable today:
 - rustls would require a substantially more complete Rust userspace runtime,
   allocator, threading and ecosystem port than Sapote currently has.
 
-## Proposed bounded profile
+## Implemented bounded profile
 
-If the prerequisites are completed, the first experimental profile should be a
-client-only, static build with one connection, TLS 1.2 ECDHE, AEAD-only cipher
-suites, SNI, strict WebPKI validation, fixed record and chain buffers, no client
-certificates, no renegotiation, no session persistence, and explicit refusal of
-unsupported algorithms or oversized messages. This profile is deliberately
-narrow and would not constitute broad web compatibility.
+The first profile is a client-only static build with one connection, TLS 1.2
+ECDHE, AEAD-only cipher suites, SNI, external bounded trust anchors, strict
+hostname/chain/time validation, fixed record and header buffers, no client
+certificates, no renegotiation, no session persistence, and explicit refusal
+of unsupported or oversized HTTP records. It deliberately does not constitute
+broad web compatibility.
 
 ## Release gate
 
@@ -68,3 +70,5 @@ teardown; the packet audit confirms that HTTP plaintext is absent from PCAP;
 expired, wrong-name, unknown-root, malformed-chain, weak-algorithm, bad-record,
 truncation, replay, entropy-failure, timeout and reset controls all fail closed;
 and an independent review has no unresolved high-severity finding.
+
+The bounded SDK/QEMU profile does not claim to pass this wider release gate.

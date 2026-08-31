@@ -34,6 +34,7 @@ long sapote_stream_write(sapote_handle_t stream, const void *buffer,
     size_t length, uint64_t deadline_ns);
 long sapote_stream_shutdown(sapote_handle_t stream, uint32_t flags,
     uint64_t deadline_ns);
+long sapote_network_cancel(sapote_handle_t handle);
 
 static uint16_t peer_port;
 
@@ -99,6 +100,11 @@ long sapote_random(void *buffer, size_t length)
         bytes[index] = (uint8_t)(index * 29U + 17U);
     }
     return (long)length;
+}
+
+long sapote_random_strong(void *buffer, size_t length)
+{
+    return sapote_random(buffer, length);
 }
 
 long sapote_dns_resolve(const char *hostname, uint64_t deadline_ns)
@@ -167,6 +173,11 @@ long sapote_stream_shutdown(sapote_handle_t stream, uint32_t flags,
     (void)flags;
     (void)deadline_ns;
     return shutdown((int)stream, SHUT_RDWR);
+}
+
+long sapote_network_cancel(sapote_handle_t handle)
+{
+    return shutdown((int)handle, SHUT_RDWR);
 }
 
 long sapote_handle_close(sapote_handle_t handle)
