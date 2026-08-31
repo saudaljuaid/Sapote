@@ -12,6 +12,7 @@
 //! the condition the caller has to meet.
 
 use crate::elf64;
+use crate::ext4;
 use crate::fat16;
 use crate::fat32;
 use crate::font;
@@ -22,6 +23,82 @@ use crate::native_image;
 use crate::nvbios;
 use crate::wallpaper;
 use crate::ui_font;
+use core::alloc::{GlobalAlloc, Layout};
+use core::ffi::c_void;
+use core::ptr::null_mut;
+
+const HEAP_ALIGNMENT: usize = 16;
+const HEAP_STATUS_OK: i32 = 0;
+
+struct KernelAllocator;
+
+// SAFETY: `heap_allocate` returns distinct 16-byte-aligned allocations and
+// `heap_free` accepts exactly those pointers. Sapote serializes kernel entry
+// today; the C allocator owns its own integrity checks as threading expands.
+unsafe impl GlobalAlloc for KernelAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        unsafe extern "C" {
+            fn heap_allocate(size: u64, pointer: *mut *mut c_void) -> i32;
+        }
+
+        if layout.size() == 0 || layout.align() > HEAP_ALIGNMENT {
+            return null_mut();
+        }
+        let mut pointer = null_mut();
+        // SAFETY: `pointer` is writable and the size is non-zero. The C heap
+        // writes either one owned allocation or null and returns a status.
+        let status = unsafe {
+            heap_allocate(layout.size() as u64, &mut pointer)
+        };
+        if status == HEAP_STATUS_OK {
+            pointer.cast()
+        } else {
+            null_mut()
+        }
+    }
+
+    unsafe fn dealloc(&self, pointer: *mut u8, _layout: Layout) {
+        unsafe extern "C" {
+            fn heap_free(pointer: *mut c_void) -> i32;
+        }
+
+        // SAFETY: `GlobalAlloc` requires the caller to pass a live pointer
+        // returned by this allocator. Treat allocator corruption as fatal.
+        if unsafe { heap_free(pointer.cast()) } != HEAP_STATUS_OK {
+            panic();
+        }
+    }
+}
+
+#[global_allocator]
+static KERNEL_ALLOCATOR: KernelAllocator = KernelAllocator;
+
+/// Read one checked byte range through the active C-owned ext4 probe session.
+pub(crate) fn ext4_block_read(
+    context: usize,
+    start_byte: u64,
+    destination: &mut [u8],
+) -> bool {
+    unsafe extern "C" {
+        fn sapote_ext4_block_read(
+            context: usize,
+            start_byte: u64,
+            destination: *mut u8,
+            length: usize,
+        ) -> i32;
+    }
+
+    // SAFETY: the slice supplies a live writable region for its exact length;
+    // C authenticates the context and checks the media bounds.
+    unsafe {
+        sapote_ext4_block_read(
+            context,
+            start_byte,
+            destination.as_mut_ptr(),
+            destination.len(),
+        ) == 0
+    }
+}
 
 const _: () = {
     assert!(fat32::Status::Count as i32 == 37);
@@ -108,6 +185,30 @@ pub(crate) fn panic() -> ! {
     // SAFETY: this is a static NUL-terminated string and the C function never
     // returns. Keeping this declaration here preserves the one unsafe module.
     unsafe { console_panic(c"Rust panicked".as_ptr() as *const u8) }
+}
+
+/// Validate the ext4 volume behind a temporary native block-I/O context.
+///
+/// # Safety
+/// `identity` must point to writable storage for one [`ext4::Identity`]. The
+/// context must remain valid for the duration of this synchronous call.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn sapote_ext4_probe(
+    context: usize,
+    identity: *mut ext4::Identity,
+) -> i32 {
+    if context == 0 || identity.is_null() {
+        return 1;
+    }
+    match ext4::probe(context) {
+        Ok(value) => {
+            // SAFETY: the checked pointer is the function contract.
+            unsafe { *identity = value };
+            0
+        }
+        Err(ext4::ProbeError::Io) => 3,
+        Err(ext4::ProbeError::Invalid) => 4,
+    }
 }
 
 /// The run-length image, produced by `tools/make-logo-asset.py` at build time.

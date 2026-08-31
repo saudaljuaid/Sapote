@@ -12,9 +12,11 @@
 //! writing them in Rust would wrap every line in `unsafe` and buy nothing but
 //! a second language in the boot path. `docs/RUST.md` argues that split.
 //!
-//! The whole crate compiles with no heap and no operating system. Unsafe code is
-//! confined to ABI entry points that turn validated C pointers into Rust slices
-//! or write results through validated C pointers.
+//! The whole crate compiles with no operating system. The ext4 parser uses
+//! Sapote's bounded kernel heap through the allocator boundary in [`abi`]; the
+//! older parsers remain allocation-free. Unsafe code is confined to that ABI
+//! boundary, which turns validated C pointers into Rust slices, writes results
+//! through validated C pointers, and calls the kernel allocator and block I/O.
 
 #![no_std]
 #![deny(warnings)]
@@ -23,6 +25,7 @@
 
 pub mod abi;
 pub mod elf64;
+pub(crate) mod ext4;
 pub mod fat16;
 pub(crate) mod fat32;
 pub(crate) mod linux_fat16;

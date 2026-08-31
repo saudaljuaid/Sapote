@@ -68,6 +68,10 @@ RUST_ELF64_TEST := $(BUILD_DIR)/elf64-tests
 RUST_NVBIOS_TEST := $(BUILD_DIR)/nvbios-tests
 RUST_NATIVE_IMAGE_TEST := $(BUILD_DIR)/native-image-tests
 RUST_SOURCES := $(wildcard src/rust/*.rs)
+RUST_MANIFEST := src/rust/Cargo.toml
+RUST_LOCKFILE := src/rust/Cargo.lock
+RUST_VENDOR_SOURCES := $(shell find vendor/ext4plus vendor/rust-crates \
+	-type f -print 2>/dev/null)
 LOGO_CANONICAL_SOURCE := assets/sapote-logo-source.png
 LOGO_SOURCE := assets/sapote-logo.png
 LOGO_BLOB := $(BUILD_DIR)/logo.srl
@@ -258,9 +262,7 @@ OBJECTS := $(ASM_OBJECTS) $(C_OBJECTS)
 # compiler memory call into the fixed-address kernel. One codegen unit also
 # keeps calls between Rust boundary functions direct; the two variable-sized
 # font copies use explicit bounded byte operations instead of runtime calls.
-RUSTFLAGS := --edition 2024 --target $(RUST_TARGET) --crate-type staticlib \
-	--crate-name sapote -C panic=abort -C opt-level=2 \
-	-C relocation-model=static -C codegen-units=1 \
+RUSTFLAGS := -C panic=abort -C relocation-model=static \
 	-C llvm-args=-max-store-memcpy=1024 \
 	-C llvm-args=-max-store-memset=1024 -D warnings
 DEPENDENCIES := $(C_OBJECTS:.o=.d)
@@ -627,7 +629,9 @@ $(UI_FONT_BLOB): $(UI_FONT_SOURCE) $(UI_FONT_METRICS) \
 	$(PYTHON) tools/make-ui-font-asset.py $(UI_FONT_SOURCE) \
 		$(UI_FONT_METRICS) $@
 
-$(RUST_LIB): $(RUST_SOURCES) $(LOGO_BLOB) $(STUDIO_ICON_BLOB) \
+$(RUST_LIB): $(RUST_SOURCES) $(RUST_MANIFEST) $(RUST_LOCKFILE) \
+		.cargo/config.toml $(RUST_VENDOR_SOURCES) \
+		$(LOGO_BLOB) $(STUDIO_ICON_BLOB) \
 		$(SETTINGS_ICON_BLOB) $(FILES_ICON_BLOB) $(TERMINAL_ICON_BLOB) \
 		$(CAMERA_ICON_BLOB) $(CANVAS_ICON_BLOB) $(STORE_ICON_BLOB) \
 		$(STORE_UI_ICONS_BLOB) \
@@ -646,7 +650,11 @@ $(RUST_LIB): $(RUST_SOURCES) $(LOGO_BLOB) $(STUDIO_ICON_BLOB) \
 	SAPOTE_WALLPAPER_BLOB='$(CURDIR)/$(WALLPAPER_BLOB)' \
 	SAPOTE_FONT_BLOB='$(CURDIR)/$(FONT_BLOB)' \
 	SAPOTE_UI_FONT_BLOB='$(CURDIR)/$(UI_FONT_BLOB)' \
-		$(RUSTC) $(RUSTFLAGS) -o $@ src/rust/lib.rs
+	CARGO_TARGET_DIR='$(CURDIR)/$(BUILD_DIR)/rust-target' \
+	RUSTFLAGS='$(RUSTFLAGS)' \
+		$(CARGO) build --manifest-path $(RUST_MANIFEST) \
+			--target $(RUST_TARGET) --release --locked --offline
+	cp $(BUILD_DIR)/rust-target/$(RUST_TARGET)/release/libsapote.a $@
 
 $(BUSYBOX_BINARY): tools/build-busybox-proof.sh \
 		tools/check-exercised-instructions.py \
