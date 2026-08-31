@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 void proof_write(const char *text, size_t length);
+int dynamic_root_main(void);
 int dynamic_add(int value);
 int dynamic_tls_value(void);
 
