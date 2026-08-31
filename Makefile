@@ -2746,13 +2746,15 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		native-dynamic) \
 			grep -Eq '^Sapote: dynamic immutable RX shared pages [1-9][0-9]*$$' "$$log" && \
 			test "$$(grep -Fxc 'SAPOTE DYNAMIC RING3 PASS' "$$log")" -eq 2 && \
-			$(PYTHON) -S tools/serial-marker-order.py "$$log" \
+			$(PYTHON) -S tools/serial-marker-order.py --count 2 "$$log" \
 				'SAPOTE DYNAMIC LIB INIT' \
 				'SAPOTE DYNAMIC ROOT INIT' \
 				'SAPOTE DYNAMIC RING3 PASS' \
 				'SAPOTE DYNAMIC ROOT FINI' \
-				'SAPOTE DYNAMIC LIB FINI' \
-				'Sapote: dynamic ELF shared RX, private TLS and lifecycle passed' || \
+				'SAPOTE DYNAMIC LIB FINI' && \
+			test "$$(grep -Fxc \
+				'Sapote: dynamic ELF shared RX, private TLS and lifecycle passed' \
+				"$$log")" -eq 1 || \
 				diagnostics_ok=false ;; \
 	esac; \
 	if test "$$diagnostics_ok" != true; then \

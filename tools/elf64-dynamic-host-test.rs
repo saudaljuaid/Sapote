@@ -624,12 +624,7 @@ fn local_static_tls_relocation_uses_the_object_block_offset() {
     let mut local_fixture = fixture("libroot.so", &[], true, FixtureHash::SysV, true);
     put_u16(&mut local_fixture.bytes, 56, 7);
     program(&mut local_fixture.bytes, 6, 7, 4, 0x2180, 0x2180, 4, 16, 8);
-    put_i64(&mut local_fixture.bytes, local_fixture.dynamic_null, 30);
-    put_u64(
-        &mut local_fixture.bytes,
-        local_fixture.dynamic_null + 8,
-        0x18,
-    );
+    put_u64(&mut local_fixture.bytes, local_fixture.dynamic_null - 8, 0x18);
     put_u64(&mut local_fixture.bytes, RELA + 24 + 8, 18);
     let image = elf64_dynamic::parse(&local_fixture.bytes).expect("local static TLS");
     let scope = [Object {
