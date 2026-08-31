@@ -10,6 +10,7 @@
 
 #ifdef SDL_AUDIO_DRIVER_SAPOTE
 
+#include "SDL_audio.h"
 #include "../SDL_audio_c.h"
 #include "../SDL_sysaudio.h"
 
