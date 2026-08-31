@@ -297,7 +297,7 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d)
 # They never create a file of their own name, so they rerun regardless.
 .PHONY: all capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios dynamic-elf-tests ext4-images ext4-tests fat32-images hooks \
 	iso kernel lint native-apps port-tests qemu-port-tests reproducible-sdk run \
-	package-repository-tests screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests
+	package-repository-tests package-transaction-tests screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests
 
 all: kernel
 
@@ -843,6 +843,10 @@ package-repository-tests: tools/sapote-repository.py \
 		tools/sapote_repository_host_test.py tools/sapote-package.py
 	SAPOTE_REQUIRE_ED25519=1 $(PYTHON) -u tools/sapote_repository_host_test.py
 
+package-transaction-tests: tools/sapote-transaction.py \
+		tools/sapote_transaction_host_test.py tools/sapote-package.py
+	$(PYTHON) -u tools/sapote_transaction_host_test.py
+
 dynamic-elf-tests: src/rust/elf64_dynamic.rs \
 		tools/elf64-dynamic-host-test.rs
 	$(RUSTC) --edition 2024 --test -D warnings \
@@ -884,7 +888,7 @@ verify: toolchain lint
 	$(MAKE) clean
 	$(MAKE) kernel
 	$(MAKE) wall-clock-tests ext4-tests package-repository-tests \
-		dynamic-elf-tests tls-tests
+		package-transaction-tests dynamic-elf-tests tls-tests
 	$(PYTHON) tools/verify-ui-assets.py
 	@test '$(LOGO_MAX_DIMENSION)' -eq 280
 	@test '$(STUDIO_ICON_MAX_DIMENSION)' -eq 80
