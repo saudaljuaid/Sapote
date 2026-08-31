@@ -13,6 +13,5 @@
     "time",
     "entropy",
     "network"
-  ],
-  "arguments": ["https://repo.sapote.test/artifact.bin"]
+  ]
 }
