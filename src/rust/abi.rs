@@ -14,6 +14,7 @@
 extern crate alloc;
 
 use crate::elf64;
+use crate::elf64_dynamic;
 use crate::ext4;
 use crate::fat16;
 use crate::fat32;
@@ -23,6 +24,7 @@ use crate::linux_fat16;
 use crate::logo::{self, Format, Status};
 use crate::native_image;
 use crate::nvbios;
+use crate::sha256;
 use crate::wallpaper;
 use crate::ui_font;
 use alloc::boxed::Box;
@@ -174,7 +176,8 @@ const _: () = {
     assert!(core::mem::offset_of!(linux_elf64::ValidatedImage, segments) == 24);
 
     assert!(native_image::Status::DigestMismatch as i32 == 30);
-    assert!(core::mem::size_of::<native_image::Manifest>() == 432);
+    assert!(core::mem::size_of::<native_image::Manifest>() == 480);
+    assert!(core::mem::offset_of!(native_image::Manifest, dynamic_catalog) == 432);
     assert!(core::mem::align_of::<native_image::Manifest>() == 8);
     assert!(core::mem::offset_of!(native_image::Manifest, capabilities) == 8);
     assert!(core::mem::offset_of!(native_image::Manifest, name) == 32);
@@ -184,6 +187,26 @@ const _: () = {
     assert!(core::mem::size_of::<native_image::ValidatedImage>() == 976);
     assert!(core::mem::offset_of!(native_image::ValidatedImage, tls) == 40);
     assert!(core::mem::offset_of!(native_image::ValidatedImage, segments) == 80);
+
+    assert!(elf64_dynamic::Status::Count as i32 == 41);
+    assert!(core::mem::size_of::<elf64_dynamic::Name>() == 65);
+    assert!(core::mem::size_of::<elf64_dynamic::Segment>() == 56);
+    assert!(core::mem::size_of::<elf64_dynamic::Tls>() == 40);
+    assert!(core::mem::size_of::<elf64_dynamic::Catalog>() == 1560);
+    assert!(core::mem::size_of::<elf64_dynamic::PreparedObject>() == 56);
+    assert!(core::mem::size_of::<elf64_dynamic::Lifecycle>() == 4104);
+    assert!(core::mem::size_of::<elf64_dynamic::Image>() == 2224);
+    assert!(core::mem::align_of::<elf64_dynamic::Image>() == 8);
+    assert!(core::mem::offset_of!(elf64_dynamic::Image, segment_count) == 920);
+    assert!(core::mem::offset_of!(elf64_dynamic::Image, soname) == 921);
+    assert!(core::mem::offset_of!(elf64_dynamic::Image, needed) == 986);
+    assert!(core::mem::offset_of!(elf64_dynamic::Image, needed_count) == 2026);
+    assert!(core::mem::offset_of!(elf64_dynamic::Image, string_address) == 2032);
+    assert!(core::mem::offset_of!(elf64_dynamic::Image, hash_style) == 2060);
+    assert!(core::mem::offset_of!(elf64_dynamic::Image, rela_address) == 2080);
+    assert!(core::mem::offset_of!(elf64_dynamic::Image, relro_start) == 2112);
+    assert!(core::mem::offset_of!(elf64_dynamic::Image, tls) == 2176);
+    assert!(core::mem::offset_of!(elf64_dynamic::Image, bind_now) == 2216);
 };
 
 /// Stop in C's console panic path if a compiler-inserted check ever fires.
@@ -1961,10 +1984,422 @@ fn native_image_status_code(status: native_image::Status) -> i32 {
     status as i32
 }
 
+fn elf64_dynamic_status_code(status: elf64_dynamic::Status) -> i32 {
+    status as i32
+}
+
 /// Run the allocation-free native manifest, ELF, and SHA-256 invariants.
 #[unsafe(no_mangle)]
 pub extern "C" fn sapote_native_image_self_test() -> u32 {
     native_image::self_test()
+}
+
+/// Run the dynamic-ELF C-layout and checked-address invariants.
+#[unsafe(no_mangle)]
+pub extern "C" fn sapote_elf64_dynamic_self_test() -> u32 {
+    elf64_dynamic::self_test()
+}
+
+/// Authenticate one manifest-named executable without choosing an ELF type.
+///
+/// # Safety
+///
+/// Both inputs must name their complete readable lengths. `manifest_out` must
+/// name one writable result and must not overlap either input.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_native_manifest_authenticate(
+    manifest_bytes: *const u8,
+    manifest_length: usize,
+    elf_bytes: *const u8,
+    elf_length: usize,
+    manifest_out: *mut native_image::Manifest,
+) -> i32 {
+    if manifest_out.is_null() {
+        return native_image_status_code(native_image::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable result and null was refused.
+    unsafe { *manifest_out = native_image::Manifest::invalid() };
+    if manifest_bytes.is_null() || elf_bytes.is_null() {
+        return native_image_status_code(native_image::Status::NullArgument);
+    }
+    // SAFETY: the caller promises both complete readable ranges.
+    let manifest = unsafe {
+        core::slice::from_raw_parts(manifest_bytes, manifest_length)
+    };
+    // SAFETY: as above, for the complete executable range.
+    let elf = unsafe { core::slice::from_raw_parts(elf_bytes, elf_length) };
+    match native_image::authenticate(manifest, elf) {
+        Ok(value) => {
+            // SAFETY: the validated output still names one writable value.
+            unsafe { *manifest_out = value };
+            native_image_status_code(native_image::Status::Ok)
+        }
+        Err(status) => native_image_status_code(status),
+    }
+}
+
+/// Parse one authenticated ET_DYN file into pointer-free loader facts.
+///
+/// # Safety
+///
+/// `input` must name its complete readable length and `image_out` one writable
+/// result. The ranges must not overlap.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_elf64_dynamic_parse(
+    input: *const u8,
+    input_length: usize,
+    image_out: *mut elf64_dynamic::Image,
+) -> i32 {
+    if image_out.is_null() {
+        return elf64_dynamic_status_code(elf64_dynamic::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable result and null was refused.
+    unsafe { core::ptr::write_bytes(image_out, 0, 1) };
+    if input.is_null() {
+        return elf64_dynamic_status_code(elf64_dynamic::Status::NullArgument);
+    }
+    // SAFETY: the caller promises the complete readable file range.
+    let file = unsafe { core::slice::from_raw_parts(input, input_length) };
+    match elf64_dynamic::parse(file) {
+        Ok(image) => {
+            // SAFETY: the output still names one writable result.
+            unsafe { *image_out = image };
+            elf64_dynamic_status_code(elf64_dynamic::Status::Ok)
+        }
+        Err(status) => elf64_dynamic_status_code(status),
+    }
+}
+
+/// Authenticate and parse one exact System dependency catalog.
+///
+/// # Safety
+///
+/// `input` and `expected_sha256` must name complete readable ranges of
+/// `input_length` and 32 bytes. `catalog_out` must name one separate writable
+/// result.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_elf64_dynamic_catalog_authenticate(
+    input: *const u8,
+    input_length: usize,
+    expected_sha256: *const u8,
+    catalog_out: *mut elf64_dynamic::Catalog,
+) -> i32 {
+    if input.is_null() || expected_sha256.is_null() || catalog_out.is_null() {
+        return elf64_dynamic_status_code(elf64_dynamic::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable result.
+    unsafe { *catalog_out = elf64_dynamic::Catalog::empty() };
+    // SAFETY: both complete readable ranges are promised by the caller.
+    let (bytes, expected) = unsafe {
+        (
+            core::slice::from_raw_parts(input, input_length),
+            core::slice::from_raw_parts(expected_sha256, 32),
+        )
+    };
+    if sha256::digest(bytes).as_slice() != expected {
+        return elf64_dynamic_status_code(elf64_dynamic::Status::Authentication);
+    }
+    match elf64_dynamic::parse_catalog(bytes) {
+        Ok(catalog) => {
+            // SAFETY: the checked output remains writable and separate.
+            unsafe { *catalog_out = catalog };
+            elf64_dynamic_status_code(elf64_dynamic::Status::Ok)
+        }
+        Err(status) => elf64_dynamic_status_code(status),
+    }
+}
+
+/// Authenticate and parse one catalog-selected shared object.
+///
+/// # Safety
+///
+/// Inputs name complete readable file and 32-byte digest ranges; `image_out`
+/// names one separate writable result.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_elf64_dynamic_object_authenticate(
+    input: *const u8,
+    input_length: usize,
+    expected_sha256: *const u8,
+    image_out: *mut elf64_dynamic::Image,
+) -> i32 {
+    if input.is_null() || expected_sha256.is_null() || image_out.is_null() {
+        return elf64_dynamic_status_code(elf64_dynamic::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable result.
+    unsafe { core::ptr::write_bytes(image_out, 0, 1) };
+    // SAFETY: both complete readable ranges are promised by the caller.
+    let (file, expected) = unsafe {
+        (
+            core::slice::from_raw_parts(input, input_length),
+            core::slice::from_raw_parts(expected_sha256, 32),
+        )
+    };
+    if sha256::digest(file).as_slice() != expected {
+        return elf64_dynamic_status_code(elf64_dynamic::Status::Authentication);
+    }
+    match elf64_dynamic::parse(file) {
+        Ok(image) => {
+            // SAFETY: the checked output remains writable and separate.
+            unsafe { *image_out = image };
+            elf64_dynamic_status_code(elf64_dynamic::Status::Ok)
+        }
+        Err(status) => elf64_dynamic_status_code(status),
+    }
+}
+
+/// Validate the complete SONAME closure and emit dependencies-first indices.
+///
+/// # Safety
+///
+/// `root` names one admitted image, `libraries` names `library_count` admitted
+/// images, and both outputs name complete writable ranges.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_elf64_dynamic_dependency_order(
+    root: *const elf64_dynamic::Image,
+    libraries: *const elf64_dynamic::Image,
+    library_count: usize,
+    order_out: *mut u8,
+    order_capacity: usize,
+    order_count_out: *mut usize,
+) -> i32 {
+    if root.is_null() || order_out.is_null() || order_count_out.is_null()
+        || library_count != 0 && libraries.is_null()
+        || order_capacity < elf64_dynamic::MAX_DEPENDENCY_OBJECTS
+    {
+        return elf64_dynamic_status_code(elf64_dynamic::Status::NullArgument);
+    }
+    // SAFETY: outputs are complete and writable by contract.
+    unsafe {
+        core::ptr::write_bytes(order_out, 0, order_capacity);
+        *order_count_out = 0;
+    }
+    // SAFETY: admitted input ranges are complete by contract.
+    let root = unsafe { &*root };
+    let images = if library_count == 0 {
+        &[]
+    } else {
+        // SAFETY: the caller promises the complete nonempty library range.
+        unsafe { core::slice::from_raw_parts(libraries, library_count) }
+    };
+    let mut order = [usize::MAX; elf64_dynamic::MAX_DEPENDENCY_OBJECTS];
+    match elf64_dynamic::dependency_order(root, images, &mut order) {
+        Ok(count) => {
+            for (index, value) in order[..count].iter().enumerate() {
+                // SAFETY: capacity was checked for the bounded result.
+                unsafe { *order_out.add(index) = *value as u8 };
+            }
+            // SAFETY: the caller supplied one writable count.
+            unsafe { *order_count_out = count };
+            elf64_dynamic_status_code(elf64_dynamic::Status::Ok)
+        }
+        Err(status) => elf64_dynamic_status_code(status),
+    }
+}
+
+unsafe fn dynamic_scope<'a>(
+    descriptors: &'a [elf64_dynamic::PreparedObject],
+    storage: &'a mut [core::mem::MaybeUninit<elf64_dynamic::Object<'a>>;
+        elf64_dynamic::MAX_DEPENDENCY_OBJECTS],
+) -> Result<&'a [elf64_dynamic::Object<'a>], elf64_dynamic::Status> {
+    if descriptors.is_empty() || descriptors.len() > elf64_dynamic::MAX_DEPENDENCY_OBJECTS {
+        return Err(elf64_dynamic::Status::DependencyBound);
+    }
+    for (index, descriptor) in descriptors.iter().enumerate() {
+        if descriptor.image.is_null()
+            || descriptor.input.is_null()
+            || descriptor.memory.is_null()
+        {
+            return Err(elf64_dynamic::Status::NullArgument);
+        }
+        // SAFETY: every complete descriptor range is promised by the caller.
+        let (image, file) = unsafe {
+            (
+                &*descriptor.image,
+                core::slice::from_raw_parts(descriptor.input, descriptor.input_length),
+            )
+        };
+        if descriptor.memory_length != image.memory_bytes() {
+            return Err(elf64_dynamic::Status::MemorySize);
+        }
+        storage[index].write(elf64_dynamic::Object {
+            image,
+            file,
+            load_bias: descriptor.load_bias,
+            tls_offset: descriptor.tls_offset,
+        });
+    }
+    // SAFETY: the prefix was initialized exactly once above and lives as long
+    // as `storage`; its references are bounded by the descriptor contract.
+    Ok(unsafe {
+        core::slice::from_raw_parts(storage.as_ptr().cast(), descriptors.len())
+    })
+}
+
+/// Load and relocate one complete root-first global object scope.
+///
+/// # Safety
+///
+/// `objects` names `object_count` complete descriptors. Every descriptor owns
+/// separate file/preparation ranges and an admitted image for the duration.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_elf64_dynamic_relocate_scope(
+    objects: *const elf64_dynamic::PreparedObject,
+    object_count: usize,
+) -> i32 {
+    if objects.is_null() {
+        return elf64_dynamic_status_code(elf64_dynamic::Status::NullArgument);
+    }
+    // SAFETY: the caller promises the complete descriptor range.
+    let descriptors = unsafe { core::slice::from_raw_parts(objects, object_count) };
+    let mut storage = [core::mem::MaybeUninit::uninit();
+        elf64_dynamic::MAX_DEPENDENCY_OBJECTS];
+    // SAFETY: descriptors retain all referenced storage for this call.
+    let scope = match unsafe { dynamic_scope(descriptors, &mut storage) } {
+        Ok(scope) => scope,
+        Err(status) => return elf64_dynamic_status_code(status),
+    };
+    for (descriptor, object) in descriptors.iter().zip(scope.iter()) {
+        // SAFETY: each private writable preparation range is promised separate.
+        let memory = unsafe {
+            core::slice::from_raw_parts_mut(descriptor.memory, descriptor.memory_length)
+        };
+        if let Err(status) = elf64_dynamic::load_image(object.image, object.file, memory) {
+            return elf64_dynamic_status_code(status);
+        }
+    }
+    for (descriptor, object) in descriptors.iter().zip(scope.iter()) {
+        // SAFETY: the same private writable range remains live and separate.
+        let memory = unsafe {
+            core::slice::from_raw_parts_mut(descriptor.memory, descriptor.memory_length)
+        };
+        if let Err(status) = elf64_dynamic::apply_relocations(
+            object.image,
+            object.file,
+            memory,
+            object.load_bias,
+            scope,
+        ) {
+            return elf64_dynamic_status_code(status);
+        }
+    }
+    elf64_dynamic_status_code(elf64_dynamic::Status::Ok)
+}
+
+/// Extract the complete dependency-ordered constructor/destructor lifecycle.
+///
+/// # Safety
+///
+/// Descriptors have the same requirements as relocation and retain their
+/// relocated preparation buffers. `lifecycle_out` names one separate result.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_elf64_dynamic_lifecycle(
+    objects: *const elf64_dynamic::PreparedObject,
+    object_count: usize,
+    lifecycle_out: *mut elf64_dynamic::Lifecycle,
+) -> i32 {
+    if objects.is_null() || lifecycle_out.is_null() {
+        return elf64_dynamic_status_code(elf64_dynamic::Status::NullArgument);
+    }
+    // SAFETY: the result is complete and writable by contract.
+    unsafe { *lifecycle_out = elf64_dynamic::Lifecycle::empty() };
+    // SAFETY: the caller promises the complete descriptor range.
+    let descriptors = unsafe { core::slice::from_raw_parts(objects, object_count) };
+    let mut storage = [core::mem::MaybeUninit::uninit();
+        elf64_dynamic::MAX_DEPENDENCY_OBJECTS];
+    // SAFETY: descriptors retain all referenced storage for this call.
+    let scope = match unsafe { dynamic_scope(descriptors, &mut storage) } {
+        Ok(scope) => scope,
+        Err(status) => return elf64_dynamic_status_code(status),
+    };
+    let mut lifecycle = elf64_dynamic::Lifecycle::empty();
+    let mut constructor_count = 0usize;
+    for index in (1..scope.len()).chain(core::iter::once(0)) {
+        let descriptor = &descriptors[index];
+        // SAFETY: relocation left this complete preparation range readable.
+        let memory = unsafe {
+            core::slice::from_raw_parts(descriptor.memory, descriptor.memory_length)
+        };
+        if let Err(status) = elf64_dynamic::append_initializers(
+            &scope[index],
+            memory,
+            scope,
+            &mut lifecycle.constructors,
+            &mut constructor_count,
+        ) {
+            return elf64_dynamic_status_code(status);
+        }
+    }
+    let mut destructor_count = 0usize;
+    for index in core::iter::once(0).chain((1..scope.len()).rev()) {
+        let descriptor = &descriptors[index];
+        // SAFETY: as above, for finalizer table reads.
+        let memory = unsafe {
+            core::slice::from_raw_parts(descriptor.memory, descriptor.memory_length)
+        };
+        if let Err(status) = elf64_dynamic::append_finalizers(
+            &scope[index],
+            memory,
+            scope,
+            &mut lifecycle.destructors,
+            &mut destructor_count,
+        ) {
+            return elf64_dynamic_status_code(status);
+        }
+    }
+    lifecycle.constructor_count = constructor_count as u16;
+    lifecycle.destructor_count = destructor_count as u16;
+    // SAFETY: the checked result remains writable and separate.
+    unsafe { *lifecycle_out = lifecycle };
+    elf64_dynamic_status_code(elf64_dynamic::Status::Ok)
+}
+
+/// Copy and relocate one admitted dependency-free ET_DYN image.
+///
+/// # Safety
+///
+/// `image` must name one result returned by `sapote_elf64_dynamic_parse`,
+/// `input` its unchanged complete file, and `memory` an exactly sized writable
+/// preparation range. The ranges must not overlap.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_elf64_dynamic_prepare(
+    image: *const elf64_dynamic::Image,
+    input: *const u8,
+    input_length: usize,
+    memory: *mut u8,
+    memory_length: usize,
+    load_bias: u64,
+) -> i32 {
+    if image.is_null() || input.is_null() || memory.is_null() {
+        return elf64_dynamic_status_code(elf64_dynamic::Status::NullArgument);
+    }
+    // SAFETY: all three non-overlapping complete ranges are promised by C.
+    let image = unsafe { &*image };
+    // SAFETY: the caller promises the unchanged complete file range.
+    let file = unsafe { core::slice::from_raw_parts(input, input_length) };
+    // SAFETY: the caller promises one private writable preparation range.
+    let prepared = unsafe { core::slice::from_raw_parts_mut(memory, memory_length) };
+    if image.needed_count != 0 {
+        return elf64_dynamic_status_code(elf64_dynamic::Status::DependencyBound);
+    }
+    if let Err(status) = elf64_dynamic::load_image(image, file, prepared) {
+        return elf64_dynamic_status_code(status);
+    }
+    let scope = [elf64_dynamic::Object {
+        image,
+        file,
+        load_bias,
+        tls_offset: 0,
+    }];
+    match elf64_dynamic::apply_relocations(
+        image,
+        file,
+        prepared,
+        load_bias,
+        &scope,
+    ) {
+        Ok(()) => elf64_dynamic_status_code(elf64_dynamic::Status::Ok),
+        Err(status) => elf64_dynamic_status_code(status),
+    }
 }
 
 /// Validate one CPU-owned manifest and executable as a single admission unit.

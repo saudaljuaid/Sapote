@@ -25,6 +25,7 @@
 
 pub mod abi;
 pub mod elf64;
+pub(crate) mod elf64_dynamic;
 pub(crate) mod ext4;
 pub mod fat16;
 pub(crate) mod fat32;

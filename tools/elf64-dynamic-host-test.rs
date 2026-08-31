@@ -29,6 +29,14 @@ struct Fixture {
     hash: usize,
 }
 
+#[test]
+fn compiled_boundary_controls_are_stable() {
+    assert_eq!(Status::Ok as i32, 0);
+    assert_eq!(Status::NullArgument as i32, 1);
+    assert_eq!(Status::Count as i32, 41);
+    assert_eq!(elf64_dynamic::self_test(), 9);
+}
+
 fn put_u16(bytes: &mut [u8], offset: usize, value: u16) {
     bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
 }
@@ -347,6 +355,18 @@ fn parses_sysv_and_gnu_hash_objects_and_looks_up_exports() {
 }
 
 #[test]
+fn admits_the_linker_pie_flag_but_no_other_flags1_bits() {
+    let fixture = fixture("libroot.so", &[], true, FixtureHash::SysV, false);
+    let mut changed = fixture.bytes.clone();
+    put_i64(&mut changed, fixture.dynamic_null, 0x6fff_fffb);
+    put_u64(&mut changed, fixture.dynamic_null + 8, 0x0800_0001);
+    elf64_dynamic::parse(&changed).expect("NOW plus PIE flags");
+
+    put_u64(&mut changed, fixture.dynamic_null + 8, 0x0800_0003);
+    assert_refused(&changed, Status::DynamicUnsupported);
+}
+
+#[test]
 fn applies_relative_global_absolute_pc32_and_jump_slot_relocations() {
     let root_fixture = fixture("libroot.so", &["libdep.so"], false, FixtureHash::Gnu, true);
     let dependency_fixture = fixture("libdep.so", &[], true, FixtureHash::SysV, false);
@@ -361,11 +381,13 @@ fn applies_relative_global_absolute_pc32_and_jump_slot_relocations() {
             image: &root,
             file: &root_fixture.bytes,
             load_bias: root_bias,
+            tls_offset: 0,
         },
         Object {
             image: &dependency,
             file: &dependency_fixture.bytes,
             load_bias: dependency_bias,
+            tls_offset: 0,
         },
     ];
     let mut memory = vec![0u8; root.memory_bytes()];
@@ -434,6 +456,197 @@ fn dependency_order_is_needed_stable_bounded_and_cycle_checked() {
     );
 }
 
+fn catalog(names: &[&str]) -> Vec<u8> {
+    let mut bytes = vec![0u8; elf64_dynamic::CATALOG_BYTES];
+    bytes[..8].copy_from_slice(b"SAPDYNL1");
+    put_u16(&mut bytes, 8, 1);
+    put_u16(&mut bytes, 10, 64);
+    put_u32(&mut bytes, 12, elf64_dynamic::CATALOG_BYTES as u32);
+    put_u16(&mut bytes, 16, names.len() as u16);
+    put_u16(&mut bytes, 18, 96);
+    for (index, name) in names.iter().enumerate() {
+        let offset = 64 + index * 96;
+        bytes[offset..offset + name.len()].copy_from_slice(name.as_bytes());
+        bytes[offset + 64..offset + 96].fill((index + 1) as u8);
+    }
+    bytes
+}
+
+#[test]
+fn dependency_catalog_is_exact_sorted_and_zero_tailed() {
+    let bytes = catalog(&["liba.so", "libb.so"]);
+    let parsed = elf64_dynamic::parse_catalog(&bytes).expect("canonical catalog");
+    assert_eq!(parsed.entry_count, 2);
+    assert_eq!(parsed.entries[0].name.as_bytes(), b"liba.so");
+    assert_eq!(parsed.entries[1].sha256, [2; 32]);
+
+    let mut changed = catalog(&["libb.so", "liba.so"]);
+    assert!(matches!(
+        elf64_dynamic::parse_catalog(&changed),
+        Err(Status::Catalog)
+    ));
+    changed = bytes.clone();
+    changed[64 + 8] = b'x';
+    assert!(matches!(
+        elf64_dynamic::parse_catalog(&changed),
+        Err(Status::Catalog)
+    ));
+    changed = bytes.clone();
+    changed[64 + 2 * 96] = 1;
+    assert!(matches!(
+        elf64_dynamic::parse_catalog(&changed),
+        Err(Status::Catalog)
+    ));
+    assert_eq!(
+        elf64_dynamic::parse_catalog(&bytes[..bytes.len() - 1])
+            .expect_err("short catalog"),
+        Status::Catalog
+    );
+}
+
+#[test]
+fn initial_exec_tls_relocation_uses_defining_object_offset() {
+    let mut root_fixture = fixture(
+        "libroot.so",
+        &["libdep.so"],
+        false,
+        FixtureHash::SysV,
+        true,
+    );
+    let mut dependency_fixture = fixture(
+        "libdep.so",
+        &[],
+        true,
+        FixtureHash::SysV,
+        false,
+    );
+    root_fixture.bytes[SYMTAB + 24 + 4] = 0x16;
+    put_u64(
+        &mut root_fixture.bytes,
+        RELA + 24 + 8,
+        (1u64 << 32) | 18,
+    );
+    put_u64(
+        &mut root_fixture.bytes,
+        RELA + 3 * 24 + 8,
+        (2u64 << 32) | 2,
+    );
+    put_u64(
+        &mut root_fixture.bytes,
+        JMPREL + 8,
+        (2u64 << 32) | 7,
+    );
+    put_u16(&mut dependency_fixture.bytes, 56, 7);
+    program(
+        &mut dependency_fixture.bytes,
+        6,
+        7,
+        4,
+        0x2180,
+        0x2180,
+        4,
+        16,
+        8,
+    );
+    dependency_fixture.bytes[SYMTAB + 24 + 4] = 0x16;
+    put_u64(&mut dependency_fixture.bytes, SYMTAB + 24 + 8, 0);
+    put_u64(&mut dependency_fixture.bytes, SYMTAB + 24 + 16, 4);
+
+    let root = elf64_dynamic::parse(&root_fixture.bytes).expect("TLS consumer");
+    let dependency =
+        elf64_dynamic::parse(&dependency_fixture.bytes).expect("TLS provider");
+    let scope = [
+        Object {
+            image: &root,
+            file: &root_fixture.bytes,
+            load_bias: 0x4000_0000,
+            tls_offset: 0,
+        },
+        Object {
+            image: &dependency,
+            file: &dependency_fixture.bytes,
+            load_bias: 0x6000_0000,
+            tls_offset: -16,
+        },
+    ];
+    let mut memory = vec![0u8; root.memory_bytes()];
+    elf64_dynamic::load_image(&root, &root_fixture.bytes, &mut memory).expect("load");
+    elf64_dynamic::apply_relocations(
+        &root,
+        &root_fixture.bytes,
+        &mut memory,
+        0x4000_0000,
+        &scope,
+    )
+    .expect("TPOFF64");
+    assert_eq!(get_u64(&memory, 0x2108), (-16i64) as u64);
+}
+
+#[test]
+fn lifecycle_requires_runtime_executable_targets_and_preserves_order() {
+    let root_fixture = fixture("libroot.so", &[], true, FixtureHash::SysV, false);
+    let mut root = elf64_dynamic::parse(&root_fixture.bytes).expect("root");
+    root.init = 0x100;
+    root.fini = 0x140;
+    root.init_array = 0x2200;
+    root.init_array_count = 2;
+    root.fini_array = 0x2210;
+    root.fini_array_count = 2;
+    let bias = 0x4000_0000;
+    let object = Object {
+        image: &root,
+        file: &root_fixture.bytes,
+        load_bias: bias,
+        tls_offset: 0,
+    };
+    let scope = [object];
+    let mut memory = vec![0u8; root.memory_bytes()];
+    put_u64(&mut memory, 0x2200, bias + 0x110);
+    put_u64(&mut memory, 0x2208, bias + 0x120);
+    put_u64(&mut memory, 0x2210, bias + 0x150);
+    put_u64(&mut memory, 0x2218, bias + 0x160);
+    let mut constructors = [0u64; elf64_dynamic::MAX_LIFECYCLE_FUNCTIONS];
+    let mut constructor_count = 0;
+    elf64_dynamic::append_initializers(
+        &object,
+        &memory,
+        &scope,
+        &mut constructors,
+        &mut constructor_count,
+    )
+    .expect("constructors");
+    assert_eq!(
+        &constructors[..constructor_count],
+        &[bias + 0x100, bias + 0x110, bias + 0x120]
+    );
+    let mut destructors = [0u64; elf64_dynamic::MAX_LIFECYCLE_FUNCTIONS];
+    let mut destructor_count = 0;
+    elf64_dynamic::append_finalizers(
+        &object,
+        &memory,
+        &scope,
+        &mut destructors,
+        &mut destructor_count,
+    )
+    .expect("destructors");
+    assert_eq!(
+        &destructors[..destructor_count],
+        &[bias + 0x160, bias + 0x150, bias + 0x140]
+    );
+    put_u64(&mut memory, 0x2200, bias + 0x2100);
+    let mut refused_count = 0;
+    assert_eq!(
+        elf64_dynamic::append_initializers(
+            &object,
+            &memory,
+            &scope,
+            &mut constructors,
+            &mut refused_count,
+        ),
+        Err(Status::Lifecycle)
+    );
+}
+
 #[test]
 fn refuses_wx_unsupported_dynamic_bad_hash_and_relocation_targets() {
     let root_fixture = fixture("libroot.so", &["libdep.so"], false, FixtureHash::Gnu, true);
@@ -489,11 +702,13 @@ fn relocation_arithmetic_refuses_u64_and_pc32_overflow() {
             image: &root,
             file: &root_fixture.bytes,
             load_bias: 0x4000_0000,
+            tls_offset: 0,
         },
         Object {
             image: &dependency,
             file: &dependency_fixture.bytes,
             load_bias: 0x6000_0000,
+            tls_offset: 0,
         },
     ];
     let mut memory = vec![0u8; root.memory_bytes()];
@@ -516,11 +731,13 @@ fn relocation_arithmetic_refuses_u64_and_pc32_overflow() {
             image: &root,
             file: &root_fixture.bytes,
             load_bias: 0x4000_0000,
+            tls_offset: 0,
         },
         Object {
             image: &dependency,
             file: &dependency_fixture.bytes,
             load_bias: 0x0000_7fff_0000_0000,
+            tls_offset: 0,
         },
     ];
     let mut memory = vec![0u8; root.memory_bytes()];

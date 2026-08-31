@@ -33,3 +33,20 @@ and address-space state. A userspace exception marks only its thread/process as
 faulted; the scheduler restores the kernel CR3 and FS base before cleanup. A
 failed image or crashed application must leave the native resource census equal
 to the pre-launch census.
+
+## Dynamic native images
+
+When static admission refuses only the ELF type, the loader reuses the
+manifest/executable authentication boundary and attempts bounded `ET_DYN`
+admission. A root with dependencies must name an authenticated System-volume
+catalog. Each exact SONAME is resolved relative to that catalog's packaged
+resource directory, hashed before parsing, and loaded once in breadth-first
+`DT_NEEDED` order.
+
+Relocation occurs in private kernel heap buffers. The mapper then installs
+non-overlapping root/library mappings with final R, RX, RW, and RELRO
+permissions, creates the combined variant-II TLS template, removes writable
+executable aliases, and enters constructors through a generated RX trampoline.
+`SYS_EXIT` is redirected once through the reverse destructor trampoline before
+ordinary teardown. See [`DYNAMIC_LINKING.md`](DYNAMIC_LINKING.md) for admitted
+relocations, trust relationships, bounds, evidence, and deliberate limits.

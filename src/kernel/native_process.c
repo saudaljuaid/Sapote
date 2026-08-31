@@ -8,6 +8,7 @@
 #include <sapote/clock.h>
 #include <sapote/console.h>
 #include <sapote/cpu.h>
+#include <sapote/elf64_dynamic.h>
 #include <sapote/fat32_fs.h>
 #include <sapote/framebuffer.h>
 #include <sapote/heap.h>
@@ -51,6 +52,10 @@
 #define NATIVE_SURFACE_MAX_WIDTH 1280U
 #define NATIVE_SURFACE_MAX_HEIGHT 720U
 #define NATIVE_SCHEDULER_MIN_SLEEP_NS UINT64_C(100000)
+#define NATIVE_DYNAMIC_WORKING_BYTES (8U * 1024U * 1024U)
+#define NATIVE_DYNAMIC_GUARD_BYTES PAGING_PAGE_SIZE
+#define NATIVE_DYNAMIC_TRAMPOLINE_PAGES 3U
+#define NATIVE_DYNAMIC_START_PAGES 2U
 
 _Static_assert(SAPOTE_AUDIO_SAMPLE_RATE == AUDIO_PCM_SAMPLE_RATE,
     "kernel and public audio sample rates differ");
@@ -157,11 +162,33 @@ struct native_process {
     uint32_t thread_switches;
     uint64_t context_cycles_without_fpu;
     uint64_t context_cycles_with_fpu;
+    uint64_t dynamic_fini_entry;
     uint32_t context_transition_samples;
     int32_t exit_status;
     bool active;
     bool exiting;
     bool faulted;
+    bool dynamic_fini_started;
+};
+
+struct native_dynamic_load {
+    struct elf64_dynamic_catalog catalog;
+    struct elf64_dynamic_image images[ELF64_DYNAMIC_MAX_OBJECTS];
+    struct elf64_dynamic_prepared_object
+        prepared[ELF64_DYNAMIC_MAX_OBJECTS];
+    struct elf64_dynamic_lifecycle lifecycle;
+    uint8_t *files[ELF64_DYNAMIC_MAX_OBJECTS];
+    uint8_t *memories[ELF64_DYNAMIC_MAX_OBJECTS];
+    size_t file_lengths[ELF64_DYNAMIC_MAX_OBJECTS];
+    size_t memory_lengths[ELF64_DYNAMIC_MAX_OBJECTS];
+    size_t source_indices[ELF64_DYNAMIC_MAX_OBJECTS];
+    int64_t tls_offsets[ELF64_DYNAMIC_MAX_OBJECTS];
+    size_t object_count;
+    size_t library_count;
+    size_t working_bytes;
+    uint64_t tls_bytes;
+    uint64_t tls_alignment;
+    uint64_t next_virtual;
 };
 
 static struct native_process processes[NATIVE_PROCESS_LIMIT];
@@ -931,6 +958,836 @@ static bool prepare_image_pages(
     return process->executable_count != 0U;
 }
 
+static bool dynamic_name_equal(
+    const struct elf64_dynamic_name *left,
+    const struct elf64_dynamic_name *right
+)
+{
+    if (left == NULL || right == NULL || left->length != right->length) {
+        return false;
+    }
+    for (size_t index = 0U; index < left->length; ++index) {
+        if (left->bytes[index] != right->bytes[index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool dynamic_name_path(
+    const struct native_process *process,
+    const struct elf64_dynamic_name *name,
+    char path[static SAPFS_MAX_PATH]
+)
+{
+    size_t catalog_length;
+    size_t prefix_length = 0U;
+
+    if (process == NULL || name == NULL || name->length == 0U ||
+        name->length >= 64U) {
+        return false;
+    }
+    catalog_length = bounded_length(process->manifest.dynamic_catalog,
+        sizeof(process->manifest.dynamic_catalog));
+    for (size_t index = 0U; index < catalog_length; ++index) {
+        if (process->manifest.dynamic_catalog[index] == '/') {
+            prefix_length = index + 1U;
+        }
+    }
+    if (prefix_length + name->length >= SAPFS_MAX_PATH) {
+        return false;
+    }
+    zero_bytes(path, SAPFS_MAX_PATH);
+    copy_bytes(path, process->manifest.dynamic_catalog, prefix_length);
+    copy_bytes(path + prefix_length, name->bytes, name->length);
+    return true;
+}
+
+static bool dynamic_object_supported(
+    const struct native_process *process,
+    const struct elf64_dynamic_image *image,
+    bool root
+)
+{
+    uint64_t memory_bytes;
+
+    if (process == NULL || image == NULL || (root && image->entry == 0U) ||
+        image->segment_count == 0U ||
+        image->segment_count > ELF64_DYNAMIC_MAX_LOAD_SEGMENTS ||
+        image->needed_count > ELF64_DYNAMIC_MAX_NEEDED ||
+        image->mapping_end <= image->mapping_start ||
+        image->mapping_end - image->mapping_start > SIZE_MAX) {
+        return false;
+    }
+    memory_bytes = image->mapping_end - image->mapping_start;
+    if (memory_bytes > ELF64_DYNAMIC_MAX_PREPARATION_BYTES ||
+        memory_bytes > process->manifest.memory_limit ||
+        ((image->relro_start == 0U) != (image->relro_end == 0U)) ||
+        (image->relro_start != 0U &&
+            image->relro_start >= image->relro_end)) {
+        return false;
+    }
+    return true;
+}
+
+static enum heap_status dynamic_heap_allocate(size_t bytes, void **result)
+{
+    const bool interrupts_were_enabled = cpu_interrupts_enabled();
+    enum heap_status status;
+
+    cpu_interrupt_disable();
+    status = heap_allocate(bytes, result);
+    if (interrupts_were_enabled) {
+        cpu_interrupt_enable();
+    }
+    return status;
+}
+
+static enum heap_status dynamic_heap_free(void *pointer)
+{
+    const bool interrupts_were_enabled = cpu_interrupts_enabled();
+    enum heap_status status;
+
+    cpu_interrupt_disable();
+    status = heap_free(pointer);
+    if (interrupts_were_enabled) {
+        cpu_interrupt_enable();
+    }
+    return status;
+}
+
+static bool dynamic_allocate_bytes(
+    struct native_dynamic_load *load,
+    size_t bytes,
+    uint8_t **result
+)
+{
+    if (load == NULL || result == NULL || bytes == 0U ||
+        load->working_bytes > NATIVE_DYNAMIC_WORKING_BYTES ||
+        bytes > NATIVE_DYNAMIC_WORKING_BYTES - load->working_bytes ||
+        dynamic_heap_allocate(bytes, (void **)result) != HEAP_STATUS_OK) {
+        return false;
+    }
+    load->working_bytes += bytes;
+    return true;
+}
+
+static bool dynamic_release_bytes(
+    struct native_dynamic_load *load,
+    uint8_t **pointer,
+    size_t bytes
+)
+{
+    if (load == NULL || pointer == NULL || *pointer == NULL ||
+        bytes > load->working_bytes ||
+        dynamic_heap_free(*pointer) != HEAP_STATUS_OK) {
+        return false;
+    }
+    *pointer = NULL;
+    load->working_bytes -= bytes;
+    return true;
+}
+
+static bool dynamic_load_release(struct native_dynamic_load **load_pointer)
+{
+    struct native_dynamic_load *load;
+    bool success = true;
+
+    if (load_pointer == NULL || *load_pointer == NULL) {
+        return true;
+    }
+    load = *load_pointer;
+    for (size_t index = 0U; index < load->object_count; ++index) {
+        if (load->memories[index] != NULL &&
+            !dynamic_release_bytes(load, &load->memories[index],
+                load->memory_lengths[index])) {
+            success = false;
+        }
+    }
+    for (size_t index = 1U; index <= load->library_count; ++index) {
+        if (load->files[index] != NULL &&
+            !dynamic_release_bytes(load, &load->files[index],
+                load->file_lengths[index])) {
+            success = false;
+        }
+    }
+    if (dynamic_heap_free(load) != HEAP_STATUS_OK) {
+        success = false;
+    }
+    *load_pointer = NULL;
+    return success;
+}
+
+static const struct elf64_dynamic_catalog_entry *dynamic_catalog_entry(
+    const struct native_dynamic_load *load,
+    const struct elf64_dynamic_name *name
+)
+{
+    if (load == NULL || name == NULL) {
+        return NULL;
+    }
+    for (size_t index = 0U; index < load->catalog.entry_count; ++index) {
+        if (dynamic_name_equal(&load->catalog.entries[index].name, name)) {
+            return &load->catalog.entries[index];
+        }
+    }
+    return NULL;
+}
+
+static size_t dynamic_loaded_library(
+    const struct native_dynamic_load *load,
+    const struct elf64_dynamic_name *name
+)
+{
+    for (size_t index = 1U; index <= load->library_count; ++index) {
+        if (dynamic_name_equal(&load->images[index].soname, name)) {
+            return index;
+        }
+    }
+    return SIZE_MAX;
+}
+
+static enum native_process_status dynamic_read_catalog(
+    const struct native_process *process,
+    struct native_dynamic_load *load
+)
+{
+    char path[NATIVE_MANIFEST_PATH_BYTES + 1U];
+    struct sapfs_stat stat;
+    uint8_t *bytes = NULL;
+    size_t read_bytes = 0U;
+    const size_t length = bounded_length(process->manifest.dynamic_catalog,
+        sizeof(process->manifest.dynamic_catalog));
+    enum native_process_status result = NATIVE_PROCESS_IMAGE_REFUSED;
+
+    if (length == 0U || length == sizeof(process->manifest.dynamic_catalog)) {
+        return result;
+    }
+    zero_bytes(path, sizeof(path));
+    copy_bytes(path, process->manifest.dynamic_catalog, length);
+    if (sapfs_stat_path(SAPFS_VOLUME_SYSTEM, path, &stat) != SAPFS_STATUS_OK ||
+        stat.directory || stat.size != ELF64_DYNAMIC_CATALOG_BYTES) {
+        return result;
+    }
+    if (!dynamic_allocate_bytes(load, ELF64_DYNAMIC_CATALOG_BYTES, &bytes)) {
+        return NATIVE_PROCESS_MEMORY_LIMIT;
+    }
+    if (read_system_file(path, bytes, ELF64_DYNAMIC_CATALOG_BYTES,
+            &read_bytes) && read_bytes == ELF64_DYNAMIC_CATALOG_BYTES &&
+        sapote_elf64_dynamic_catalog_authenticate(bytes, read_bytes,
+            process->manifest.dynamic_catalog_sha256, &load->catalog) ==
+                ELF64_DYNAMIC_OK) {
+        result = NATIVE_PROCESS_OK;
+    }
+    if (!dynamic_release_bytes(load, &bytes, ELF64_DYNAMIC_CATALOG_BYTES)) {
+        result = NATIVE_PROCESS_TEARDOWN;
+    }
+    return result;
+}
+
+static enum native_process_status dynamic_load_library(
+    const struct native_process *process,
+    struct native_dynamic_load *load,
+    const struct elf64_dynamic_name *name
+)
+{
+    const struct elf64_dynamic_catalog_entry *catalog =
+        dynamic_catalog_entry(load, name);
+    char path[SAPFS_MAX_PATH];
+    struct sapfs_stat stat;
+    size_t read_bytes = 0U;
+    size_t index;
+
+    if (catalog == NULL || !dynamic_name_path(process, name, path) ||
+        load->library_count + 1U >= ELF64_DYNAMIC_MAX_OBJECTS) {
+        return NATIVE_PROCESS_IMAGE_REFUSED;
+    }
+    if (sapfs_stat_path(SAPFS_VOLUME_SYSTEM, path, &stat) != SAPFS_STATUS_OK ||
+        stat.directory || stat.size == 0U ||
+        stat.size > NATIVE_ELF_MAX_FILE_BYTES) {
+        return NATIVE_PROCESS_IMAGE_REFUSED;
+    }
+    index = load->library_count + 1U;
+    if (!dynamic_allocate_bytes(load, (size_t)stat.size,
+            &load->files[index])) {
+        return NATIVE_PROCESS_MEMORY_LIMIT;
+    }
+    load->file_lengths[index] = (size_t)stat.size;
+    if (!read_system_file(path, load->files[index], (size_t)stat.size,
+            &read_bytes) || read_bytes != stat.size ||
+        sapote_elf64_dynamic_object_authenticate(load->files[index], read_bytes,
+            catalog->sha256, &load->images[index]) != ELF64_DYNAMIC_OK ||
+        !dynamic_name_equal(&load->images[index].soname, name) ||
+        !dynamic_object_supported(process, &load->images[index], false)) {
+        if (!dynamic_release_bytes(load, &load->files[index],
+                load->file_lengths[index])) {
+            return NATIVE_PROCESS_TEARDOWN;
+        }
+        load->file_lengths[index] = 0U;
+        return NATIVE_PROCESS_IMAGE_REFUSED;
+    }
+    load->library_count = index;
+    return NATIVE_PROCESS_OK;
+}
+
+static bool dynamic_align_u64(uint64_t value, uint64_t alignment,
+    uint64_t *result)
+{
+    if (result == NULL || alignment == 0U ||
+        (alignment & (alignment - 1U)) != 0U ||
+        value > UINT64_MAX - (alignment - 1U)) {
+        return false;
+    }
+    *result = (value + alignment - 1U) & ~(alignment - 1U);
+    return true;
+}
+
+static enum native_process_status dynamic_build_scope(
+    const struct native_process *process,
+    struct native_dynamic_load *load,
+    uint8_t *root_file,
+    size_t root_length
+)
+{
+    uint8_t order[ELF64_DYNAMIC_MAX_OBJECTS];
+    struct elf64_dynamic_prepared_object
+        lifecycle_scope[ELF64_DYNAMIC_MAX_OBJECTS];
+    uint64_t tls_starts[ELF64_DYNAMIC_MAX_OBJECTS];
+    size_t order_count = 0U;
+    size_t scan = 0U;
+    uint64_t cursor = PAGING_NATIVE_IMAGE_BASE;
+    enum elf64_dynamic_status dynamic_status;
+
+    if (load->images[0].needed_count != 0U) {
+        enum native_process_status status = dynamic_read_catalog(process, load);
+        if (status != NATIVE_PROCESS_OK) {
+            return status;
+        }
+    }
+    while (scan <= load->library_count) {
+        const struct elf64_dynamic_image *image = &load->images[scan];
+        for (size_t needed = 0U; needed < image->needed_count; ++needed) {
+            const struct elf64_dynamic_name *name = &image->needed[needed];
+            enum native_process_status status;
+
+            if (load->images[0].soname.length != 0U &&
+                dynamic_name_equal(&load->images[0].soname, name)) {
+                return NATIVE_PROCESS_IMAGE_REFUSED;
+            }
+            if (dynamic_loaded_library(load, name) != SIZE_MAX) {
+                continue;
+            }
+            status = dynamic_load_library(process, load, name);
+            if (status != NATIVE_PROCESS_OK) {
+                return status;
+            }
+        }
+        ++scan;
+    }
+    dynamic_status = sapote_elf64_dynamic_dependency_order(&load->images[0],
+        &load->images[1], load->library_count, order, sizeof(order),
+        &order_count);
+    if (dynamic_status != ELF64_DYNAMIC_OK || order_count != load->library_count) {
+        return NATIVE_PROCESS_IMAGE_REFUSED;
+    }
+    load->object_count = order_count + 1U;
+    for (size_t index = 0U; index < load->object_count; ++index) {
+        /* Preserve root-first breadth-first DT_NEEDED order for preemption. */
+        load->source_indices[index] = index;
+    }
+    zero_bytes(tls_starts, sizeof(tls_starts));
+    load->tls_alignment = 1U;
+    for (size_t index = 0U; index < load->object_count; ++index) {
+        const struct elf64_dynamic_image *image =
+            &load->images[load->source_indices[index]];
+        uint64_t end;
+
+        if (cursor < image->mapping_start) {
+            return NATIVE_PROCESS_IMAGE_REFUSED;
+        }
+        load->prepared[index].image = image;
+        load->prepared[index].load_bias = cursor - image->mapping_start;
+        if (!add_u64(cursor, image->mapping_end - image->mapping_start, &end) ||
+            !add_u64(end, NATIVE_DYNAMIC_GUARD_BYTES, &cursor)) {
+            return NATIVE_PROCESS_IMAGE_REFUSED;
+        }
+    }
+    /*
+     * Variant-II local-exec code expects the root TLS block immediately below
+     * the thread pointer. Lay dependencies out first and the PIE root last;
+     * prepare_dynamic_main_tls places any whole-template alignment padding
+     * before this byte range, never between the root block and FS:0.
+     */
+    for (size_t position = 0U; position < load->object_count; ++position) {
+        const size_t index = position + 1U < load->object_count ?
+            position + 1U : 0U;
+        const struct elf64_dynamic_image *image =
+            &load->images[load->source_indices[index]];
+
+        if (image->tls.memory_size == 0U) {
+            continue;
+        }
+        if (!dynamic_align_u64(load->tls_bytes, image->tls.alignment,
+                &load->tls_bytes)) {
+            return NATIVE_PROCESS_IMAGE_REFUSED;
+        }
+        tls_starts[index] = load->tls_bytes;
+        if (!add_u64(load->tls_bytes, image->tls.memory_size,
+                &load->tls_bytes)) {
+            return NATIVE_PROCESS_IMAGE_REFUSED;
+        }
+        if (image->tls.alignment > load->tls_alignment) {
+            load->tls_alignment = image->tls.alignment;
+        }
+    }
+    if (load->tls_bytes > process->manifest.memory_limit ||
+        load->tls_bytes > INT64_MAX) {
+        return NATIVE_PROCESS_IMAGE_REFUSED;
+    }
+    for (size_t index = 0U; index < load->object_count; ++index) {
+        const size_t source = load->source_indices[index];
+        const struct elf64_dynamic_image *image = &load->images[source];
+        const size_t memory_bytes = (size_t)(image->mapping_end -
+            image->mapping_start);
+        const uint8_t *file = source == 0U ? root_file : load->files[source];
+        const size_t file_length = source == 0U ? root_length :
+            load->file_lengths[source];
+
+        if (!dynamic_allocate_bytes(load, memory_bytes,
+                &load->memories[index])) {
+            return NATIVE_PROCESS_MEMORY_LIMIT;
+        }
+        load->memory_lengths[index] = memory_bytes;
+        if (image->tls.memory_size != 0U) {
+            load->tls_offsets[index] = (int64_t)tls_starts[index] -
+                (int64_t)load->tls_bytes;
+        }
+        load->prepared[index].input = file;
+        load->prepared[index].input_length = file_length;
+        load->prepared[index].memory = load->memories[index];
+        load->prepared[index].memory_length = memory_bytes;
+        load->prepared[index].tls_offset = load->tls_offsets[index];
+    }
+    {
+        const uint64_t tls_pages = (load->tls_bytes + PAGING_PAGE_SIZE - 1U) /
+            PAGING_PAGE_SIZE;
+        uint64_t reserved_pages = NATIVE_DYNAMIC_TRAMPOLINE_PAGES;
+        uint64_t reserved_bytes;
+
+        if (tls_pages != 0U) {
+            reserved_pages += tls_pages + 1U;
+        }
+        if (!add_u64(0U, reserved_pages * PAGING_PAGE_SIZE,
+                &reserved_bytes) || cursor > PAGING_NATIVE_IMAGE_END ||
+            reserved_bytes > PAGING_NATIVE_IMAGE_END - cursor) {
+            return NATIVE_PROCESS_IMAGE_REFUSED;
+        }
+    }
+    load->next_virtual = cursor;
+    lifecycle_scope[0] = load->prepared[0];
+    for (size_t index = 0U; index < order_count; ++index) {
+        /* Constructors use dependencies-first order, separate from lookup. */
+        lifecycle_scope[index + 1U] =
+            load->prepared[(size_t)order[index] + 1U];
+    }
+    if (sapote_elf64_dynamic_relocate_scope(load->prepared,
+            load->object_count) != ELF64_DYNAMIC_OK ||
+        sapote_elf64_dynamic_lifecycle(lifecycle_scope, load->object_count,
+            &load->lifecycle) != ELF64_DYNAMIC_OK) {
+        return NATIVE_PROCESS_IMAGE_REFUSED;
+    }
+    return NATIVE_PROCESS_OK;
+}
+
+static enum native_process_status dynamic_load_create(
+    const struct native_process *process,
+    const struct elf64_dynamic_image *root,
+    uint8_t *root_file,
+    size_t root_length,
+    struct native_dynamic_load **result
+)
+{
+    struct native_dynamic_load *load = NULL;
+    enum native_process_status status;
+
+    if (process == NULL || root == NULL || root_file == NULL || result == NULL ||
+        root_length > NATIVE_DYNAMIC_WORKING_BYTES -
+            sizeof(struct native_dynamic_load) ||
+        dynamic_heap_allocate(sizeof(*load), (void **)&load) !=
+            HEAP_STATUS_OK) {
+        return NATIVE_PROCESS_MEMORY_LIMIT;
+    }
+    zero_bytes(load, sizeof(*load));
+    load->working_bytes = root_length + sizeof(*load);
+    load->images[0] = *root;
+    load->files[0] = root_file;
+    load->file_lengths[0] = root_length;
+    status = dynamic_build_scope(process, load, root_file, root_length);
+    if (status != NATIVE_PROCESS_OK) {
+        if (!dynamic_load_release(&load)) {
+            return NATIVE_PROCESS_TEARDOWN;
+        }
+        return status;
+    }
+    *result = load;
+    return NATIVE_PROCESS_OK;
+}
+
+static bool dynamic_native_image(
+    struct native_process *process,
+    const struct elf64_dynamic_image *dynamic,
+    uint64_t load_bias
+)
+{
+    struct native_validated_image *image;
+
+    if (process == NULL || dynamic == NULL ||
+        dynamic->segment_count > NATIVE_ELF_MAX_LOAD_SEGMENTS) {
+        return false;
+    }
+    image = &process->image;
+    zero_bytes(image, sizeof(*image));
+    if (!add_u64(load_bias, dynamic->entry, &image->entry) ||
+        !add_u64(load_bias, dynamic->mapping_start, &image->mapping_start) ||
+        !add_u64(load_bias, dynamic->mapping_end, &image->mapping_end) ||
+        image->mapping_start < PAGING_NATIVE_IMAGE_BASE ||
+        image->mapping_end > PAGING_NATIVE_IMAGE_END) {
+        return false;
+    }
+    image->valid = 1U;
+    image->segment_count = dynamic->segment_count;
+    for (size_t index = 0U; index < dynamic->segment_count; ++index) {
+        const struct elf64_dynamic_segment *source =
+            &dynamic->segments[index];
+        struct native_elf_segment *destination = &image->segments[index];
+
+        if (!add_u64(load_bias, source->virtual_address,
+                &destination->virtual_address) ||
+            !add_u64(load_bias, source->mapping_start,
+                &destination->mapping_start) ||
+            !add_u64(load_bias, source->mapping_end,
+                &destination->mapping_end)) {
+            return false;
+        }
+        destination->file_offset = source->virtual_address -
+            dynamic->mapping_start;
+        destination->file_size = source->memory_size;
+        destination->memory_size = source->memory_size;
+        destination->flags = source->flags;
+    }
+    return true;
+}
+
+static bool prepare_dynamic_frames(
+    struct native_process *process,
+    const struct elf64_dynamic_image *image,
+    const uint8_t *prepared,
+    size_t prepared_bytes,
+    uint64_t load_bias
+)
+{
+    for (size_t segment_index = 0U;
+         segment_index < image->segment_count; ++segment_index) {
+        const struct elf64_dynamic_segment *segment =
+            &image->segments[segment_index];
+        const uint32_t base_permissions = (segment->flags & ELF_PF_X) != 0U ?
+            PAGING_EXECUTE : ((segment->flags & ELF_PF_W) != 0U ?
+                PAGING_WRITE : PAGING_READ);
+        const uint64_t segment_end = segment->virtual_address +
+            segment->memory_size;
+
+        for (uint64_t link_page = segment->mapping_start;
+             link_page < segment->mapping_end; link_page += PAGING_PAGE_SIZE) {
+            const uint64_t copy_start = link_page > segment->virtual_address ?
+                link_page : segment->virtual_address;
+            const uint64_t page_end = link_page + PAGING_PAGE_SIZE;
+            const uint64_t copy_end = page_end < segment_end ? page_end :
+                segment_end;
+            const uint32_t permissions = image->relro_start != 0U &&
+                link_page >= image->relro_start &&
+                link_page < image->relro_end ? PAGING_READ : base_permissions;
+            uint64_t virtual_address;
+            uintptr_t physical_address;
+
+            if (!add_u64(load_bias, link_page, &virtual_address) ||
+                !allocate_page(process, virtual_address, permissions,
+                    PAGING_PROCESS_MAPPING_NATIVE_IMAGE,
+                    &physical_address)) {
+                return false;
+            }
+            if (copy_start < copy_end) {
+                const uint64_t source_offset = copy_start -
+                    image->mapping_start;
+                const size_t count = (size_t)(copy_end - copy_start);
+
+                if (source_offset > prepared_bytes ||
+                    count > prepared_bytes - (size_t)source_offset) {
+                    return false;
+                }
+                copy_bytes((uint8_t *)(void *)physical_address +
+                        (size_t)(copy_start - link_page),
+                    prepared + source_offset, count);
+            }
+            if ((permissions & PAGING_EXECUTE) != 0U) {
+                if (process->executable_count >=
+                        PAGING_PROCESS_ALIAS_MAX_PAGES) {
+                    return false;
+                }
+                process->executable_frames[process->executable_count++] =
+                    physical_address;
+            }
+        }
+    }
+    return process->executable_count != 0U;
+}
+
+static bool dynamic_image_write(struct native_process *process,
+    uint64_t address, const uint8_t *source, size_t length)
+{
+    uint64_t cursor = address;
+
+    while (length != 0U) {
+        struct native_page *page = page_at(process, cursor);
+        size_t chunk = (size_t)(PAGING_PAGE_SIZE -
+            (cursor & (PAGING_PAGE_SIZE - 1U)));
+
+        if (page == NULL ||
+            page->kind != PAGING_PROCESS_MAPPING_NATIVE_IMAGE) {
+            return false;
+        }
+        if (chunk > length) {
+            chunk = length;
+        }
+        copy_bytes((uint8_t *)(void *)page->physical_address +
+                (size_t)(cursor - page->virtual_address), source, chunk);
+        cursor += chunk;
+        source += chunk;
+        length -= chunk;
+    }
+    return true;
+}
+
+struct dynamic_code_writer {
+    struct native_process *process;
+    uint64_t base;
+    size_t cursor;
+    size_t capacity;
+};
+
+static bool dynamic_code_bytes(struct dynamic_code_writer *writer,
+    const uint8_t *bytes, size_t count)
+{
+    if (writer == NULL || bytes == NULL ||
+        writer->cursor > writer->capacity || count > writer->capacity -
+            writer->cursor ||
+        !dynamic_image_write(writer->process, writer->base + writer->cursor,
+            bytes, count)) {
+        return false;
+    }
+    writer->cursor += count;
+    return true;
+}
+
+static bool dynamic_code_u64(struct dynamic_code_writer *writer,
+    uint64_t value)
+{
+    uint8_t bytes[8];
+
+    for (size_t index = 0U; index < sizeof(bytes); ++index) {
+        bytes[index] = (uint8_t)(value >> (index * 8U));
+    }
+    return dynamic_code_bytes(writer, bytes, sizeof(bytes));
+}
+
+static bool dynamic_code_call(struct dynamic_code_writer *writer,
+    uint64_t address, bool arguments)
+{
+    static const uint8_t reload_arguments[] = {
+        0x48U, 0x8bU, 0x7cU, 0x24U, 0x18U,
+        0x48U, 0x8bU, 0x74U, 0x24U, 0x10U,
+        0x48U, 0x8bU, 0x54U, 0x24U, 0x08U
+    };
+    static const uint8_t mov_rax[] = {0x48U, 0xb8U};
+    static const uint8_t call_rax[] = {0xffU, 0xd0U};
+
+    return (!arguments || dynamic_code_bytes(writer, reload_arguments,
+            sizeof(reload_arguments))) &&
+        dynamic_code_bytes(writer, mov_rax, sizeof(mov_rax)) &&
+        dynamic_code_u64(writer, address) &&
+        dynamic_code_bytes(writer, call_rax, sizeof(call_rax));
+}
+
+static bool dynamic_prepare_trampolines(
+    struct native_process *process,
+    const struct native_dynamic_load *load,
+    uint64_t base,
+    uint64_t *start_entry
+)
+{
+    static const uint8_t start_prologue[] = {
+        0x57U, 0x56U, 0x52U, 0x48U, 0x83U, 0xecU, 0x08U
+    };
+    static const uint8_t start_epilogue[] = {
+        0x48U, 0x83U, 0xc4U, 0x08U, 0x5aU, 0x5eU, 0x5fU, 0x48U, 0xb8U
+    };
+    static const uint8_t jump_rax[] = {0xffU, 0xe0U};
+    static const uint8_t fini_prologue[] = {
+        /* mov %rdi,%r12; and $-16,%rsp -- independent of caller alignment. */
+        0x49U, 0x89U, 0xfcU, 0x48U, 0x83U, 0xe4U, 0xf0U
+    };
+    static const uint8_t fini_epilogue[] = {
+        /* mov %r12,%rdi; mov $SYS_EXIT,%eax; syscall; ud2. */
+        0x4cU, 0x89U, 0xe7U, 0xb8U,
+        (uint8_t)(SAPOTE_SYS_EXIT & 0xffU),
+        (uint8_t)((SAPOTE_SYS_EXIT >> 8U) & 0xffU),
+        (uint8_t)((SAPOTE_SYS_EXIT >> 16U) & 0xffU),
+        (uint8_t)((SAPOTE_SYS_EXIT >> 24U) & 0xffU),
+        0x0fU, 0x05U, 0x0fU, 0x0bU
+    };
+    struct dynamic_code_writer start = {
+        process, base, 0U,
+        NATIVE_DYNAMIC_START_PAGES * (size_t)PAGING_PAGE_SIZE
+    };
+    struct dynamic_code_writer fini = {
+        process, base + NATIVE_DYNAMIC_START_PAGES * PAGING_PAGE_SIZE, 0U,
+        (size_t)PAGING_PAGE_SIZE
+    };
+
+    if (load->lifecycle.constructor_count == 0U) {
+        *start_entry = process->image.entry;
+    } else {
+        if (!dynamic_code_bytes(&start, start_prologue,
+                sizeof(start_prologue))) {
+            return false;
+        }
+        for (size_t index = 0U;
+             index < load->lifecycle.constructor_count; ++index) {
+            if (!dynamic_code_call(&start,
+                    load->lifecycle.constructors[index], true)) {
+                return false;
+            }
+        }
+        if (!dynamic_code_bytes(&start, start_epilogue,
+                sizeof(start_epilogue)) ||
+            !dynamic_code_u64(&start, process->image.entry) ||
+            !dynamic_code_bytes(&start, jump_rax, sizeof(jump_rax))) {
+            return false;
+        }
+        *start_entry = base;
+    }
+    if (load->lifecycle.destructor_count != 0U) {
+        if (!dynamic_code_bytes(&fini, fini_prologue,
+                sizeof(fini_prologue))) {
+            return false;
+        }
+        for (size_t index = 0U;
+             index < load->lifecycle.destructor_count; ++index) {
+            if (!dynamic_code_call(&fini,
+                    load->lifecycle.destructors[index], false)) {
+                return false;
+            }
+        }
+        if (!dynamic_code_bytes(&fini, fini_epilogue,
+                sizeof(fini_epilogue))) {
+            return false;
+        }
+        process->dynamic_fini_entry = fini.base;
+    }
+    return true;
+}
+
+static bool dynamic_prepare_tls_template(
+    struct native_process *process,
+    const struct native_dynamic_load *load,
+    uint64_t address
+)
+{
+    const size_t pages = (size_t)((load->tls_bytes + PAGING_PAGE_SIZE - 1U) /
+        PAGING_PAGE_SIZE);
+
+    for (size_t page = 0U; page < pages; ++page) {
+        uintptr_t physical_address;
+        if (!allocate_page(process, address + page * PAGING_PAGE_SIZE,
+                PAGING_READ, PAGING_PROCESS_MAPPING_NATIVE_IMAGE,
+                &physical_address)) {
+            return false;
+        }
+    }
+    for (size_t index = 0U; index < load->object_count; ++index) {
+        const struct elf64_dynamic_image *image = load->prepared[index].image;
+        uint64_t source_offset;
+        uint64_t destination_offset;
+
+        if (image->tls.memory_size == 0U) {
+            continue;
+        }
+        source_offset = image->tls.virtual_address - image->mapping_start;
+        destination_offset = load->tls_bytes -
+            (uint64_t)(-load->tls_offsets[index]);
+        if (source_offset > load->memory_lengths[index] ||
+            image->tls.memory_size > load->memory_lengths[index] -
+                (size_t)source_offset ||
+            !dynamic_image_write(process, address + destination_offset,
+                load->memories[index] + source_offset,
+                (size_t)image->tls.memory_size)) {
+            return false;
+        }
+    }
+    process->image.tls.file_offset = 0U;
+    process->image.tls.virtual_address = address;
+    process->image.tls.file_size = load->tls_bytes;
+    process->image.tls.memory_size = load->tls_bytes;
+    process->image.tls.alignment = load->tls_alignment;
+    return true;
+}
+
+static enum native_process_status prepare_dynamic_image_pages(
+    struct native_process *process,
+    const struct native_dynamic_load *load,
+    uint64_t *start_entry
+)
+{
+    uint64_t cursor = load->next_virtual;
+
+    if (process == NULL || load == NULL || start_entry == NULL ||
+        !dynamic_native_image(process, load->prepared[0].image,
+            load->prepared[0].load_bias)) {
+        return NATIVE_PROCESS_IMAGE_REFUSED;
+    }
+    for (size_t index = 0U; index < load->object_count; ++index) {
+        if (!prepare_dynamic_frames(process, load->prepared[index].image,
+                load->memories[index], load->memory_lengths[index],
+                load->prepared[index].load_bias)) {
+            return NATIVE_PROCESS_FRAME_ALLOCATION;
+        }
+    }
+    if (load->tls_bytes != 0U) {
+        const uint64_t pages = (load->tls_bytes + PAGING_PAGE_SIZE - 1U) /
+            PAGING_PAGE_SIZE;
+        if (!dynamic_prepare_tls_template(process, load, cursor)) {
+            return NATIVE_PROCESS_FRAME_ALLOCATION;
+        }
+        cursor += (pages + 1U) * PAGING_PAGE_SIZE;
+    }
+    for (size_t page = 0U; page < NATIVE_DYNAMIC_TRAMPOLINE_PAGES; ++page) {
+        uintptr_t physical_address;
+        if (!allocate_page(process, cursor + page * PAGING_PAGE_SIZE,
+                PAGING_EXECUTE, PAGING_PROCESS_MAPPING_NATIVE_IMAGE,
+                &physical_address) || process->executable_count >=
+                    PAGING_PROCESS_ALIAS_MAX_PAGES) {
+            return NATIVE_PROCESS_FRAME_ALLOCATION;
+        }
+        process->executable_frames[process->executable_count++] =
+            physical_address;
+    }
+    if (!dynamic_prepare_trampolines(process, load, cursor, start_entry)) {
+        return NATIVE_PROCESS_IMAGE_REFUSED;
+    }
+    process->image.mapping_end = cursor +
+        NATIVE_DYNAMIC_TRAMPOLINE_PAGES * PAGING_PAGE_SIZE;
+    return NATIVE_PROCESS_OK;
+}
+
 static bool prepare_main_stack(struct native_process *process)
 {
     for (size_t page = 0U; page < NATIVE_STACK_PAGES; ++page) {
@@ -1034,6 +1891,91 @@ static bool prepare_main_tls(
     return (tls->file_size == 0U || prepared_tls_write(process,
             *thread_pointer - tls->memory_size,
             elf + (size_t)tls->file_offset, (size_t)tls->file_size)) &&
+        prepared_tls_write(process, *thread_pointer, thread_pointer,
+            sizeof(*thread_pointer));
+}
+
+static bool prepared_image_copy_to_tls(
+    struct native_process *process,
+    uint64_t source_address,
+    uint64_t destination_address,
+    size_t length
+)
+{
+    while (length != 0U) {
+        const struct native_page *source = page_at(process, source_address);
+        size_t chunk = (size_t)(PAGING_PAGE_SIZE -
+            (source_address & (PAGING_PAGE_SIZE - 1U)));
+
+        if (source == NULL ||
+            source->kind != PAGING_PROCESS_MAPPING_NATIVE_IMAGE) {
+            return false;
+        }
+        if (chunk > length) {
+            chunk = length;
+        }
+        if (!prepared_tls_write(process, destination_address,
+                (const uint8_t *)(const void *)source->physical_address +
+                    (size_t)(source_address - source->virtual_address),
+                chunk)) {
+            return false;
+        }
+        source_address += chunk;
+        destination_address += chunk;
+        length -= chunk;
+    }
+    return true;
+}
+
+static bool prepare_dynamic_main_tls(
+    struct native_process *process,
+    uint64_t *thread_pointer
+)
+{
+    const struct native_elf_tls *tls = &process->image.tls;
+    uint64_t aligned_size;
+    uint64_t allocation_size;
+    size_t page_count;
+
+    if (thread_pointer == NULL) {
+        return false;
+    }
+    *thread_pointer = 0U;
+    if (tls->memory_size == 0U) {
+        return true;
+    }
+    if (tls->alignment == 0U ||
+        (tls->alignment & (tls->alignment - 1U)) != 0U ||
+        tls->memory_size > UINT64_MAX - (tls->alignment - 1U) ||
+        tls->file_size != tls->memory_size) {
+        return false;
+    }
+    aligned_size = (tls->memory_size + tls->alignment - 1U) &
+        ~(tls->alignment - 1U);
+    if (!add_u64(aligned_size, NATIVE_TLS_TCB_BYTES, &allocation_size) ||
+        allocation_size > UINT64_MAX - (PAGING_PAGE_SIZE - 1U)) {
+        return false;
+    }
+    page_count = (size_t)((allocation_size + PAGING_PAGE_SIZE - 1U) /
+        PAGING_PAGE_SIZE);
+    if (page_count == 0U || page_count > NATIVE_PROCESS_PAGE_LIMIT ||
+        page_count >= (PAGING_NATIVE_ANON_END - NATIVE_MAIN_TLS_BASE) /
+            PAGING_PAGE_SIZE) {
+        return false;
+    }
+    for (size_t page = 0U; page < page_count; ++page) {
+        uintptr_t physical_address;
+
+        if (!allocate_page(process,
+                NATIVE_MAIN_TLS_BASE + page * PAGING_PAGE_SIZE,
+                PAGING_WRITE, PAGING_PROCESS_MAPPING_NATIVE_TLS,
+                &physical_address)) {
+            return false;
+        }
+    }
+    *thread_pointer = NATIVE_MAIN_TLS_BASE + aligned_size;
+    return prepared_image_copy_to_tls(process, tls->virtual_address,
+            *thread_pointer - tls->memory_size, (size_t)tls->memory_size) &&
         prepared_tls_write(process, *thread_pointer, thread_pointer,
             sizeof(*thread_pointer));
 }
@@ -1275,6 +2217,10 @@ static enum native_process_status load_process(
     uint64_t main_thread_pointer = 0U;
     enum native_process_status result = NATIVE_PROCESS_OK;
     enum native_image_status admission_status;
+    struct elf64_dynamic_image dynamic_image;
+    struct native_dynamic_load *dynamic_load = NULL;
+    uint64_t dynamic_start_entry = 0U;
+    bool dynamic = false;
 
     if (!read_system_file(manifest_path, manifest_bytes,
             sizeof(manifest_bytes), &manifest_read) ||
@@ -1312,11 +2258,39 @@ static enum native_process_status load_process(
         sizeof(manifest_bytes), elf, elf_read, &process->manifest,
         &process->image);
     if (admission_status != NATIVE_IMAGE_OK) {
-        console_write("Sapote: native admission status ");
-        console_write_u64((uint64_t)admission_status);
-        console_putc('\n');
-        result = NATIVE_PROCESS_IMAGE_REFUSED;
-        goto finish;
+        enum elf64_dynamic_status dynamic_status;
+
+        if (admission_status != NATIVE_IMAGE_ELF_TYPE ||
+            sapote_native_manifest_authenticate(manifest_bytes,
+                sizeof(manifest_bytes), elf, elf_read,
+                &process->manifest) != NATIVE_IMAGE_OK) {
+            console_write("Sapote: native admission status ");
+            console_write_u64((uint64_t)admission_status);
+            console_putc('\n');
+            result = NATIVE_PROCESS_IMAGE_REFUSED;
+            goto finish;
+        }
+        dynamic_status = sapote_elf64_dynamic_parse(elf, elf_read,
+            &dynamic_image);
+        if (dynamic_status != ELF64_DYNAMIC_OK) {
+            console_write("Sapote: dynamic ELF admission status ");
+            console_write_u64((uint64_t)dynamic_status);
+            console_putc('\n');
+            result = NATIVE_PROCESS_IMAGE_REFUSED;
+            goto finish;
+        }
+        if (!dynamic_object_supported(process, &dynamic_image, true)) {
+            console_write("Sapote: dynamic ELF root policy refused\n");
+            result = NATIVE_PROCESS_IMAGE_REFUSED;
+            goto finish;
+        }
+        result = dynamic_load_create(process, &dynamic_image, elf, elf_read,
+            &dynamic_load);
+        if (result != NATIVE_PROCESS_OK) {
+            console_write("Sapote: dynamic ELF dependency scope refused\n");
+            goto finish;
+        }
+        dynamic = true;
     }
     namespace_length = bounded_length(process->manifest.data_namespace,
         sizeof(process->manifest.data_namespace));
@@ -1334,8 +2308,18 @@ static enum native_process_status load_process(
         }
     }
     cpu_interrupt_disable();
-    if (!prepare_image_pages(process, elf, elf_read) ||
-        !prepare_main_tls(process, elf, elf_read, &main_thread_pointer) ||
+    if (dynamic) {
+        result = prepare_dynamic_image_pages(process, dynamic_load,
+            &dynamic_start_entry);
+        if (result != NATIVE_PROCESS_OK) {
+            goto finish_disabled;
+        }
+    } else if (!prepare_image_pages(process, elf, elf_read)) {
+        result = NATIVE_PROCESS_FRAME_ALLOCATION;
+        goto finish_disabled;
+    }
+    if (!(dynamic ? prepare_dynamic_main_tls(process, &main_thread_pointer) :
+            prepare_main_tls(process, elf, elf_read, &main_thread_pointer)) ||
         !prepare_main_stack(process)) {
         result = NATIVE_PROCESS_FRAME_ALLOCATION;
         goto finish_disabled;
@@ -1359,6 +2343,9 @@ static enum native_process_status load_process(
         result = NATIVE_PROCESS_STACK;
         goto finish_disabled;
     }
+    if (dynamic) {
+        process->threads[0].context.rip = dynamic_start_entry;
+    }
     if (native_handle_table_initialize(&process->handles,
             process->manifest.max_handles) != NATIVE_HANDLE_OK) {
         result = NATIVE_PROCESS_MEMORY_LIMIT;
@@ -1369,6 +2356,10 @@ finish_disabled:
     cpu_interrupt_enable();
 finish:
     cpu_interrupt_disable();
+    if (!dynamic_load_release(&dynamic_load) &&
+        result == NATIVE_PROCESS_OK) {
+        result = NATIVE_PROCESS_TEARDOWN;
+    }
     if (elf != NULL && heap_free(elf) != HEAP_STATUS_OK &&
         result == NATIVE_PROCESS_OK) {
         result = NATIVE_PROCESS_TEARDOWN;
@@ -3770,6 +4761,33 @@ static void terminate_process(struct native_process *process, int32_t status)
     }
 }
 
+static bool begin_dynamic_finalizers(
+    struct native_process *process,
+    struct native_thread *thread,
+    int32_t status
+)
+{
+    if (process->dynamic_fini_entry == 0U ||
+        process->dynamic_fini_started) {
+        return false;
+    }
+    process->dynamic_fini_started = true;
+    process->exit_status = status;
+    for (size_t index = 0U; index < process->thread_count; ++index) {
+        struct native_thread *candidate = &process->threads[index];
+
+        candidate->exit_status = status;
+        if (candidate != thread &&
+            candidate->state != NATIVE_THREAD_FAULTED) {
+            candidate->state = NATIVE_THREAD_EXITED;
+        }
+    }
+    thread->state = NATIVE_THREAD_RUNNABLE;
+    thread->context.rip = process->dynamic_fini_entry;
+    thread->context.rdi = (uint64_t)(int64_t)status;
+    return true;
+}
+
 static int64_t syscall_handle_close(
     struct native_process *process,
     sapote_handle_t handle
@@ -3812,7 +4830,10 @@ static int64_t dispatch_syscall(
     case SAPOTE_SYS_ABI_VERSION:
         return SAPOTE_ABI_VERSION;
     case SAPOTE_SYS_EXIT:
-        terminate_process(process, (int32_t)frame->rdi);
+        if (!begin_dynamic_finalizers(process, thread,
+                (int32_t)frame->rdi)) {
+            terminate_process(process, (int32_t)frame->rdi);
+        }
         return 0;
     case SAPOTE_SYS_CONSOLE_WRITE:
         return syscall_console_write(process, frame->rdi, (size_t)frame->rsi);
@@ -4676,6 +5697,7 @@ bool native_process_self_test(size_t *completed_tests)
     size_t fpu_tests;
     size_t audio_tests;
     const uint32_t image_tests = sapote_native_image_self_test();
+    const uint32_t dynamic_tests = sapote_elf64_dynamic_self_test();
 
     if (completed_tests == NULL) {
         return false;
@@ -4685,6 +5707,10 @@ bool native_process_self_test(size_t *completed_tests)
         return false;
     }
     *completed_tests += image_tests;
+    if (dynamic_tests != 9U) {
+        return false;
+    }
+    *completed_tests += dynamic_tests;
     if (!native_handle_self_test(&handle_tests)) {
         return false;
     }

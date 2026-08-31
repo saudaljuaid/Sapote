@@ -58,8 +58,10 @@ bounded in-memory deflate/inflate and checksums. Hosted gzip-file adapters and
 the allocation-backed `compress*` convenience API are deliberately excluded.
 `vendor/zlib/SOURCE-MANIFEST.sha256` pins each retained upstream file, while
 `vendor/zlib/SAPOTE-PORT.md` defines the freestanding build and allocator
-contract. The reproducible SDK installs this profile as the static `libz.a`;
-there is not yet a shared-library ABI or dynamic-code-sharing claim.
+contract. The reproducible SDK installs this profile as the static `libz.a`.
+Sapote's bounded native shared-object loader is separate; zlib itself is not
+shipped as a Sapote DSO, and library RX frames are not yet physically shared
+across processes.
 
 ## SDL 2
 

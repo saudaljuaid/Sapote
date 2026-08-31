@@ -270,7 +270,8 @@ def trusted_ed25519_keys(paths: list[str] | None) -> dict[str, bytes]:
     return result
 
 
-def encode_manifest(spec: dict[str, Any], executable: bytes) -> bytes:
+def encode_manifest(spec: dict[str, Any], executable: bytes,
+                    resources: tuple[tuple[str, bytes], ...] = ()) -> bytes:
     abi_version = spec.get("abi_version", 1)
     if abi_version != 1:
         raise PackageError("abi_version must be 1")
@@ -281,6 +282,23 @@ def encode_manifest(spec: dict[str, Any], executable: bytes) -> bytes:
     resource_directory = spec.get("resource_directory", "")
     if resource_directory:
         resource_directory = identifier(resource_directory, "resource_directory")
+    dynamic_catalog = spec.get("dynamic_catalog", "")
+    dynamic_catalog_digest = bytes(32)
+    if dynamic_catalog:
+        if not resource_directory:
+            raise PackageError("dynamic_catalog requires resource_directory")
+        if not isinstance(dynamic_catalog, str) or dynamic_catalog.count("/") != 1:
+            raise PackageError("dynamic_catalog must be DIRECTORY/NAME")
+        catalog_directory, catalog_name = dynamic_catalog.split("/", 1)
+        if identifier(catalog_directory, "dynamic_catalog directory") != resource_directory:
+            raise PackageError("dynamic_catalog must be inside resource_directory")
+        catalog_name = short_path(catalog_name, "dynamic_catalog name", required=True)
+        dynamic_catalog = resource_directory + "/" + catalog_name
+        matches = [payload for path, payload in resources
+                   if path.upper() == catalog_name]
+        if len(matches) != 1:
+            raise PackageError("dynamic_catalog must name exactly one packaged resource")
+        dynamic_catalog_digest = hashlib.sha256(matches[0]).digest()
     icon = short_path(spec.get("icon", ""), "icon", required=False)
     arguments = spec.get("arguments", [])
     if not isinstance(arguments, list) or len(arguments) > 8:
@@ -321,6 +339,9 @@ def encode_manifest(spec: dict[str, Any], executable: bytes) -> bytes:
     for index, argument in enumerate(arguments):
         manifest[208 + index * 32:240 + index * 32] = argument_field(
             argument, f"arguments[{index}]")
+    manifest[464:480] = text_field(dynamic_catalog, 16, "dynamic_catalog",
+                                   required=False)
+    manifest[480:512] = dynamic_catalog_digest
     return bytes(manifest)
 
 
@@ -352,7 +373,7 @@ def inspect_manifest(manifest: bytes, executable: bytes) -> dict[str, Any]:
      reserved, capabilities, memory_limit) = struct.unpack_from("<HHIIHHHHQQ", manifest, 8)
     if (version, size, abi, flags, reserved) != (1, MANIFEST_BYTES, 1, 0, 0):
         raise PackageError("manifest version, size, flags, or reserved field is invalid")
-    if any(manifest[44:64]) or any(manifest[496:]):
+    if any(manifest[44:64]) or any(manifest[512:]):
         raise PackageError("manifest reserved bytes are nonzero")
     if argument_count > 8 or capabilities & ~sum(CAPABILITIES.values()):
         raise PackageError("manifest argument or capability bits are invalid")
@@ -366,6 +387,10 @@ def inspect_manifest(manifest: bytes, executable: bytes) -> dict[str, Any]:
            for index in range(argument_count, 8)):
         raise PackageError("unused argument records are nonzero")
     names = [name for name, bit in CAPABILITIES.items() if capabilities & bit]
+    dynamic_catalog = decode_text(manifest[464:480], "dynamic_catalog")
+    dynamic_catalog_sha256 = manifest[480:512]
+    if bool(dynamic_catalog) != any(dynamic_catalog_sha256):
+        raise PackageError("dynamic catalog path and digest must be paired")
     return {
         "format": version,
         "abi_version": abi,
@@ -382,6 +407,9 @@ def inspect_manifest(manifest: bytes, executable: bytes) -> dict[str, Any]:
         "data_namespace": decode_text(manifest[176:192], "data_namespace"),
         "icon": decode_text(manifest[192:208], "icon"),
         "arguments": args,
+        "dynamic_catalog": dynamic_catalog,
+        "dynamic_catalog_sha256": (dynamic_catalog_sha256.hex().upper()
+                                    if dynamic_catalog else ""),
     }
 
 
@@ -405,11 +433,53 @@ def encode_resources(resources: tuple[tuple[str, bytes], ...]) -> bytes:
     return bytes(encoded)
 
 
+def inspect_dynamic_catalog(report: dict[str, Any],
+                            resources: tuple[tuple[str, bytes], ...]) -> None:
+    """Bind every authenticated SONAME to one exact package resource."""
+    catalog_path = str(report["dynamic_catalog"])
+    if not catalog_path:
+        return
+    directory = str(report["resource_directory"])
+    prefix = directory + "/"
+    if not catalog_path.startswith(prefix) or catalog_path.count("/") != 1:
+        raise PackageError("dynamic catalog is outside its resource directory")
+    resource_map = {path: payload for path, payload in resources}
+    catalog_name = catalog_path[len(prefix):]
+    catalog = resource_map.get(catalog_name)
+    if catalog is None or hashlib.sha256(catalog).hexdigest().upper() != \
+            report["dynamic_catalog_sha256"]:
+        raise PackageError("dynamic catalog resource or digest does not match")
+    if len(catalog) != 2048 or catalog[:8] != b"SAPDYNL1":
+        raise PackageError("dynamic catalog length or magic is invalid")
+    version, header_bytes, total_bytes, count, entry_bytes = struct.unpack_from(
+        "<HHIHH", catalog, 8)
+    if (version, header_bytes, total_bytes, entry_bytes) != (1, 64, 2048, 96) \
+            or not 1 <= count <= 16 or any(catalog[20:64]):
+        raise PackageError("dynamic catalog header is invalid")
+    used_end = 64 + count * entry_bytes
+    if any(catalog[used_end:]):
+        raise PackageError("dynamic catalog reserved tail is nonzero")
+    previous = ""
+    for index in range(count):
+        offset = 64 + index * entry_bytes
+        name = decode_text(catalog[offset:offset + 64],
+                           f"dynamic_catalog[{index}].soname")
+        short_path(name, f"dynamic_catalog[{index}].soname", required=True)
+        if name != name.upper() or name <= previous:
+            raise PackageError("dynamic catalog SONAMEs are not canonical and sorted")
+        previous = name
+        payload = resource_map.get(name)
+        digest = catalog[offset + 64:offset + 96]
+        if payload is None or digest != hashlib.sha256(payload).digest():
+            raise PackageError(
+                f"dynamic catalog resource digest does not match {name}")
+
+
 def build_package(spec: dict[str, Any], executable: bytes,
                   resources: tuple[tuple[str, bytes], ...] = ()) -> bytes:
     if not executable or len(executable) > 16 * 1024 * 1024:
         raise PackageError("executable is empty or exceeds the FAT32 file bound")
-    manifest = encode_manifest(spec, executable)
+    manifest = encode_manifest(spec, executable, resources)
     resource_body = encode_resources(resources)
     body = manifest + executable + resource_body
     header = bytearray(PACKAGE_HEADER_BYTES)
@@ -626,6 +696,7 @@ def _parse_legacy_package(package: bytes) -> tuple[
     report = inspect_manifest(manifest, executable)
     if resources and not report["resource_directory"]:
         raise PackageError("packaged resources require resource_directory")
+    inspect_dynamic_catalog(report, tuple(resources))
     report["package_format"] = version
     report["resources"] = [
         {"path": path, "bytes": len(payload),

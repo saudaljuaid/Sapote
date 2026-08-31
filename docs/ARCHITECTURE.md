@@ -247,9 +247,10 @@ keeping development diaries in the active documentation set.
 ## Current limits
 
 Sapote has no SMP, IPv6, transport TLS, firewall, routing, Wi-Fi, IOMMU,
-general Unix VFS, journaled crash recovery, dynamic linker, signals, ambient Unix
-descriptor table, broad hardware support, or browser. Native ABI v1 is stable
-within its documented static-application profile, not a POSIX personality.
+general Unix VFS, journaled crash recovery, hosted `ld.so`/`dlopen`, signals,
+ambient Unix descriptor table, broad hardware support, or browser. Native ABI
+v1 is stable within its documented static and bounded PIE/DSO profiles, not a
+POSIX personality.
 There is no fork, exec, process identifier space or inter-process
 communication. The thirteen bounded drivers bind and identify their devices;
 none of them moves data. The HD Audio driver identifies codecs and plays

@@ -72,6 +72,8 @@ struct native_manifest {
     uint8_t icon[NATIVE_MANIFEST_PATH_BYTES];
     uint8_t arguments[NATIVE_MANIFEST_ARGUMENTS]
         [NATIVE_MANIFEST_ARGUMENT_BYTES];
+    uint8_t dynamic_catalog[NATIVE_MANIFEST_PATH_BYTES];
+    uint8_t dynamic_catalog_sha256[32];
 };
 
 struct native_elf_segment {
@@ -105,7 +107,7 @@ struct native_validated_image {
     struct native_elf_segment segments[NATIVE_ELF_MAX_LOAD_SEGMENTS];
 };
 
-_Static_assert(sizeof(struct native_manifest) == 432U,
+_Static_assert(sizeof(struct native_manifest) == 480U,
     "Rust/C native manifest result changed");
 _Static_assert(sizeof(struct native_elf_segment) == 56U,
     "Rust/C native ELF segment changed");
@@ -121,6 +123,13 @@ enum native_image_status sapote_native_image_validate(
     size_t elf_length,
     struct native_manifest *manifest,
     struct native_validated_image *image
+);
+enum native_image_status sapote_native_manifest_authenticate(
+    const uint8_t *manifest_bytes,
+    size_t manifest_length,
+    const uint8_t *elf_bytes,
+    size_t elf_length,
+    struct native_manifest *manifest
 );
 uint32_t sapote_native_image_self_test(void);
 

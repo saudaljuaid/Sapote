@@ -1,153 +1,133 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
 
-# x86-64 dynamic-linking foundation
+# Native dynamic ELF loading
 
-`src/rust/elf64_dynamic.rs` is an allocation-free admission, symbol lookup,
-dependency ordering, image preparation, and RELA application foundation for
-bounded x86-64 `ET_DYN` objects. `tools/elf64-dynamic-host-test.rs` exercises it
-with genuine multi-object ELF64 byte fixtures using both SysV and GNU hashes.
+Sapote can execute a bounded x86-64 PIE root with authenticated shared-object
+dependencies in Ring 3. The Rust boundary admits and relocates `ET_DYN` bytes;
+the C process loader reads the root, catalog, and libraries from the read-only
+System volume, chooses non-overlapping biases, installs final permissions and
+TLS, runs constructors, and runs destructors before process cleanup.
 
-This is deliberately not described as Sapote's guest dynamic loader. The
-current guest path in `native_image.rs` admits one static `ET_EXEC` and explicitly
-rejects `PT_DYNAMIC`, relocation sections, and dynamic symbols. The C native
-process mapper reads that one manifest-named file, copies its already admitted
-segments, and installs their final permissions. It has no authenticated
-dependency-file reader, multi-object load-bias policy, or constructor lifecycle.
-Adding those pieces safely requires later package-service and process-loader
-integration; this slice does not touch VFS, ext4, paging, or the existing mapper.
+The `native-dynamic` QEMU scenario is the end-to-end proof. Its installed
+format-v2 package contains `DYNROOT.APP`, `DYN/DYNROOT.CAT`, and
+`DYN/DYNLIB.SO`. The root manifest authenticates the executable and catalog;
+the catalog binds the exact `DYNLIB.SO` SONAME to the library SHA-256. Package
+inspection independently checks those relationships before building the System
+image. The scenario then requires this exact order:
 
-## Admission policy
+```text
+SAPOTE DYNAMIC LIB INIT
+SAPOTE DYNAMIC ROOT INIT
+SAPOTE DYNAMIC RING3 PASS
+SAPOTE DYNAMIC ROOT FINI
+SAPOTE DYNAMIC LIB FINI
+Sapote: dynamic ELF shared library, TLS and lifecycle passed
+```
 
-The parser accepts little-endian System V x86-64 `ET_DYN` only. Every integer is
-decoded from a checked byte slice; it never overlays untrusted bytes with a Rust
-or C structure. Arithmetic for file ranges, virtual ranges, table extents,
-runtime addresses, relocation values, and signed PC-relative results is checked.
+The kernel also requires a zero exit status, at least seven real Ring 3
+syscalls, a scheduler transition, and a clean page/handle/thread census.
+
+## Trust boundary
+
+The loader never searches ambient directories. A dependency name must be one
+canonical uppercase 8.3 SONAME present in the manifest-authenticated 2 KiB
+catalog. The corresponding System resource is read once, hashed, compared with
+the catalog entry, parsed, and copied into private preparation memory. Missing,
+duplicate, ambiguous, cyclic, changed, or out-of-bound dependencies are
+refused before a user mapping is entered.
+
+This proof package uses legacy format 2, whose body has integrity hashing but
+no publisher signature. Sapote's Ed25519-signed format-v3 repository and trust
+policy are separate; the current guest package installer does not yet turn a
+signed repository artifact into this dynamic application package. The dynamic
+proof therefore establishes authenticated System-image loading, not signed
+publisher provenance or in-guest installation.
+
+## Admission policy and bounds
+
+The parser accepts little-endian System V x86-64 `ET_DYN` only. It decodes
+integers from checked slices and checks every file, virtual, table, relocation,
+and signed PC-relative range.
 
 | Bound | Limit |
 | --- | ---: |
-| ELF file | 64 MiB |
+| Root or library file read by the guest | 16 MiB |
 | Program headers | 32 |
 | `PT_LOAD` segments | 16 |
 | Mapped span per object | 256 MiB |
 | Dynamic entries | 256 |
-| `DT_NEEDED` entries | 16 |
-| Dynamic strings | 1 MiB table; 63 bytes per consumed name |
+| Direct `DT_NEEDED` entries | 16 |
+| Objects in one process scope | 16 |
 | Dynamic symbols | 4,096 |
 | Main plus PLT RELA records | 256 |
-| Dependency objects | 32 |
-| Init/fini array entries | 256 each |
+| TLS image per object | 1 MiB |
+| Constructor or destructor addresses | 256 each |
+| Dynamic preparation allocation | 8 MiB per launch |
 
 `PT_LOAD` records must be ordered, page-disjoint, congruent, and use only R,
-R-X, or RW permissions. A W+X segment, page sharing between differently
-protected loads, wrapped address, invalid file extent, span above the bound, or
-entry outside executable content is refused. Link-time addresses are below 4
-GiB; caller-selected page-aligned runtime bias plus every mapped address must
-remain in lower canonical userspace.
+R-X, or RW permissions. W+X, differently protected shared pages, wrapped
+addresses, invalid extents, executable stacks, and entries outside executable
+content are refused. Exactly one RW `PT_DYNAMIC` and one RW non-executable
+`PT_GNU_STACK` are required. `PT_INTERP` and unknown program types are refused.
+Optional `PT_GNU_RELRO` is page-rounded and installed read-only after eager
+relocation. Optional `PT_TLS` is bounded, read-only, aligned, and copied into a
+variant-II per-thread template.
 
-Exactly one RW `PT_DYNAMIC` and one non-executable RW `PT_GNU_STACK` are
-required. Optional `PT_GNU_RELRO` is recorded as a page-rounded final read-only
-intent. Bounded read-only `PT_NOTE`, `PT_PHDR`, and `PT_GNU_EH_FRAME` records are
-accepted. `PT_INTERP`, `PT_TLS`, and unknown program types are explicitly
-refused. TLS is not silently approximated.
+The admitted metadata includes `DT_NEEDED`, `DT_SONAME`, SysV or GNU hashes,
+RELA/PLT RELA, NOW binding, initializers/finalizers, TLS, and a zero `DT_DEBUG`
+slot. Versioned symbols, GNU unique/IFUNC, audit/filter records, RPATH/RUNPATH,
+`DT_SYMBOLIC`, text relocations, lazy PLT binding, COPY, `DT_REL`, and
+`DT_RELR` are refused rather than approximated.
 
-Section headers are not used for linking, but an included table and every
-non-`SHT_NOBITS` file extent must still be bounded. Extended section numbering
-is outside this version.
+## Relocation, scope, and lifecycle
 
-## Dynamic metadata and hashes
+The admitted relocation subset is `R_X86_64_RELATIVE`, `R_X86_64_64`,
+`R_X86_64_GLOB_DAT`, `R_X86_64_JUMP_SLOT`, checked `R_X86_64_PC32`,
+`R_X86_64_TPOFF64`, and the all-zero `R_X86_64_NONE`. Every target must be
+wholly inside an RW load, and target ranges may not overlap. Undefined strong
+symbols fail; unresolved weak symbols become zero.
 
-The RW dynamic table must be file-backed, have 16-byte entries, terminate with
-`DT_NULL`, and contain only zero entries afterward. Singleton tags cannot be
-repeated. This foundation understands:
+Global preemption scope and lifecycle topology are deliberately separate. The
+relocator searches the root first, then libraries in breadth-first
+`DT_NEEDED` load order. Constructors run dependencies first and the root last;
+destructors run the exact reverse. Missing/ambiguous SONAMEs and cycles are
+refused. Generated constructor and finalizer trampolines obey the SysV stack
+contract even when `SYS_EXIT` arrives through the public SDK wrapper.
 
-- `DT_NEEDED` and optional `DT_SONAME`;
-- `DT_STRTAB`, `DT_STRSZ`, `DT_SYMTAB`, and 24-byte `DT_SYMENT`;
-- `DT_HASH` and/or `DT_GNU_HASH`;
-- `DT_RELA`, `DT_RELASZ`, 24-byte `DT_RELAENT`, and `DT_RELACOUNT`;
-- eager `DT_JMPREL`, `DT_PLTRELSZ`, `DT_PLTREL=DT_RELA`, and `DT_PLTGOT`;
-- `DT_BIND_NOW`, supported NOW flag bits, `DT_INIT`, `DT_FINI`, and bounded
-  init/fini arrays;
-- a zero initial `DT_DEBUG` slot.
+Dependency TLS blocks are laid out before the root so local-exec root TLS ends
+immediately below `FS:0`. The proof uses both a library initial-exec variable
+and a root local-exec variable. The resulting combined template is copied into
+the process's writable/NX native-TLS mapping; all ELF template pages remain
+read-only.
 
-Consumed SONAME and dependency names are canonical ASCII library basenames.
-Duplicate direct dependencies are refused. Symbol zero must be all-zero. Symbol
-records consumed by lookup or relocation are bounded and restricted to local,
-global, or weak bindings and NOTYPE, OBJECT, or FUNC types. Version tables,
-symbol-version selection, GNU unique binding, IFUNC, audit/filter records,
-RPATH/RUNPATH, `DT_SYMBOLIC`, text relocations, lazy PLT binding, `DT_REL`, and
-`DT_RELR` are unsupported and refused rather than ignored.
+Relocations are applied only in kernel-private heap buffers. The process mapper
+then allocates fresh frames and installs R, RX, RW, and RELRO page permissions.
+Writable aliases to executable frames are removed before Ring 3 entry. Partial
+admission, allocation, mapping, lifecycle, fault, and exit paths flow through
+the ordinary native-process teardown census.
 
-For SysV hashes the complete bucket and chain arrays are bounded and every
-index is checked. GNU bloom, bucket, symbol-offset, and terminal-chain walks are
-bounded by the symbol limit. When both hash families are present they must
-derive the same symbol count. Every defined exported name must be reachable
-through the selected hash family; duplicate unversioned exports are refused.
+## Verification
 
-## Relocation and W^X contract
+`make dynamic-elf-tests` constructs genuine bounded ELF byte fixtures for both
+hash families and covers dependency ordering, TLS, lifecycle tables,
+relocations, authentication, hostile bounds, W+X, unsupported tags, malformed
+hashes, relocation target/overflow failures, and missing/ambiguous/cyclic
+graphs. `tools/sapote_package_host_test.py` covers catalog/resource digest
+agreement and changed-library/catalog refusal.
 
-The admitted x86-64 RELA subset is:
+`make native-dynamic-proof` builds and inspects the real PIE/DSO, creates the
+package and FAT32 images, and runs the host parser controls. The Ubuntu native
+workflow runs `qemu-test-native-dynamic` and retains the root, library, catalog,
+`readelf` reports, serial log, and Data image from the same commit.
 
-| Type | Formula |
-| --- | --- |
-| `R_X86_64_RELATIVE` | `B + A` |
-| `R_X86_64_64` | `S + A` |
-| `R_X86_64_GLOB_DAT` | `S + A` |
-| `R_X86_64_JUMP_SLOT` | `S + A` |
-| `R_X86_64_PC32` | checked signed 32-bit `S + A - P` |
-| `R_X86_64_NONE` | only the all-zero record |
+## Deliberate limits
 
-PLT RELA records must be `JUMP_SLOT`. Relative records require symbol zero;
-symbol relocations require a nonzero in-range symbol. Every relocation target
-must be wholly inside an RW load, and relocation target byte ranges must be
-unique and non-overlapping. COPY, IFUNC/IRELATIVE, TLS, size, and unknown
-relocation types are refused. Undefined strong symbols fail; unresolved weak
-symbols resolve to zero.
-
-`load_image()` copies admitted load bytes into an exactly sized, zero-filled
-private preparation buffer. `apply_relocations()` revalidates the relocation
-tables and writes only that buffer.
-After relocation, a future guest loader must install the recorded R, RX, RW,
-and RELRO intents and discard all writable aliases to executable frames. These
-functions do not change page tables, so the module expresses and validates W^X
-intent without falsely claiming enforcement in the host test.
-
-Global symbol preemption uses the exact caller-provided object scope. The
-intended scope is root first followed by dependency order. Local symbols remain
-object-relative, SHN_ABS remains absolute, and all runtime-address additions are
-checked.
-
-## Deterministic dependency order
-
-`dependency_order()` resolves exact `DT_NEEDED` names against unique SONAMEs.
-It walks each object's needed records in their file order, emits dependencies
-before consumers, de-duplicates already visited objects, and refuses missing or
-ambiguous SONAMEs, cycles, and graphs above 32 objects. It does not search host
-directories or guess aliases.
-
-The package repository resolver remains responsible for selecting exact package
-versions and files. This ELF layer starts only after those package bytes and
-digests have been authenticated. It does not weaken or duplicate package trust.
-
-## Host verification
-
-The standalone test is wired into `make verify` through
-`make dynamic-elf-tests`:
-
-```sh
-rustc --edition 2024 --test -D warnings \
-    tools/elf64-dynamic-host-test.rs -o build/elf64-dynamic-host-test
-build/elf64-dynamic-host-test
-```
-
-The tests construct bounded ET_DYN objects, parse both hash families, resolve a
-dependency symbol, apply relative, absolute, GOT, PLT, and PC32 relocations, and
-check the resulting bytes. Mutation cases cover W+X, unsupported dynamic tags,
-duplicate singleton tags, malformed hashes, unsupported relocation types,
-non-writable targets, arithmetic overflow, missing/ambiguous dependencies,
-cycles, and dependency graph bounds.
-
-Guest execution still requires authenticated library reads, non-overlapping
-multi-object load-bias selection, process-page accounting, final map/RELRO
-installation, constructor/destructor sequencing, TLS policy, failure unwind,
-and end-to-end package tests. Until those exist, Sapote continues to execute
-only its existing admitted static native applications.
+- There is no `PT_INTERP`, `ld.so`, `dlopen`, `dlsym`, lazy binding, symbol
+  versioning, unload API, or environment-controlled search path.
+- Library RX frames are currently private process frames; Sapote does not yet
+  claim a global physical-page cache or shared-frame accounting.
+- The QEMU proof has one direct library and one initial thread. Transitive graph
+  and hostile scope cases are host-tested, but a multi-library QEMU fixture and
+  second-thread copied-TLS proof remain future coverage.
+- This does not add a hosted libc ABI or make arbitrary Linux shared objects
+  compatible with Sapote's native ABI.

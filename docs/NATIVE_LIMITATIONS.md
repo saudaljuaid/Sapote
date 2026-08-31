@@ -5,9 +5,9 @@
 The native ABI v1 intentionally has a bounded hardware and compatibility
 profile:
 
-- x86_64 static `ET_EXEC` only; no interpreter, dynamic loader, shared objects,
-  runtime relocations, `fork`, `exec`, Unix signals, or general POSIX process
-  model;
+- x86_64 static `ET_EXEC` plus a bounded authenticated PIE/shared-object
+  profile; no interpreter, `dlopen`, symbol versions, lazy binding, `fork`,
+  `exec`, Unix signals, or general POSIX process model;
 - one core, four processes, eight threads per process, 128 handles, 256 MiB
   manifest memory ceiling, and a 16 MiB executable/file ceiling;
 - FAT32 only, with the existing 64 MiB geometry, ASCII 8.3 names, no long file

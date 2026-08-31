@@ -8,6 +8,7 @@ import hashlib
 import importlib.util
 import os
 from pathlib import Path
+import struct
 import sys
 
 
@@ -99,6 +100,40 @@ def main() -> int:
     assert "PKGRES/DATA.TXT" in {
         item["path"] for item in image_report["files"]
     }
+
+    library = b"\x7fELFauthenticated-dynamic-library"
+    catalog = bytearray(2048)
+    catalog[:8] = b"SAPDYNL1"
+    struct.pack_into("<HHIHH", catalog, 8, 1, 64, 2048, 1, 96)
+    catalog[64:74] = b"DYNLIB.SO\0"
+    catalog[128:160] = hashlib.sha256(library).digest()
+    dynamic_spec = copy.deepcopy(spec)
+    dynamic_spec["identifier"] = "DYNROOT"
+    dynamic_spec["executable"] = "DYNROOT.APP"
+    dynamic_spec["resource_directory"] = "DYN"
+    dynamic_spec["dynamic_catalog"] = "DYN/DYNROOT.CAT"
+    dynamic_resources = (("DYNLIB.SO", library),
+                         ("DYNROOT.CAT", bytes(catalog)))
+    dynamic_package = PACKAGE.build_package(
+        dynamic_spec, executable, dynamic_resources)
+    _, _, resources, report = PACKAGE.parse_package(dynamic_package)
+    assert resources == dynamic_resources
+    assert report["dynamic_catalog"] == "DYN/DYNROOT.CAT"
+    assert report["dynamic_catalog_sha256"] == hashlib.sha256(
+        catalog).hexdigest().upper()
+    changed_library = bytearray(library)
+    changed_library[-1] ^= 1
+    expect_refusal(PACKAGE.build_package(
+        dynamic_spec, executable,
+        (("DYNLIB.SO", bytes(changed_library)),
+         ("DYNROOT.CAT", bytes(catalog)))),
+        contains="dynamic catalog resource digest")
+    changed_catalog = bytearray(catalog)
+    changed_catalog[128] ^= 1
+    expect_refusal(PACKAGE.build_package(
+        dynamic_spec, executable,
+        (("DYNLIB.SO", library), ("DYNROOT.CAT", bytes(changed_catalog)))),
+        contains="dynamic catalog resource digest")
 
     v3_spec = {
         "format": 3,
@@ -198,7 +233,7 @@ def main() -> int:
         else:
             raise AssertionError("format-v3 package was built without real Ed25519 support")
 
-    print("Sapote package host tests passed: legacy bytes, v3 canonical tables, bounds, digests, trust, Ed25519 verification/refusal")
+    print("Sapote package host tests passed: legacy/dynamic bytes, v3 canonical tables, bounds, digests, trust, Ed25519 verification/refusal")
     return 0
 
 

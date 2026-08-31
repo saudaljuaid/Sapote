@@ -20,4 +20,4 @@ musl, or glibc implementation.
 | Networking | Sapote DNS, TCP, UDP, deadlines, address query, cancellation | Typed native handles; no POSIX socket descriptor namespace, TLS, IPv6, or Internet-security claim. |
 | Graphics/input | window, xRGB surface, bounded damage, event read/wait, pointer capture | One native window per process in ABI v1. |
 | Locale/signals | C locale stubs and the narrow signal surface needed by ports | No asynchronous Unix signal delivery. |
-| Absent | `fork`, `exec`, pipes, Unix IPC, dynamic loading, shared libraries, terminal ioctls, users/groups | Ports requiring these need deliberate new native services, not fake success stubs. |
+| Absent | `fork`, `exec`, pipes, Unix IPC, runtime `dlopen`/`dlsym`, terminal ioctls, users/groups | Manifest-authenticated startup DSOs are supported, but ports requiring a hosted dynamic-loader API still need deliberate native services. |

@@ -571,6 +571,9 @@ static enum kernel_test_scenario scenario_from_value(
     if (token_equals(value, length, "native-sdl")) {
         return KERNEL_TEST_NATIVE_SDL;
     }
+    if (token_equals(value, length, "native-dynamic")) {
+        return KERNEL_TEST_NATIVE_DYNAMIC;
+    }
 
     return KERNEL_TEST_INVALID;
 }
@@ -760,6 +763,7 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
     case KERNEL_TEST_NATIVE_RELAUNCH: return UINT8_C(0x81);
     case KERNEL_TEST_NATIVE_AUDIO: return UINT8_C(0x82);
     case KERNEL_TEST_NATIVE_SDL: return UINT8_C(0x83);
+    case KERNEL_TEST_NATIVE_DYNAMIC: return UINT8_C(0x84);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -4734,6 +4738,7 @@ void kernel_test_run(
     case KERNEL_TEST_NATIVE_RELAUNCH:
     case KERNEL_TEST_NATIVE_AUDIO:
     case KERNEL_TEST_NATIVE_SDL:
+    case KERNEL_TEST_NATIVE_DYNAMIC:
         /* Deferred until Sapote Redwood and the Boot Ledger are published. */
         return;
     case KERNEL_TEST_MULTIPROCESS_SLOTS:
@@ -5269,6 +5274,25 @@ _Noreturn void kernel_test_complete_native_sdl(void)
     }
     console_write(
         "Sapote: SDL 2 window, input, partial damage, PCM and persistence passed\n");
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_native_dynamic(void)
+{
+    struct native_process_result proof = { 0 };
+
+    if (active_scenario != KERNEL_TEST_NATIVE_DYNAMIC) {
+        kernel_test_fail("native dynamic completion used outside its scenario");
+    }
+    if (native_process_launch("DYNROOT.MAN", &proof) != NATIVE_PROCESS_OK ||
+        !proof.exited || proof.faulted || proof.exit_status != 0 ||
+        !proof.resources_released || proof.peak_handles != 0U ||
+        proof.syscall_count < 7U || proof.thread_switches == 0U ||
+        !native_process_resources_released()) {
+        kernel_test_fail("dynamic ELF proof did not leave a clean census");
+    }
+    console_write(
+        "Sapote: dynamic ELF shared library, TLS and lifecycle passed\n");
     kernel_test_pass();
 }
 
@@ -8840,6 +8864,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "native-audio";
     case KERNEL_TEST_NATIVE_SDL:
         return "native-sdl";
+    case KERNEL_TEST_NATIVE_DYNAMIC:
+        return "native-dynamic";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

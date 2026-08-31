@@ -21,7 +21,11 @@ pub const MAX_SYMBOLS: usize = 4096;
 /// Maximum total RELA records, including PLT relocations.
 pub const MAX_RELOCATIONS: usize = 256;
 /// Maximum objects in one deterministic dependency scope.
-pub const MAX_DEPENDENCY_OBJECTS: usize = 32;
+pub const MAX_DEPENDENCY_OBJECTS: usize = 16;
+/// Exact authenticated dependency-catalog byte count.
+pub const CATALOG_BYTES: usize = 2048;
+/// Maximum constructor or destructor addresses emitted for one process.
+pub const MAX_LIFECYCLE_FUNCTIONS: usize = 256;
 /// Maximum mapped span of one object.
 pub const MAX_IMAGE_SPAN: u64 = 256 * 1024 * 1024;
 
@@ -31,6 +35,10 @@ const MAX_LINK_ADDRESS: u64 = 0x0000_0001_0000_0000;
 const MAX_RUNTIME_ADDRESS: u64 = 0x0000_8000_0000_0000;
 const MAX_STRING_BYTES: u64 = 1024 * 1024;
 const MAX_ARRAY_ENTRIES: u64 = 256;
+const MAX_TLS_BYTES: u64 = 1024 * 1024;
+const CATALOG_MAGIC: [u8; 8] = *b"SAPDYNL1";
+const CATALOG_HEADER_BYTES: usize = 64;
+const CATALOG_ENTRY_BYTES: usize = 96;
 
 const PT_NULL: u32 = 0;
 const PT_LOAD: u32 = 1;
@@ -80,6 +88,7 @@ const DT_RELRENT: i64 = 37;
 
 const DF_BIND_NOW: u64 = 0x8;
 const DF_1_NOW: u64 = 0x1;
+const DF_1_PIE: u64 = 0x0800_0000;
 
 const R_X86_64_NONE: u32 = 0;
 const R_X86_64_64: u32 = 1;
@@ -87,6 +96,7 @@ const R_X86_64_PC32: u32 = 2;
 const R_X86_64_GLOB_DAT: u32 = 6;
 const R_X86_64_JUMP_SLOT: u32 = 7;
 const R_X86_64_RELATIVE: u32 = 8;
+const R_X86_64_TPOFF64: u32 = 18;
 
 const SHN_UNDEF: u16 = 0;
 const SHN_ABS: u16 = 0xfff1;
@@ -96,12 +106,18 @@ const STB_WEAK: u8 = 2;
 const STT_NOTYPE: u8 = 0;
 const STT_OBJECT: u8 = 1;
 const STT_FUNC: u8 = 2;
+const STT_TLS: u8 = 6;
 const STV_DEFAULT: u8 = 0;
 const STV_PROTECTED: u8 = 3;
 
 /// Named, bounded admission or relocation refusal.
+#[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
+    /// The requested operation completed.
+    Ok = 0,
+    /// A null pointer crossed the C boundary.
+    NullArgument,
     Length,
     Magic,
     Identity,
@@ -138,9 +154,18 @@ pub enum Status {
     DependencyAmbiguous,
     DependencyCycle,
     DependencyBound,
+    /// A catalog or object digest does not match its authenticated record.
+    Authentication,
+    /// A dependency catalog is malformed or noncanonical.
+    Catalog,
+    /// Constructor or destructor metadata is not executable and bounded.
+    Lifecycle,
+    /// One past the final stable status value.
+    Count,
 }
 
 /// One bounded ELF string copied into pointer-free admission output.
+#[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Name {
     bytes: [u8; 64],
@@ -169,6 +194,7 @@ impl Name {
 }
 
 /// One admitted load segment and its final W^X intent.
+#[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Segment {
     pub file_offset: u64,
@@ -178,6 +204,8 @@ pub struct Segment {
     pub mapping_start: u64,
     pub mapping_end: u64,
     pub flags: u32,
+    /// Explicit zero padding in the C boundary.
+    pub reserved: u32,
 }
 
 impl Segment {
@@ -190,6 +218,104 @@ impl Segment {
             mapping_start: 0,
             mapping_end: 0,
             flags: 0,
+            reserved: 0,
+        }
+    }
+}
+
+/// Optional initial-exec TLS template in one dynamic object.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tls {
+    pub file_offset: u64,
+    pub virtual_address: u64,
+    pub file_size: u64,
+    pub memory_size: u64,
+    pub alignment: u64,
+}
+
+impl Tls {
+    const fn empty() -> Self {
+        Self {
+            file_offset: 0,
+            virtual_address: 0,
+            file_size: 0,
+            memory_size: 0,
+            alignment: 0,
+        }
+    }
+}
+
+/// One catalog-bound SONAME and exact object digest.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CatalogEntry {
+    pub name: Name,
+    pub sha256: [u8; 32],
+}
+
+impl CatalogEntry {
+    const fn empty() -> Self {
+        Self {
+            name: Name::empty(),
+            sha256: [0; 32],
+        }
+    }
+}
+
+/// Pointer-free authenticated System dependency catalog.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct Catalog {
+    pub entries: [CatalogEntry; MAX_DEPENDENCY_OBJECTS],
+    pub entry_count: u8,
+    pub reserved: [u8; 7],
+}
+
+impl Catalog {
+    /// Stable all-zero result for a refused boundary call.
+    pub const fn empty() -> Self {
+        Self {
+            entries: [CatalogEntry::empty(); MAX_DEPENDENCY_OBJECTS],
+            entry_count: 0,
+            reserved: [0; 7],
+        }
+    }
+}
+
+/// One C-owned admitted object and its private preparation allocation.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PreparedObject {
+    pub image: *const Image,
+    pub input: *const u8,
+    pub input_length: usize,
+    pub memory: *mut u8,
+    pub memory_length: usize,
+    pub load_bias: u64,
+    pub tls_offset: i64,
+}
+
+/// Fully validated Ring 3 lifecycle call sequence.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Lifecycle {
+    pub constructors: [u64; MAX_LIFECYCLE_FUNCTIONS],
+    pub destructors: [u64; MAX_LIFECYCLE_FUNCTIONS],
+    pub constructor_count: u16,
+    pub destructor_count: u16,
+    pub reserved: u32,
+}
+
+impl Lifecycle {
+    /// Stable all-zero result for a refused boundary call.
+    pub const fn empty() -> Self {
+        Self {
+            constructors: [0; MAX_LIFECYCLE_FUNCTIONS],
+            destructors: [0; MAX_LIFECYCLE_FUNCTIONS],
+            constructor_count: 0,
+            destructor_count: 0,
+            reserved: 0,
         }
     }
 }
@@ -203,6 +329,7 @@ pub enum PermissionIntent {
 }
 
 /// Selected ELF hash-table family.
+#[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HashStyle {
     SysV,
@@ -222,6 +349,7 @@ pub struct Symbol {
 }
 
 /// Pointer-free admission result for one ET_DYN object.
+#[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct Image {
     pub entry: u64,
@@ -252,6 +380,7 @@ pub struct Image {
     pub init_array_count: u32,
     pub fini_array: u64,
     pub fini_array_count: u32,
+    pub tls: Tls,
     pub bind_now: bool,
 }
 
@@ -286,10 +415,13 @@ impl Image {
 }
 
 /// One authenticated object in deterministic global symbol-search order.
+#[derive(Clone, Copy)]
 pub struct Object<'a> {
     pub image: &'a Image,
     pub file: &'a [u8],
     pub load_bias: u64,
+    /// Signed offset from the variant-II thread pointer to this TLS block.
+    pub tls_offset: i64,
 }
 
 #[derive(Clone, Copy)]
@@ -479,6 +611,59 @@ fn library_name(value: &[u8]) -> Result<Name, Status> {
     copied_name(value)
 }
 
+/// Parse one exact, digest-authenticated dependency catalog.
+pub fn parse_catalog(input: &[u8]) -> Result<Catalog, Status> {
+    if input.len() != CATALOG_BYTES || input.get(..8) != Some(CATALOG_MAGIC.as_slice()) {
+        return Err(Status::Catalog);
+    }
+    if u16_at(input, 8, Status::Catalog)? != 1
+        || usize::from(u16_at(input, 10, Status::Catalog)?) != CATALOG_HEADER_BYTES
+        || usize::try_from(u32_at(input, 12, Status::Catalog)?).map_err(|_| Status::Catalog)?
+            != CATALOG_BYTES
+        || usize::from(u16_at(input, 18, Status::Catalog)?) != CATALOG_ENTRY_BYTES
+        || input[20..CATALOG_HEADER_BYTES]
+            .iter()
+            .any(|byte| *byte != 0)
+    {
+        return Err(Status::Catalog);
+    }
+    let count = usize::from(u16_at(input, 16, Status::Catalog)?);
+    if count == 0 || count > MAX_DEPENDENCY_OBJECTS {
+        return Err(Status::Catalog);
+    }
+    let used_end = CATALOG_HEADER_BYTES
+        .checked_add(count.checked_mul(CATALOG_ENTRY_BYTES).ok_or(Status::Catalog)?)
+        .ok_or(Status::Catalog)?;
+    if input[used_end..].iter().any(|byte| *byte != 0) {
+        return Err(Status::Catalog);
+    }
+    let mut result = Catalog::empty();
+    for index in 0..count {
+        let offset = CATALOG_HEADER_BYTES + index * CATALOG_ENTRY_BYTES;
+        let field = bytes(input, offset, 64, Status::Catalog)?;
+        let end = field.iter().position(|byte| *byte == 0).ok_or(Status::Catalog)?;
+        if end == 0 || field[end..].iter().any(|byte| *byte != 0) {
+            return Err(Status::Catalog);
+        }
+        let name = library_name(&field[..end]).map_err(|_| Status::Catalog)?;
+        if index != 0 && result.entries[index - 1].name.as_bytes() >= name.as_bytes() {
+            return Err(Status::Catalog);
+        }
+        let digest: [u8; 32] = bytes(input, offset + 64, 32, Status::Catalog)?
+            .try_into()
+            .map_err(|_| Status::Catalog)?;
+        if digest.iter().all(|byte| *byte == 0) {
+            return Err(Status::Catalog);
+        }
+        result.entries[index] = CatalogEntry {
+            name,
+            sha256: digest,
+        };
+    }
+    result.entry_count = u8::try_from(count).map_err(|_| Status::Catalog)?;
+    Ok(result)
+}
+
 fn raw_symbol(image: &Image, input: &[u8], index: u32) -> Result<RawSymbol, Status> {
     if index >= image.symbol_count {
         return Err(Status::Symbol);
@@ -511,7 +696,7 @@ fn checked_symbol(image: &Image, input: &[u8], index: u32) -> Result<Symbol, Sta
     let kind = raw.info & 0xf;
     let visibility = raw.other & 0x3;
     if !matches!(binding, STB_LOCAL | STB_GLOBAL | STB_WEAK)
-        || !matches!(kind, STT_NOTYPE | STT_OBJECT | STT_FUNC)
+        || !matches!(kind, STT_NOTYPE | STT_OBJECT | STT_FUNC | STT_TLS)
         || raw.other & !0x3 != 0
     {
         return Err(Status::Symbol);
@@ -521,10 +706,20 @@ fn checked_symbol(image: &Image, input: &[u8], index: u32) -> Result<Symbol, Sta
     } else {
         copied_name(string(image, input, u64::from(raw.name), false)?)?
     };
-    if raw.section != SHN_UNDEF
-        && raw.section != SHN_ABS
-        && !loaded_range(image, raw.value, raw.size.max(1), false)
-    {
+    if raw.section != SHN_UNDEF && raw.section != SHN_ABS {
+        if kind == STT_TLS {
+            if image.tls.memory_size == 0
+                || raw
+                    .value
+                    .checked_add(raw.size.max(1))
+                    .is_none_or(|end| end > image.tls.memory_size)
+            {
+                return Err(Status::Symbol);
+            }
+        } else if !loaded_range(image, raw.value, raw.size.max(1), false) {
+            return Err(Status::Symbol);
+        }
+    } else if kind == STT_TLS && raw.section == SHN_ABS {
         return Err(Status::Symbol);
     }
     if index != 0
@@ -743,6 +938,7 @@ fn validate_relocations(image: &Image, input: &[u8]) -> Result<(), Status> {
                     | R_X86_64_GLOB_DAT
                     | R_X86_64_JUMP_SLOT
                     | R_X86_64_RELATIVE
+                    | R_X86_64_TPOFF64
             ) {
                 return Err(Status::RelocationType);
             }
@@ -773,7 +969,9 @@ fn validate_relocations(image: &Image, input: &[u8]) -> Result<(), Status> {
             used += 1;
             if item.symbol != 0 {
                 let symbol = checked_symbol(image, input, item.symbol)?;
-                if symbol.name.is_empty() {
+                if symbol.name.is_empty()
+                    || (item.kind == R_X86_64_TPOFF64) != (symbol.kind == STT_TLS)
+                {
                     return Err(Status::Symbol);
                 }
             }
@@ -873,6 +1071,7 @@ pub fn parse(input: &[u8]) -> Result<Image, Status> {
     let mut relro_exact_start = 0u64;
     let mut relro_exact_end = 0u64;
     let mut relro_offset = 0u64;
+    let mut tls = Tls::empty();
     let mut mapping_start = u64::MAX;
     let mut mapping_end = 0u64;
     for index in 0..program_count {
@@ -957,6 +1156,7 @@ pub fn parse(input: &[u8]) -> Result<Image, Status> {
                     mapping_start: page_start,
                     mapping_end: page_end,
                     flags: item.flags,
+                    reserved: 0,
                 };
                 segment_count += 1;
                 mapping_start = mapping_start.min(page_start);
@@ -1007,6 +1207,32 @@ pub fn parse(input: &[u8]) -> Result<Image, Status> {
                     .ok_or(Status::Address)?
                     & !(PAGE - 1);
             }
+            PT_TLS => {
+                if tls.memory_size != 0
+                    || item.flags != PF_R
+                    || item.file_size > item.memory_size
+                    || item.memory_size == 0
+                    || item.memory_size > MAX_TLS_BYTES
+                    || item.alignment == 0
+                    || item.alignment > PAGE
+                    || !item.alignment.is_power_of_two()
+                    || item.physical != 0 && item.physical != item.address
+                    || item
+                        .offset
+                        .checked_add(item.file_size)
+                        .ok_or(Status::FileRange)?
+                        > input.len() as u64
+                {
+                    return Err(Status::ProgramType);
+                }
+                tls = Tls {
+                    file_offset: item.offset,
+                    virtual_address: item.address,
+                    file_size: item.file_size,
+                    memory_size: item.memory_size,
+                    alignment: item.alignment,
+                };
+            }
             PT_NOTE | PT_PHDR | PT_GNU_EH_FRAME => {
                 if item.flags != PF_R
                     || item
@@ -1019,7 +1245,7 @@ pub fn parse(input: &[u8]) -> Result<Image, Status> {
                     return Err(Status::ProgramType);
                 }
             }
-            PT_INTERP | PT_TLS => return Err(Status::ProgramType),
+            PT_INTERP => return Err(Status::ProgramType),
             _ => return Err(Status::ProgramType),
         }
     }
@@ -1059,6 +1285,7 @@ pub fn parse(input: &[u8]) -> Result<Image, Status> {
         init_array_count: 0,
         fini_array: 0,
         fini_array_count: 0,
+        tls,
         bind_now: false,
     };
     if entry != 0 && !executable_address(&image, entry) {
@@ -1077,6 +1304,26 @@ pub fn parse(input: &[u8]) -> Result<Image, Status> {
         )? != usize::try_from(relro_offset).map_err(|_| Status::FileRange)?)
     {
         return Err(Status::ProgramType);
+    }
+    if image.tls.memory_size != 0 {
+        let tls_end = image
+            .tls
+            .virtual_address
+            .checked_add(image.tls.memory_size)
+            .ok_or(Status::ProgramType)?;
+        if !image.segments[..usize::from(image.segment_count)]
+            .iter()
+            .any(|segment| {
+                segment.flags == (PF_R | PF_W)
+                    && image.tls.virtual_address >= segment.virtual_address
+                    && segment
+                        .virtual_address
+                        .checked_add(segment.memory_size)
+                        .is_some_and(|end| tls_end <= end)
+            })
+        {
+            return Err(Status::ProgramType);
+        }
     }
     let dynamic = dynamic_program.ok_or(Status::DynamicSegment)?;
     if dynamic.flags != (PF_R | PF_W)
@@ -1344,7 +1591,9 @@ pub fn parse(input: &[u8]) -> Result<Image, Status> {
             return Err(Status::DynamicEntry);
         }
     }
-    if flags.unwrap_or(0) & !DF_BIND_NOW != 0 || flags_1.unwrap_or(0) & !DF_1_NOW != 0 {
+    if flags.unwrap_or(0) & !DF_BIND_NOW != 0
+        || flags_1.unwrap_or(0) & !(DF_1_NOW | DF_1_PIE) != 0
+    {
         return Err(Status::DynamicUnsupported);
     }
     image.bind_now |= flags.unwrap_or(0) & DF_BIND_NOW != 0 || flags_1.unwrap_or(0) & DF_1_NOW != 0;
@@ -1586,6 +1835,62 @@ fn symbol_address(
     }
 }
 
+fn tls_symbol<'a>(
+    image: &Image,
+    input: &[u8],
+    symbol_index: u32,
+    scope: &'a [Object<'a>],
+) -> Result<(&'a Object<'a>, Symbol), Status> {
+    let symbol = checked_symbol(image, input, symbol_index)?;
+    if symbol.kind != STT_TLS {
+        return Err(Status::Symbol);
+    }
+    if symbol.binding == STB_LOCAL
+        || symbol.section != SHN_UNDEF && symbol.visibility != STV_DEFAULT
+    {
+        let object = scope
+            .iter()
+            .find(|object| core::ptr::eq(object.image, image))
+            .ok_or(Status::UndefinedSymbol)?;
+        return if symbol.section == SHN_UNDEF {
+            Err(Status::UndefinedSymbol)
+        } else {
+            Ok((object, symbol))
+        };
+    }
+    for object in scope {
+        if let Some(found) = lookup(object.image, object.file, symbol.name.as_bytes())? {
+            if found.kind != STT_TLS {
+                return Err(Status::Symbol);
+            }
+            return Ok((object, found));
+        }
+    }
+    if symbol.section != SHN_UNDEF {
+        let object = scope
+            .iter()
+            .find(|object| core::ptr::eq(object.image, image))
+            .ok_or(Status::UndefinedSymbol)?;
+        return Ok((object, symbol));
+    }
+    Err(Status::UndefinedSymbol)
+}
+
+fn tls_relocation_value(
+    image: &Image,
+    input: &[u8],
+    symbol_index: u32,
+    addend: i64,
+    scope: &[Object<'_>],
+) -> Result<i64, Status> {
+    let (object, symbol) = tls_symbol(image, input, symbol_index, scope)?;
+    let value = i128::from(object.tls_offset)
+        .checked_add(i128::from(symbol.value))
+        .and_then(|value| value.checked_add(i128::from(addend)))
+        .ok_or(Status::RelocationOverflow)?;
+    i64::try_from(value).map_err(|_| Status::RelocationOverflow)
+}
+
 fn write_relocation(
     image: &Image,
     input: &[u8],
@@ -1622,6 +1927,11 @@ fn write_relocation(
         target.copy_from_slice(&value.to_le_bytes());
         return Ok(());
     }
+    if item.kind == R_X86_64_TPOFF64 {
+        let value = tls_relocation_value(image, input, item.symbol, item.addend, scope)?;
+        target.copy_from_slice(&value.to_le_bytes());
+        return Ok(());
+    }
     let symbol = symbol_address(image, input, bias, item.symbol, scope)?;
     let value = add_signed(symbol, item.addend)?;
     if item.kind == R_X86_64_PC32 {
@@ -1637,9 +1947,11 @@ fn write_relocation(
 
 /// Eagerly apply the admitted RELA and PLT RELA tables in their file order.
 ///
-/// `memory` must still be private preparation memory. `scope` is searched in exact caller order;
-/// callers implementing ELF preemption should include the root object first, followed by the
-/// dependency order returned by [`dependency_order`].
+/// `memory` must still be private preparation memory. `scope` is searched in
+/// exact caller order; callers implementing ELF preemption should include the
+/// root object first, followed by breadth-first `DT_NEEDED` load order. The
+/// dependencies-first order returned by [`dependency_order`] is for lifecycle
+/// calls and must not replace the global lookup order.
 pub fn apply_relocations(
     image: &Image,
     input: &[u8],
@@ -1669,6 +1981,118 @@ pub fn apply_relocations(
                 rela(image, input, address, index)?,
             )?;
         }
+    }
+    Ok(())
+}
+
+fn runtime_executable(scope: &[Object<'_>], address: u64) -> bool {
+    scope.iter().any(|object| {
+        object.image.segments[..usize::from(object.image.segment_count)]
+            .iter()
+            .any(|segment| {
+                segment.flags == (PF_R | PF_X)
+                    && object
+                        .load_bias
+                        .checked_add(segment.virtual_address)
+                        .is_some_and(|start| {
+                            segment
+                                .memory_size
+                                .checked_add(start)
+                                .is_some_and(|end| address >= start && address < end)
+                        })
+            })
+    })
+}
+
+fn push_lifecycle(
+    scope: &[Object<'_>],
+    output: &mut [u64; MAX_LIFECYCLE_FUNCTIONS],
+    count: &mut usize,
+    address: u64,
+) -> Result<(), Status> {
+    if address == 0
+        || address == u64::MAX
+        || *count == MAX_LIFECYCLE_FUNCTIONS
+        || !runtime_executable(scope, address)
+    {
+        return Err(Status::Lifecycle);
+    }
+    output[*count] = address;
+    *count += 1;
+    Ok(())
+}
+
+fn relocated_array_value(
+    object: &Object<'_>,
+    memory: &[u8],
+    address: u64,
+    index: u32,
+) -> Result<u64, Status> {
+    if memory.len() != object.image.memory_bytes() {
+        return Err(Status::MemorySize);
+    }
+    let entry = address
+        .checked_add(u64::from(index) * 8)
+        .ok_or(Status::Lifecycle)?;
+    let offset = usize::try_from(
+        entry
+            .checked_sub(object.image.mapping_start)
+            .ok_or(Status::Lifecycle)?,
+    )
+    .map_err(|_| Status::Lifecycle)?;
+    u64_at(memory, offset, Status::Lifecycle)
+}
+
+/// Append one object's initializers in System V object-local order.
+pub fn append_initializers(
+    object: &Object<'_>,
+    memory: &[u8],
+    scope: &[Object<'_>],
+    output: &mut [u64; MAX_LIFECYCLE_FUNCTIONS],
+    count: &mut usize,
+) -> Result<(), Status> {
+    if object.image.init != 0 {
+        push_lifecycle(
+            scope,
+            output,
+            count,
+            runtime_address(object.load_bias, object.image.init)?,
+        )?;
+    }
+    for index in 0..object.image.init_array_count {
+        push_lifecycle(
+            scope,
+            output,
+            count,
+            relocated_array_value(object, memory, object.image.init_array, index)?,
+        )?;
+    }
+    Ok(())
+}
+
+/// Append one object's finalizers in reverse-array then DT_FINI order.
+pub fn append_finalizers(
+    object: &Object<'_>,
+    memory: &[u8],
+    scope: &[Object<'_>],
+    output: &mut [u64; MAX_LIFECYCLE_FUNCTIONS],
+    count: &mut usize,
+) -> Result<(), Status> {
+    for remaining in (0..object.image.fini_array_count).rev() {
+        push_lifecycle(
+            scope,
+            output,
+            count,
+            relocated_array_value(object, memory, object.image.fini_array, remaining)?,
+        )?;
+    }
+    if object.image.fini != 0 {
+        push_lifecycle(
+            scope,
+            output,
+            count,
+            runtime_address(object.load_bias, object.image.fini)?,
+        )?;
     }
     Ok(())
 }
@@ -1742,4 +2166,21 @@ pub fn dependency_order(
         visit_dependency(index, images, &mut state, output, &mut count)?;
     }
     Ok(count)
+}
+
+/// Run host-independent ABI and checked-address controls compiled into Sapote.
+#[must_use]
+pub fn self_test() -> u32 {
+    if core::mem::size_of::<Name>() != 65
+        || core::mem::size_of::<Segment>() != 56
+        || core::mem::size_of::<Tls>() != 40
+        || core::mem::size_of::<Catalog>() != 1560
+        || Status::Count as i32 != 41
+        || add_signed(7, -8) != Err(Status::RelocationOverflow)
+        || runtime_address(1, PAGE) != Err(Status::Address)
+        || runtime_address(MAX_RUNTIME_ADDRESS - PAGE, PAGE) != Err(Status::Address)
+    {
+        return 0;
+    }
+    9
 }

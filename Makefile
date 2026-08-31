@@ -31,9 +31,9 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	multiprocess multiprocess-slots driver-matrix driver-matrix-builtin audio \
 	nvidia nvidia-builtin native native-lua native-sqlite native-canvas \
 	native-rust native-crash native-elf-refusal native-digest-refusal \
-	native-abi-refusal native-relaunch native-audio native-sdl
+	native-abi-refusal native-relaunch native-audio native-sdl native-dynamic
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 114
+EXPECTED_TEST_SCENARIO_COUNT := 115
 EXPECTED_SHELL_ASSERTION_COUNT := 454
 
 CC := gcc
@@ -46,6 +46,7 @@ PYTHON := python3
 SDK_CC ?= clang
 SDK_LD ?= ld.lld
 SDK_AR ?= ar
+READELF ?= readelf
 FFMPEG ?= ffmpeg
 QEMU_ACCEL ?= tcg
 GRUB_MKRESCUE ?= grub-mkrescue
@@ -281,6 +282,14 @@ SDL_PROOF_APP := $(SDL_PROOF_DIR)/SDL.APP
 SDL_PROOF_PACKAGE := $(SDL_PROOF_DIR)/SDLPROOF.SPK
 SDL_PROOF_SYSTEM_IMAGE := $(SDL_PROOF_DIR)/system.raw
 SDL_PROOF_DATA_IMAGE := $(SDL_PROOF_DIR)/data.raw
+DYNAMIC_APP_DIR := $(BUILD_DIR)/native-dynamic
+DYNAMIC_ROOT_APP := $(DYNAMIC_APP_DIR)/DYNROOT.APP
+DYNAMIC_LIBRARY := $(DYNAMIC_APP_DIR)/DYNLIB.SO
+DYNAMIC_CATALOG := $(DYNAMIC_APP_DIR)/DYNROOT.CAT
+DYNAMIC_PACKAGE_SPEC := $(DYNAMIC_APP_DIR)/package.json
+DYNAMIC_PACKAGE := $(DYNAMIC_APP_DIR)/DYNROOT.SPK
+DYNAMIC_SYSTEM_IMAGE := $(DYNAMIC_APP_DIR)/system.raw
+DYNAMIC_DATA_IMAGE := $(DYNAMIC_APP_DIR)/data.raw
 RUST_APP_DIR := $(BUILD_DIR)/native-rust
 RUST_APP_CARGO_TARGET := $(RUST_APP_DIR)/cargo
 RUST_APP_SOURCE := $(RUST_APP_CARGO_TARGET)/x86_64-unknown-none/release/sapote-native-rust-proof
@@ -343,7 +352,7 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d) $(SDL2_OBJECTS:.o=.d)
 # makes every scenario resolve to "nothing to be done" and pass without booting.
 # They never create a file of their own name, so they rerun regardless.
 .PHONY: all audio-wav-tests capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios dynamic-elf-tests ext4-images ext4-tests fat32-images hooks \
-	iso kernel lint native-apps native-audio-proof native-sdl-proof port-tests qemu-port-tests reproducible-sdk run \
+	iso kernel lint native-apps native-audio-proof native-dynamic-proof native-sdl-proof port-tests qemu-port-tests reproducible-sdk run \
 	package-repository-tests package-service-tests package-state-tests package-transaction-tests screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests zlib-tests
 
 all: kernel
@@ -455,6 +464,9 @@ $(AUDIO_APP_DIR):
 	mkdir -p $@
 
 $(SDL_PROOF_DIR):
+	mkdir -p $@
+
+$(DYNAMIC_APP_DIR):
 	mkdir -p $@
 
 $(RUST_APP_DIR):
@@ -634,6 +646,30 @@ $(SDL_PROOF_SYSTEM_IMAGE): $(SDL_PROOF_PACKAGE) tools/sapote-package.py \
 $(SDL_PROOF_DATA_IMAGE): tools/fat32_image.py | $(SDL_PROOF_DIR)
 	$(PYTHON) tools/fat32_image.py format data $@
 
+$(DYNAMIC_ROOT_APP) $(DYNAMIC_LIBRARY) $(DYNAMIC_CATALOG) \
+		$(DYNAMIC_PACKAGE_SPEC) &: apps/native-dynamic/root.c \
+		apps/native-dynamic/library.c apps/native-dynamic/start.S \
+		apps/native-dynamic/proof.h apps/native-dynamic/manifest.json \
+		tools/build-native-dynamic-proof.sh \
+		tools/make-native-dynamic-proof.py | $(DYNAMIC_APP_DIR)
+	SAPOTE_SDK_CC='$(SDK_CC)' SAPOTE_SDK_LD='$(SDK_LD)' \
+		PYTHON='$(PYTHON)' READELF='$(READELF)' \
+		bash tools/build-native-dynamic-proof.sh $(DYNAMIC_APP_DIR)
+
+$(DYNAMIC_PACKAGE): $(DYNAMIC_ROOT_APP) $(DYNAMIC_LIBRARY) \
+		$(DYNAMIC_CATALOG) $(DYNAMIC_PACKAGE_SPEC) tools/sapote-package.py
+	$(PYTHON) tools/sapote-package.py build \
+		--spec $(DYNAMIC_PACKAGE_SPEC) --executable $(DYNAMIC_ROOT_APP) \
+		--output $@
+
+$(DYNAMIC_SYSTEM_IMAGE): $(DYNAMIC_PACKAGE) tools/sapote-package.py \
+		tools/fat32_image.py
+	$(PYTHON) tools/sapote-package.py install-system \
+		--output $@ $(DYNAMIC_PACKAGE)
+
+$(DYNAMIC_DATA_IMAGE): tools/fat32_image.py | $(DYNAMIC_APP_DIR)
+	$(PYTHON) tools/fat32_image.py format data $@
+
 $(RUST_APP): apps/native-rust/Cargo.toml apps/native-rust/Cargo.lock \
 		apps/native-rust/manifest.json apps/native-rust/src/main.rs \
 		rust/sapote/Cargo.toml rust/sapote/src/lib.rs sdk/linker.ld | $(RUST_APP_DIR)
@@ -683,7 +719,7 @@ $(ADMISSION_DATA_IMAGE): tools/fat32_image.py | $(ADMISSION_DIR)
 native-apps: $(NATIVE_TEST_PACKAGE) $(LUA_PACKAGE) $(SQLITE_PACKAGE) \
 	$(CANVAS_PACKAGE) $(CANVAS_PROOF_PACKAGE) $(NETAPP_PACKAGE) \
 	$(AUDIO_PACKAGE) $(AUDIO_REFUSAL_PACKAGE) $(RUST_APP_PACKAGE) \
-	$(CRASH_PACKAGE) $(SDL_PROOF_PACKAGE)
+	$(CRASH_PACKAGE) $(SDL_PROOF_PACKAGE) $(DYNAMIC_PACKAGE)
 
 audio-wav-tests:
 	$(PYTHON) -S tools/audio-wav-host-test.py --self-test
@@ -693,6 +729,10 @@ native-audio-proof: $(AUDIO_SYSTEM_IMAGE) $(AUDIO_DATA_IMAGE) audio-wav-tests
 
 native-sdl-proof: $(SDL_PROOF_SYSTEM_IMAGE) $(SDL_PROOF_DATA_IMAGE)
 	@echo 'native SDL proof package and images built'
+
+native-dynamic-proof: $(DYNAMIC_SYSTEM_IMAGE) $(DYNAMIC_DATA_IMAGE) \
+		dynamic-elf-tests
+	@echo 'native dynamic ELF package and images built'
 
 port-tests: native-apps audio-wav-tests
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(NATIVE_TEST_APP)' \
@@ -725,6 +765,7 @@ port-tests: native-apps audio-wav-tests
 	$(PYTHON) tools/sapote-package.py inspect $(AUDIO_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(AUDIO_REFUSAL_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(SDL_PROOF_PACKAGE)
+	$(PYTHON) tools/sapote-package.py inspect $(DYNAMIC_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(RUST_APP_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(CRASH_PACKAGE)
 
@@ -732,8 +773,9 @@ qemu-port-tests: qemu-test-native qemu-test-native-lua qemu-test-native-sqlite \
 	qemu-test-native-canvas qemu-test-network-native qemu-test-native-rust \
 	qemu-test-native-crash qemu-test-native-elf-refusal \
 	qemu-test-native-digest-refusal qemu-test-native-abi-refusal \
-	qemu-test-native-relaunch qemu-test-native-audio qemu-test-native-sdl
-	@echo 'native userspace, Lua, SQLite, Canvas, network, audio, SDL and Rust QEMU scenarios passed'
+	qemu-test-native-relaunch qemu-test-native-audio qemu-test-native-sdl \
+	qemu-test-native-dynamic
+	@echo 'native userspace, Lua, SQLite, Canvas, network, audio, SDL, dynamic ELF and Rust QEMU scenarios passed'
 
 contract-counts:
 	@printf '%s %s\n' '$(EXPECTED_TEST_SCENARIO_COUNT)' \
@@ -2016,6 +2058,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		native-relaunch) expected=3 ;; \
 		native-audio) expected=5 ;; \
 		native-sdl) expected=7 ;; \
+		native-dynamic) expected=9 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -2052,7 +2095,11 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 					audio_capture=true; \
 					audio_backend="-audiodev wav,id=wav0,path=$$audio_wav"; \
 				else audio_backend='-audiodev none,id=wav0'; fi; \
-				hardware="-boot order=d -blockdev driver=file,filename=$(SDL_PROOF_SYSTEM_IMAGE),node-name=sdl-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=sdl-system-file,node-name=sdl-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=sdl-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=sdl-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=sdl-data-file,node-name=sdl-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=sdl-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -device ich9-intel-hda,id=hda -device hda-duplex,bus=hda.0,audiodev=wav0 $$audio_backend" ;; \
+			hardware="-boot order=d -blockdev driver=file,filename=$(SDL_PROOF_SYSTEM_IMAGE),node-name=sdl-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=sdl-system-file,node-name=sdl-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=sdl-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=sdl-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=sdl-data-file,node-name=sdl-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=sdl-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -device ich9-intel-hda,id=hda -device hda-duplex,bus=hda.0,audiodev=wav0 $$audio_backend" ;; \
+		native-dynamic) \
+			$(MAKE) '$(DYNAMIC_SYSTEM_IMAGE)' '$(DYNAMIC_DATA_IMAGE)' || exit 1; \
+			cp '$(DYNAMIC_DATA_IMAGE)' '$(TEST_BUILD_DIR)/$*/data.raw' || exit 1; \
+			hardware='-boot order=d -blockdev driver=file,filename=$(DYNAMIC_SYSTEM_IMAGE),node-name=dynamic-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=dynamic-system-file,node-name=dynamic-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=dynamic-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=dynamic-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=dynamic-data-file,node-name=dynamic-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=dynamic-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1' ;; \
 			# No emulator models an NVIDIA part, so the nvidia scenario \
 			# attaches display and HD Audio functions of exactly the classes \
 			# these drivers match on, from vendors that are not NVIDIA. \
@@ -2156,6 +2203,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		native-canvas) timeout_seconds=180 ;; \
 		native-crash|native-relaunch|native-audio) timeout_seconds=180 ;; \
 		native-sdl) timeout_seconds=240 ;; \
+		native-dynamic) timeout_seconds=120 ;; \
 		native-rust|native-*-refusal) timeout_seconds=120 ;; \
 	esac; \
 	if test '$*' = fat32-persistence -o '$*' = native-sqlite; then reboot_control=''; fi; \
@@ -2597,6 +2645,15 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			if test "$$audio_capture" = true; then \
 				$(PYTHON) -S tools/audio-wav-host-test.py "$$audio_wav" || diagnostics_ok=false; \
 			else echo 'SAPOTE SDL WAV SKIP qemu wav backend unavailable'; fi ;; \
+		native-dynamic) \
+			$(PYTHON) -S tools/serial-marker-order.py "$$log" \
+				'SAPOTE DYNAMIC LIB INIT' \
+				'SAPOTE DYNAMIC ROOT INIT' \
+				'SAPOTE DYNAMIC RING3 PASS' \
+				'SAPOTE DYNAMIC ROOT FINI' \
+				'SAPOTE DYNAMIC LIB FINI' \
+				'Sapote: dynamic ELF shared library, TLS and lifecycle passed' || \
+				diagnostics_ok=false ;; \
 	esac; \
 	if test "$$diagnostics_ok" != true; then \
 		echo 'QEMU scenario $* omitted its required diagnostic'; \
