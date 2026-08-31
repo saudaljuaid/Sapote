@@ -12,9 +12,10 @@
 //! checked descriptor/data/revoke/commit serialization, explicit durability
 //! barriers, replay validation for one transaction or a bounded live ring,
 //! discovery of the internal journal inode, and allocation within a
-//! clean-journal ring. It does not persist live ring state. A caller must
-//! execute the returned operations in order and reclaim a reservation only
-//! after its checkpoint flush.
+//! clean-journal ring. A mapped ring adds the checksummed live-superblock and
+//! clean/tail-superblock writes required around each commit. A caller must
+//! execute the returned operations in order and acknowledge durability only
+//! after the corresponding flush.
 
 use super::block_header::{JournalBlockHeader, JournalBlockType};
 use super::commit_block::validate_commit_block_checksum;
@@ -65,8 +66,7 @@ const JOURNAL_FEATURE_BLOCK_REVOCATIONS: u32 = 0x1;
 const JOURNAL_FEATURE_64_BIT: u32 = 0x2;
 const JOURNAL_FEATURE_CHECKSUM_V3: u32 = 0x10;
 const JOURNAL_REQUIRED_FEATURES: u32 = JOURNAL_FEATURE_64_BIT | JOURNAL_FEATURE_CHECKSUM_V3;
-const JOURNAL_ALLOWED_FEATURES: u32 =
-    JOURNAL_REQUIRED_FEATURES | JOURNAL_FEATURE_BLOCK_REVOCATIONS;
+const JOURNAL_ALLOWED_FEATURES: u32 = JOURNAL_REQUIRED_FEATURES | JOURNAL_FEATURE_BLOCK_REVOCATIONS;
 const JOURNAL_CHECKSUM_TYPE_CRC32C: u8 = 4;
 
 /// A checked block image owned by a transaction or replay result.
@@ -101,6 +101,8 @@ pub enum JournalFlush {
     Commit,
     /// Checkpointed home metadata must be durable before reclaiming the log.
     Checkpoint,
+    /// The clean or advanced journal tail must be durable before slot reuse.
+    JournalState,
 }
 
 /// The kind of a block written into the journal.
@@ -131,6 +133,13 @@ pub enum JournalCommitOperation {
         kind: JournalRecordKind,
         /// Complete 4 KiB record image.
         bytes: Vec<u8>,
+    },
+    /// Persist the checksummed 1,024-byte state at journal logical block zero.
+    WriteJournalSuperblock {
+        /// Absolute filesystem block containing journal logical block zero.
+        journal_block: u64,
+        /// Complete checksummed JBD2 superblock image.
+        image: JournalSuperblockImage,
     },
     /// Checkpoint committed metadata to its final home block.
     WriteHomeMetadata(JournalBlockImage),
@@ -206,6 +215,8 @@ pub enum JournalTransactionError {
     ReservationOrder,
     /// The monotonic reservation ticket would overflow.
     ReservationOverflow,
+    /// A durable plan was requested from a ring without a mapped superblock.
+    JournalStateUnavailable,
 }
 
 impl Display for JournalTransactionError {
@@ -237,9 +248,7 @@ impl Display for JournalTransactionError {
             Self::UnsupportedSuperblockChecksumType(_) => {
                 "journal superblock checksum type is unsupported"
             }
-            Self::CorruptSuperblockChecksum { .. } => {
-                "journal superblock checksum is invalid"
-            }
+            Self::CorruptSuperblockChecksum { .. } => "journal superblock checksum is invalid",
             Self::JournalNotClean => "journal contains a live transaction",
             Self::RecoveryStateMismatch => {
                 "ext4 and JBD2 recovery state do not prove a supported journal state"
@@ -252,6 +261,7 @@ impl Display for JournalTransactionError {
             Self::ReservationState => "journal reservation state transition is invalid",
             Self::ReservationOrder => "journal reservation order is invalid",
             Self::ReservationOverflow => "journal reservation ticket would overflow",
+            Self::JournalStateUnavailable => "journal ring has no mapped checksummed superblock",
         };
         formatter.write_str(message)
     }
@@ -509,9 +519,7 @@ impl JournalSuperblockImage {
         let incompat = read_u32be(bytes, JOURNAL_SUPERBLOCK_FEATURE_INCOMPAT_OFFSET);
         let missing = JOURNAL_REQUIRED_FEATURES & !incompat;
         if missing != 0 {
-            return Err(JournalTransactionError::MissingSuperblockFeatures(
-                missing,
-            ));
+            return Err(JournalTransactionError::MissingSuperblockFeatures(missing));
         }
         let unsupported = incompat & !JOURNAL_ALLOWED_FEATURES;
         if unsupported != 0 {
@@ -636,6 +644,7 @@ impl JournalSuperblockImage {
             self.block_revocations,
             &physical_journal_blocks[1..],
         )?;
+        ring.superblock = Some(self.clone());
         ring.superblock_block = Some(physical_journal_blocks[0]);
         Ok(ring)
     }
@@ -963,12 +972,15 @@ impl JournalTransaction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ReservationState {
     Prepared,
+    CommitStarted,
     CommitDurable,
+    TailStatePrepared,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ActiveReservation {
     ticket: u64,
+    sequence: u32,
     start: usize,
     slot_count: usize,
     state: ReservationState,
@@ -1002,7 +1014,11 @@ impl JournalPreparedTransaction {
         &self.journal_blocks
     }
 
-    /// Return the only legal ordered-data commit operation list.
+    /// Return the ordered-data payload and home-checkpoint operation body.
+    ///
+    /// A mapped ring must wrap this body with
+    /// [`JournalRing::prepare_commit_plan`] so the live superblock state is
+    /// ordered before the commit record.
     #[must_use]
     pub fn operations(&self) -> &[JournalCommitOperation] {
         &self.operations
@@ -1012,14 +1028,16 @@ impl JournalPreparedTransaction {
 /// Bounded allocation and reclamation for an admitted clean JBD2 ring.
 ///
 /// The caller supplies the physical blocks of the journal inode after its
-/// superblock in logical ring order. This coordinator does not read or update
-/// the on-disk journal superblock. It prevents reuse until the oldest durable
-/// commit has also completed its checkpoint flush.
+/// superblock in logical ring order. A ring admitted through
+/// [`JournalSuperblockImage::map_clean_ring`] can construct the live and
+/// clean/tail superblock writes around each transaction. It prevents reuse
+/// until the caller acknowledges the final journal-state flush.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JournalRing {
     uuid: Uuid,
     maximum_block: u64,
     block_revocations: bool,
+    superblock: Option<JournalSuperblockImage>,
     superblock_block: Option<u64>,
     slots: Vec<u64>,
     head: usize,
@@ -1059,6 +1077,7 @@ impl JournalRing {
             uuid: Uuid::new(journal_uuid),
             maximum_block,
             block_revocations,
+            superblock: None,
             superblock_block: None,
             slots: Vec::from(journal_slots),
             head: 0,
@@ -1084,6 +1103,13 @@ impl JournalRing {
         &mut self,
         transaction: &JournalTransaction,
     ) -> Result<JournalPreparedTransaction, JournalTransactionError> {
+        if self
+            .active
+            .iter()
+            .any(|reservation| reservation.state == ReservationState::TailStatePrepared)
+        {
+            return Err(JournalTransactionError::ReservationState);
+        }
         if transaction.sequence != self.next_sequence
             || transaction.uuid != self.uuid
             || transaction.maximum_block != self.maximum_block
@@ -1154,6 +1180,7 @@ impl JournalRing {
         self.next_sequence = next_sequence;
         self.active.push_back(ActiveReservation {
             ticket,
+            sequence: transaction.sequence,
             start,
             slot_count: required,
             state: ReservationState::Prepared,
@@ -1164,6 +1191,152 @@ impl JournalRing {
             journal_blocks,
             operations,
         })
+    }
+
+    /// Add the current checksummed live-tail state to a prepared commit plan.
+    ///
+    /// The returned superblock write precedes ordered data and journal payload.
+    /// A later payload/commit flush therefore makes the nonzero `s_start`
+    /// durable no later than the commit record. Commits must start in sequence;
+    /// an older durable commit cannot begin its tail update while this plan is
+    /// being issued. The filesystem owner must make ext4's incompat-recovery
+    /// marker durable before executing the first such plan after a clean mount.
+    pub fn prepare_commit_plan(
+        &mut self,
+        prepared: &JournalPreparedTransaction,
+    ) -> Result<Vec<JournalCommitOperation>, JournalTransactionError> {
+        let index = self
+            .active
+            .iter()
+            .position(|reservation| reservation.ticket == prepared.ticket)
+            .ok_or(JournalTransactionError::ReservationUnknown)?;
+        if self
+            .active
+            .iter()
+            .take(index)
+            .any(|reservation| reservation.state != ReservationState::CommitDurable)
+        {
+            return Err(JournalTransactionError::ReservationOrder);
+        }
+        let reservation = self
+            .active
+            .get(index)
+            .copied()
+            .ok_or(JournalTransactionError::ReservationUnknown)?;
+        if reservation.state != ReservationState::Prepared {
+            return Err(JournalTransactionError::ReservationState);
+        }
+        if reservation.sequence != prepared.sequence
+            || reservation.slot_count != prepared.journal_blocks.len()
+            || prepared
+                .journal_blocks
+                .iter()
+                .enumerate()
+                .any(|(offset, block)| {
+                    let slot = (reservation.start + offset) % self.slots.len();
+                    self.slots[slot] != *block
+                })
+        {
+            return Err(JournalTransactionError::RingTransactionMismatch);
+        }
+        let superblock = self
+            .superblock
+            .as_ref()
+            .ok_or(JournalTransactionError::JournalStateUnavailable)?;
+        let superblock_block = self
+            .superblock_block
+            .ok_or(JournalTransactionError::JournalStateUnavailable)?;
+        let tail = self
+            .active
+            .front()
+            .copied()
+            .ok_or(JournalTransactionError::ReservationUnknown)?;
+        let tail_block = u32::try_from(
+            tail.start
+                .checked_add(1)
+                .ok_or(JournalTransactionError::RingGeometry)?,
+        )
+        .map_err(|_| JournalTransactionError::RingGeometry)?;
+        let live_superblock = superblock.with_state(tail.sequence, tail_block)?;
+        let mut operations = Vec::new();
+        operations
+            .try_reserve_exact(
+                prepared
+                    .operations
+                    .len()
+                    .checked_add(1)
+                    .ok_or(JournalTransactionError::TooManyBlocks)?,
+            )
+            .map_err(|_| JournalTransactionError::TooManyBlocks)?;
+        operations.push(JournalCommitOperation::WriteJournalSuperblock {
+            journal_block: superblock_block,
+            image: live_superblock,
+        });
+        operations.extend(prepared.operations.iter().cloned());
+        self.active
+            .get_mut(index)
+            .ok_or(JournalTransactionError::ReservationUnknown)?
+            .state = ReservationState::CommitStarted;
+        Ok(operations)
+    }
+
+    /// Build the final FUA-equivalent journal-tail update after checkpointing.
+    ///
+    /// The caller invokes this only after the prepared commit plan's
+    /// [`JournalFlush::Checkpoint`] has completed. If another transaction is
+    /// reserved, it must already have a durable commit before the old tail can
+    /// advance to it. Otherwise the returned image marks the journal clean.
+    pub fn prepare_checkpoint_plan(
+        &mut self,
+        ticket: u64,
+    ) -> Result<Vec<JournalCommitOperation>, JournalTransactionError> {
+        let reservation = self
+            .active
+            .front()
+            .copied()
+            .ok_or(JournalTransactionError::ReservationUnknown)?;
+        if reservation.ticket != ticket {
+            return Err(JournalTransactionError::ReservationOrder);
+        }
+        if reservation.state != ReservationState::CommitDurable {
+            return Err(JournalTransactionError::ReservationState);
+        }
+        if self
+            .active
+            .get(1)
+            .is_some_and(|next| next.state != ReservationState::CommitDurable)
+        {
+            return Err(JournalTransactionError::ReservationOrder);
+        }
+        let superblock = self
+            .superblock
+            .as_ref()
+            .ok_or(JournalTransactionError::JournalStateUnavailable)?;
+        let superblock_block = self
+            .superblock_block
+            .ok_or(JournalTransactionError::JournalStateUnavailable)?;
+        let state = if let Some(next) = self.active.get(1) {
+            let start_block = u32::try_from(
+                next.start
+                    .checked_add(1)
+                    .ok_or(JournalTransactionError::RingGeometry)?,
+            )
+            .map_err(|_| JournalTransactionError::RingGeometry)?;
+            superblock.with_state(next.sequence, start_block)?
+        } else {
+            superblock.with_state(self.next_sequence, 0)?
+        };
+        self.active
+            .front_mut()
+            .ok_or(JournalTransactionError::ReservationUnknown)?
+            .state = ReservationState::TailStatePrepared;
+        Ok(vec![
+            JournalCommitOperation::WriteJournalSuperblock {
+                journal_block: superblock_block,
+                image: state,
+            },
+            JournalCommitOperation::Flush(JournalFlush::JournalState),
+        ])
     }
 
     /// Mark a commit flush durable, preserving transaction sequence order.
@@ -1185,7 +1358,7 @@ impl JournalRing {
             .active
             .get_mut(index)
             .ok_or(JournalTransactionError::ReservationUnknown)?;
-        if reservation.state != ReservationState::Prepared {
+        if reservation.state != ReservationState::CommitStarted {
             return Err(JournalTransactionError::ReservationState);
         }
         reservation.state = ReservationState::CommitDurable;
@@ -1218,7 +1391,7 @@ impl JournalRing {
         Ok(())
     }
 
-    /// Reclaim the oldest committed reservation after its checkpoint flush.
+    /// Reclaim the oldest reservation after its journal-tail state is durable.
     pub fn checkpoint_durable(&mut self, ticket: u64) -> Result<(), JournalTransactionError> {
         let reservation = self
             .active
@@ -1228,9 +1401,24 @@ impl JournalRing {
         if reservation.ticket != ticket {
             return Err(JournalTransactionError::ReservationOrder);
         }
-        if reservation.state != ReservationState::CommitDurable {
+        if reservation.state != ReservationState::TailStatePrepared {
             return Err(JournalTransactionError::ReservationState);
         }
+        let superblock = self
+            .superblock
+            .as_ref()
+            .ok_or(JournalTransactionError::JournalStateUnavailable)?;
+        let durable_state = if let Some(next) = self.active.get(1) {
+            let start_block = u32::try_from(
+                next.start
+                    .checked_add(1)
+                    .ok_or(JournalTransactionError::RingGeometry)?,
+            )
+            .map_err(|_| JournalTransactionError::RingGeometry)?;
+            superblock.with_state(next.sequence, start_block)?
+        } else {
+            superblock.with_state(self.next_sequence, 0)?
+        };
         self.tail = self
             .tail
             .checked_add(reservation.slot_count)
@@ -1240,6 +1428,7 @@ impl JournalRing {
             .used
             .checked_sub(reservation.slot_count)
             .ok_or(JournalTransactionError::ReservationState)?;
+        self.superblock = Some(durable_state);
         let _ = self.active.pop_front();
         Ok(())
     }
@@ -1313,17 +1502,11 @@ pub fn recover_committed_ring(
     while consumed_slots < journal_blocks.len() {
         let descriptor = journal_blocks[cursor];
         let Some(descriptor_header) = JournalBlockHeader::read_bytes(descriptor) else {
-            if committed_transactions == 0 {
-                return Err(JournalTransactionError::CorruptDescriptor);
-            }
             break;
         };
         if descriptor_header.block_type != JournalBlockType::DESCRIPTOR
             || descriptor_header.sequence != sequence
         {
-            if committed_transactions == 0 {
-                return Err(JournalTransactionError::CorruptDescriptor);
-            }
             break;
         }
         let replay_superblock = JournalSuperblock {
@@ -1352,9 +1535,6 @@ pub fn recover_committed_ring(
             .checked_add(1)
             .ok_or(JournalTransactionError::TooManyBlocks)?;
         if minimum_slots > journal_blocks.len() - consumed_slots {
-            if committed_transactions == 0 {
-                return Err(JournalTransactionError::MissingCommit);
-            }
             break;
         }
         let record_index = (cursor + record_offset) % journal_blocks.len();
@@ -1370,9 +1550,6 @@ pub fn recover_committed_ring(
             .checked_add(1)
             .ok_or(JournalTransactionError::TooManyBlocks)?;
         if transaction_slots > journal_blocks.len() - consumed_slots {
-            if committed_transactions == 0 {
-                return Err(JournalTransactionError::MissingCommit);
-            }
             break;
         }
         let commit_index = (cursor + commit_offset) % journal_blocks.len();
@@ -1390,9 +1567,6 @@ pub fn recover_committed_ring(
                 }) {
                     return Err(JournalTransactionError::CorruptRevocation);
                 }
-            }
-            if committed_transactions == 0 {
-                return Err(JournalTransactionError::MissingCommit);
             }
             break;
         }
@@ -1604,6 +1778,26 @@ mod tests {
         transaction
     }
 
+    fn mapped_ring(next_sequence: u32, slots: &[u64]) -> JournalRing {
+        let superblock = JournalSuperblockImage::new_clean(
+            next_sequence,
+            UUID,
+            u32::try_from(slots.len() + 1).unwrap(),
+        )
+        .unwrap();
+        let mut physical = Vec::with_capacity(slots.len() + 1);
+        physical.push(MAXIMUM_BLOCK);
+        physical.extend_from_slice(slots);
+        superblock.map_clean_ring(MAXIMUM_BLOCK, &physical).unwrap()
+    }
+
+    fn finish_transaction(ring: &mut JournalRing, prepared: &JournalPreparedTransaction) {
+        let _commit = ring.prepare_commit_plan(prepared).unwrap();
+        ring.mark_commit_durable(prepared.ticket()).unwrap();
+        let _checkpoint = ring.prepare_checkpoint_plan(prepared.ticket()).unwrap();
+        ring.checkpoint_durable(prepared.ticket()).unwrap();
+    }
+
     fn journal_images(operations: &[JournalCommitOperation]) -> Vec<Vec<u8>> {
         operations
             .iter()
@@ -1725,6 +1919,7 @@ mod tests {
                         durable_ordered_data.extend(pending_ordered_data.clone());
                         durable_home.extend(pending_home.clone());
                     }
+                    JournalCommitOperation::WriteJournalSuperblock { .. } => {}
                 }
             }
 
@@ -1809,22 +2004,20 @@ mod tests {
     #[test]
     fn clean_ring_wraps_and_reclaims_only_after_checkpoint() {
         let slots = [3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007];
-        let mut ring = JournalRing::new_clean(40, UUID, MAXIMUM_BLOCK, true, &slots).unwrap();
+        let mut ring = mapped_ring(40, &slots);
 
         let mut first = ring.begin_transaction().unwrap();
         first.stage_metadata(100, &filled(1)).unwrap();
         let first = ring.prepare(&first).unwrap();
         assert_eq!(first.journal_blocks(), &slots[..3]);
-        ring.mark_commit_durable(first.ticket()).unwrap();
-        ring.checkpoint_durable(first.ticket()).unwrap();
+        finish_transaction(&mut ring, &first);
 
         let mut second = ring.begin_transaction().unwrap();
         second.stage_metadata(101, &filled(2)).unwrap();
         second.stage_metadata(102, &filled(3)).unwrap();
         let second = ring.prepare(&second).unwrap();
         assert_eq!(second.journal_blocks(), &slots[3..7]);
-        ring.mark_commit_durable(second.ticket()).unwrap();
-        ring.checkpoint_durable(second.ticket()).unwrap();
+        finish_transaction(&mut ring, &second);
 
         let mut wrapped = ring.begin_transaction().unwrap();
         wrapped.stage_metadata(103, &filled(4)).unwrap();
@@ -1838,7 +2031,7 @@ mod tests {
     #[test]
     fn ring_refuses_reuse_and_out_of_order_transitions() {
         let slots = [3000, 3001, 3002, 3003, 3004, 3005];
-        let mut ring = JournalRing::new_clean(50, UUID, MAXIMUM_BLOCK, true, &slots).unwrap();
+        let mut ring = mapped_ring(50, &slots);
         let mut first = ring.begin_transaction().unwrap();
         first.stage_metadata(100, &filled(1)).unwrap();
         let first = ring.prepare(&first).unwrap();
@@ -1860,13 +2053,17 @@ mod tests {
             ring.abort_precommit(first.ticket()),
             Err(JournalTransactionError::ReservationOrder)
         );
+        let _first_commit = ring.prepare_commit_plan(&first).unwrap();
         ring.mark_commit_durable(first.ticket()).unwrap();
+        let _second_commit = ring.prepare_commit_plan(&second).unwrap();
         ring.mark_commit_durable(second.ticket()).unwrap();
         assert_eq!(
             ring.checkpoint_durable(second.ticket()),
             Err(JournalTransactionError::ReservationOrder)
         );
+        let _first_checkpoint = ring.prepare_checkpoint_plan(first.ticket()).unwrap();
         ring.checkpoint_durable(first.ticket()).unwrap();
+        let _second_checkpoint = ring.prepare_checkpoint_plan(second.ticket()).unwrap();
         ring.checkpoint_durable(second.ticket()).unwrap();
         assert_eq!(ring.used_slots(), 0);
 

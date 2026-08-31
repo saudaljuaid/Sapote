@@ -92,11 +92,14 @@ revocation, and commit validators used by the existing replay reader.
 journal and assigns those records without collision across wrap. It refuses
 more than 8,192 slots, duplicate/out-of-range slots, stale transaction
 sequences, and reservations that would overrun uncheckpointed data. Commit
-durability is sequence ordered; only the oldest committed reservation can be
-reclaimed after its checkpoint flush. The newest pre-commit reservation can be
-aborted without leaving a sequence gap. Public tests cover wrap, full-ring
-refusal, early/out-of-order reclamation refusal, abort, revoke corruption, and
-replay suppression.
+durability is sequence ordered. A mapped ring starts each durable plan with the
+checksummed nonzero live-tail superblock, and only the oldest committed
+reservation can build a clean/advanced-tail update after its home checkpoint
+flush. Slots are reclaimed only after that final journal-state flush is
+acknowledged. The newest reservation can be aborted before its live plan starts
+without leaving a sequence gap. Public tests cover wrap, full-ring refusal,
+early/out-of-order reclamation refusal, abort, revoke corruption, and replay
+suppression.
 
 `JournalSuperblockImage` closes the next hostile-input boundary. It validates
 the exact 1,024-byte JBD2 v2 superblock header, checksum-v3/64-bit feature set,
@@ -148,6 +151,7 @@ each metadata image, and the commit. The resulting operation list has one legal
 order:
 
 ```text
+live JBD2 superblock write (nonzero s_start)
 ordered file-data home writes
 Flush(OrderedData)
 descriptor and metadata journal writes
@@ -156,13 +160,19 @@ commit journal write
 Flush(Commit)
 metadata home-block checkpoint writes
 Flush(Checkpoint)
+clean or advanced-tail JBD2 superblock write
+Flush(JournalState)
 ```
 
-There is no metadata home-block operation before `Flush(Commit)`. A complete,
-checksummed commit is required before `replay_committed_transaction()` returns
-any home image. Pure tests cut the operation list at every boundary and verify
-that every pre-commit prefix is non-replayable and has no durable home metadata;
-they also corrupt descriptor, data, and commit bytes independently.
+There is no metadata home-block operation before `Flush(Commit)`, and no slot
+reuse before `Flush(JournalState)`. The intervening barriers order the live
+superblock before the commit. The filesystem owner must first make ext4's
+incompat-recovery bit durable; that platform mutation remains outside this
+lower-level planner. A complete, checksummed commit is required before
+`replay_committed_transaction()` returns any home image. Pure tests cut the
+mapped operation list at every boundary and prove each durable prefix is either
+clean, contains only an uncommitted tail, or replays the complete metadata
+image. They also corrupt descriptor, data, and commit bytes independently.
 `make ext4-tests` runs equivalent public-API transaction controls from the
 isolated `tools/ext4-transaction-tests` harness in the admitted
 `--no-default-features --features sync` profile, as well as the existing hostile
@@ -171,10 +181,11 @@ only the committed Cargo source mirror.
 
 Sapote's NVMe layer already exposes the required `nvme_volume_flush()` fence,
 but the ext4 backend deliberately does not bind the plan to it yet. The ring
-planner can validate a discovered journal-inode map, construct superblock state
-images, and derive the replay/checkpoint set for its bounded live-ring profile,
-but it does not issue the home or superblock writes. The remaining work is not
-a small wrapper: it needs binding recovery, operations, and barriers to the
+planner now validates a discovered journal-inode map, constructs live and
+clean/advanced-tail state operations, and derives the replay/checkpoint set for
+its bounded live-ring profile, but it does not issue the home or superblock
+writes. The remaining work is not a small wrapper: it needs making ext4's
+recovery marker durable, binding recovery, operations, and barriers to the
 platform writer,
 redirecting ext4plus mutations away from immediate home writes, allocation
 rollback, a writable Rust/C volume lease, VFS-level mutation/handle coherency,

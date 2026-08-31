@@ -21,13 +21,16 @@ Sapote's local journaling delta is intentionally below that admission line.
 `src/journal/transaction.rs` builds one bounded checksum-v3 descriptor,
 metadata set, optional 64-bit revoke record, and commit record and returns an
 ordered-data operation plan with explicit data, journal-payload, commit, and
-checkpoint flush barriers. Its clean-journal ring coordinator bounds and
-validates a caller-supplied physical slot map, wraps without collision, refuses
-overrun of uncheckpointed records, sequences commit durability, reclaims only
-the oldest checkpointed transaction, and rolls back the newest pre-commit
-reservation without leaving a sequence gap. Replay and public tests cover
-corruption, every power-cut prefix, revocation suppression, wrap, exhaustion,
-abort, and out-of-order reclamation.
+checkpoint flush barriers. A ring admitted from a real journal-inode map wraps
+that body with a checksummed nonzero live-superblock write and, after the home
+checkpoint barrier, a clean or advanced-tail superblock write plus final state
+flush. Its clean-journal ring coordinator bounds and validates a caller-supplied
+physical slot map, wraps without collision, refuses overrun of uncheckpointed
+records, sequences commit durability, reclaims only the oldest transaction
+after its tail state is durable, and rolls back the newest reservation before
+its live plan begins without leaving a sequence gap. Replay and public tests
+cover corruption, every mapped-plan power-cut prefix, revocation suppression,
+wrap, exhaustion, abort, and out-of-order reclamation.
 
 `JournalSuperblockImage` validates and preserves the exact JBD2 v2 superblock,
 admits Sapote's 4 KiB/checksum-v3/64-bit profile, emits checksummed clean/live
@@ -57,10 +60,10 @@ pending images, and returns a collapsed checkpoint set plus the checksummed
 clean superblock state. The ext4 recovery bit must agree with the JBD2 state;
 ambiguous or inconsistent combinations are refused.
 
-This planner does not issue home or superblock writes, bind a barrier to
-platform I/O,
-or redirect ext4 mutation methods away from their upstream home-block writes.
-Those gaps keep the Sapote backend read-only.
+This planner does not issue home or superblock writes, make ext4's
+incompat-recovery marker durable, bind a barrier to platform I/O, or redirect
+ext4 mutation methods away from their upstream home-block writes. Those gaps
+keep the Sapote backend read-only.
 
 Sapote also tightens upstream writer admission: an image carrying ext4's
 `RO_COMPAT_READONLY` feature now discards the supplied writer just as an image

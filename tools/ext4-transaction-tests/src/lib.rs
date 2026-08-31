@@ -25,6 +25,22 @@ fn transaction() -> JournalTransaction {
     transaction
 }
 
+fn mapped_ring(next_sequence: u32, slots: &[u64]) -> JournalRing {
+    let superblock =
+        JournalSuperblockImage::new_clean(next_sequence, UUID, (slots.len() + 1) as u32).unwrap();
+    let mut physical = Vec::with_capacity(slots.len() + 1);
+    physical.push(MAXIMUM_BLOCK);
+    physical.extend_from_slice(slots);
+    superblock.map_clean_ring(MAXIMUM_BLOCK, &physical).unwrap()
+}
+
+fn finish_transaction(ring: &mut JournalRing, prepared: &JournalPreparedTransaction) {
+    let _commit = ring.prepare_commit_plan(prepared).unwrap();
+    ring.mark_commit_durable(prepared.ticket()).unwrap();
+    let _checkpoint = ring.prepare_checkpoint_plan(prepared.ticket()).unwrap();
+    ring.checkpoint_durable(prepared.ticket()).unwrap();
+}
+
 fn journal_images(operations: &[JournalCommitOperation]) -> Vec<Vec<u8>> {
     operations
         .iter()
@@ -130,6 +146,7 @@ fn every_precommit_power_cut_has_no_durable_home_or_replay() {
                     durable_home.extend(pending_home.clone());
                 }
                 JournalCommitOperation::WriteOrderedData(_) => {}
+                JournalCommitOperation::WriteJournalSuperblock { .. } => {}
             }
         }
         assert!(durable_home.is_empty());
@@ -139,6 +156,108 @@ fn every_precommit_power_cut_has_no_durable_home_or_replay() {
             .collect();
         assert!(complete.is_none());
     }
+}
+
+#[test]
+fn mapped_ring_power_cuts_preserve_a_recoverable_or_clean_state() {
+    let slots = [3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007];
+    let initial_superblock =
+        JournalSuperblockImage::new_clean(60, UUID, (slots.len() + 1) as u32).unwrap();
+    let mut physical = Vec::from([MAXIMUM_BLOCK]);
+    physical.extend_from_slice(&slots);
+    let mut ring = initial_superblock
+        .map_clean_ring(MAXIMUM_BLOCK, &physical)
+        .unwrap();
+    let mut transaction = ring.begin_transaction().unwrap();
+    transaction.stage_metadata(200, &filled(0x77)).unwrap();
+    let prepared = ring.prepare(&transaction).unwrap();
+    let mut operations = ring.prepare_commit_plan(&prepared).unwrap();
+
+    let live = match &operations[0] {
+        JournalCommitOperation::WriteJournalSuperblock {
+            journal_block,
+            image,
+        } => {
+            assert_eq!(*journal_block, MAXIMUM_BLOCK);
+            image.clone()
+        }
+        _ => panic!("mapped commit must begin with a live superblock"),
+    };
+    assert_eq!(live.sequence(), 60);
+    assert_eq!(live.start_block(), 1);
+    ring.mark_commit_durable(prepared.ticket()).unwrap();
+    let checkpoint = ring.prepare_checkpoint_plan(prepared.ticket()).unwrap();
+    let clean = match &checkpoint[0] {
+        JournalCommitOperation::WriteJournalSuperblock { image, .. } => image.clone(),
+        _ => panic!("checkpoint must finish with a journal-state update"),
+    };
+    assert_eq!(clean.sequence(), 61);
+    assert_eq!(clean.start_block(), 0);
+    operations.extend(checkpoint);
+
+    for cut in 0..=operations.len() {
+        let mut durable_superblock = initial_superblock.clone();
+        let mut pending_superblock = None;
+        let mut durable_journal = vec![filled(0); slots.len()];
+        let mut pending_journal = BTreeMap::new();
+        let mut durable_home = BTreeMap::from([(200, filled(0))]);
+        let mut pending_home = BTreeMap::new();
+
+        for operation in &operations[..cut] {
+            match operation {
+                JournalCommitOperation::WriteJournalSuperblock { image, .. } => {
+                    pending_superblock = Some(image.clone());
+                }
+                JournalCommitOperation::WriteJournal {
+                    journal_block,
+                    bytes,
+                    ..
+                } => {
+                    pending_journal.insert(*journal_block, bytes.clone());
+                }
+                JournalCommitOperation::WriteHomeMetadata(image) => {
+                    pending_home.insert(image.block_index(), image.bytes().to_vec());
+                }
+                JournalCommitOperation::Flush(_) => {
+                    if let Some(superblock) = pending_superblock.take() {
+                        durable_superblock = superblock;
+                    }
+                    for (block, bytes) in &pending_journal {
+                        let index = slots.iter().position(|slot| slot == block).unwrap();
+                        durable_journal[index] = bytes.clone();
+                    }
+                    durable_home.extend(pending_home.clone());
+                }
+                JournalCommitOperation::WriteOrderedData(_) => {}
+            }
+        }
+
+        if durable_superblock.start_block() == 0 {
+            if durable_superblock.sequence() == 60 {
+                assert_eq!(durable_home.get(&200), Some(&filled(0)));
+            } else {
+                assert_eq!(durable_superblock.sequence(), 61);
+                assert_eq!(durable_home.get(&200), Some(&filled(0x77)));
+            }
+            continue;
+        }
+
+        let references: Vec<&[u8]> = durable_journal.iter().map(Vec::as_slice).collect();
+        let recovery =
+            recover_committed_ring(&durable_superblock, true, MAXIMUM_BLOCK, &references).unwrap();
+        if recovery.committed_transactions() == 0 {
+            assert_eq!(durable_home.get(&200), Some(&filled(0)));
+        } else {
+            assert_eq!(recovery.committed_transactions(), 1);
+            assert_eq!(recovery.replay_images().len(), 1);
+            assert_eq!(recovery.replay_images()[0].block_index(), 200);
+            assert_eq!(recovery.replay_images()[0].bytes(), filled(0x77));
+        }
+    }
+
+    ring.checkpoint_durable(prepared.ticket()).unwrap();
+    assert_eq!(ring.used_slots(), 0);
+    assert_eq!(ring.next_sequence(), 61);
 }
 
 #[test]
@@ -194,7 +313,7 @@ fn revocation_records_are_checksummed_and_suppress_stale_images() {
 #[test]
 fn clean_ring_wraps_and_refuses_early_reclamation() {
     let slots = [3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007];
-    let mut ring = JournalRing::new_clean(40, UUID, MAXIMUM_BLOCK, true, &slots).unwrap();
+    let mut ring = mapped_ring(40, &slots);
     let mut first = ring.begin_transaction().unwrap();
     first.stage_metadata(100, &filled(1)).unwrap();
     let first = ring.prepare(&first).unwrap();
@@ -203,15 +322,20 @@ fn clean_ring_wraps_and_refuses_early_reclamation() {
         ring.checkpoint_durable(first.ticket()),
         Err(JournalTransactionError::ReservationState)
     );
+    let _commit = ring.prepare_commit_plan(&first).unwrap();
     ring.mark_commit_durable(first.ticket()).unwrap();
+    assert_eq!(
+        ring.checkpoint_durable(first.ticket()),
+        Err(JournalTransactionError::ReservationState)
+    );
+    let _checkpoint = ring.prepare_checkpoint_plan(first.ticket()).unwrap();
     ring.checkpoint_durable(first.ticket()).unwrap();
 
     let mut second = ring.begin_transaction().unwrap();
     second.stage_metadata(101, &filled(2)).unwrap();
     second.stage_metadata(102, &filled(3)).unwrap();
     let second = ring.prepare(&second).unwrap();
-    ring.mark_commit_durable(second.ticket()).unwrap();
-    ring.checkpoint_durable(second.ticket()).unwrap();
+    finish_transaction(&mut ring, &second);
 
     let mut wrapped = ring.begin_transaction().unwrap();
     wrapped.stage_metadata(103, &filled(4)).unwrap();
@@ -222,6 +346,45 @@ fn clean_ring_wraps_and_refuses_early_reclamation() {
     ring.abort_precommit(wrapped.ticket()).unwrap();
     assert_eq!(ring.used_slots(), 0);
     assert_eq!(ring.next_sequence(), aborted_sequence);
+}
+
+#[test]
+fn checkpoint_tail_advances_only_to_the_next_durable_transaction() {
+    let slots = [3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007];
+    let mut ring = mapped_ring(70, &slots);
+    let mut first = ring.begin_transaction().unwrap();
+    first.stage_metadata(100, &filled(1)).unwrap();
+    let first = ring.prepare(&first).unwrap();
+    let _first_commit = ring.prepare_commit_plan(&first).unwrap();
+    ring.mark_commit_durable(first.ticket()).unwrap();
+
+    let mut second = ring.begin_transaction().unwrap();
+    second.stage_metadata(101, &filled(2)).unwrap();
+    let second = ring.prepare(&second).unwrap();
+    assert_eq!(
+        ring.prepare_checkpoint_plan(first.ticket()),
+        Err(JournalTransactionError::ReservationOrder)
+    );
+    let _second_commit = ring.prepare_commit_plan(&second).unwrap();
+    ring.mark_commit_durable(second.ticket()).unwrap();
+
+    let first_checkpoint = ring.prepare_checkpoint_plan(first.ticket()).unwrap();
+    let advanced = match &first_checkpoint[0] {
+        JournalCommitOperation::WriteJournalSuperblock { image, .. } => image,
+        _ => panic!("checkpoint must advance the journal tail"),
+    };
+    assert_eq!(advanced.sequence(), 71);
+    assert_eq!(advanced.start_block(), 4);
+    ring.checkpoint_durable(first.ticket()).unwrap();
+
+    let second_checkpoint = ring.prepare_checkpoint_plan(second.ticket()).unwrap();
+    let clean = match &second_checkpoint[0] {
+        JournalCommitOperation::WriteJournalSuperblock { image, .. } => image,
+        _ => panic!("final checkpoint must clean the journal"),
+    };
+    assert_eq!(clean.sequence(), 72);
+    assert_eq!(clean.start_block(), 0);
+    ring.checkpoint_durable(second.ticket()).unwrap();
 }
 
 #[test]
@@ -361,20 +524,19 @@ fn dirty_ring_recovery_wraps_replays_revokes_and_discards_an_uncommitted_tail() 
     let mut advance_three = ring.begin_transaction().unwrap();
     advance_three.stage_metadata(10, &filled(1)).unwrap();
     let advance_three = ring.prepare(&advance_three).unwrap();
-    ring.mark_commit_durable(advance_three.ticket()).unwrap();
-    ring.checkpoint_durable(advance_three.ticket()).unwrap();
+    finish_transaction(&mut ring, &advance_three);
 
     let mut advance_four = ring.begin_transaction().unwrap();
     advance_four.stage_metadata(11, &filled(2)).unwrap();
     advance_four.stage_metadata(12, &filled(3)).unwrap();
     let advance_four = ring.prepare(&advance_four).unwrap();
-    ring.mark_commit_durable(advance_four.ticket()).unwrap();
-    ring.checkpoint_durable(advance_four.ticket()).unwrap();
+    finish_transaction(&mut ring, &advance_four);
 
     let mut first_live = ring.begin_transaction().unwrap();
     first_live.stage_metadata(100, &filled(0x44)).unwrap();
     let first_live = ring.prepare(&first_live).unwrap();
     assert_eq!(first_live.journal_blocks(), &[3008, 3001, 3002]);
+    let _first_commit = ring.prepare_commit_plan(&first_live).unwrap();
     ring.mark_commit_durable(first_live.ticket()).unwrap();
 
     let mut second_live = ring.begin_transaction().unwrap();
@@ -382,6 +544,7 @@ fn dirty_ring_recovery_wraps_replays_revokes_and_discards_an_uncommitted_tail() 
     second_live.stage_revocation(100).unwrap();
     let second_live = ring.prepare(&second_live).unwrap();
     assert_eq!(second_live.journal_blocks(), &[3003, 3004, 3005, 3006]);
+    let _second_commit = ring.prepare_commit_plan(&second_live).unwrap();
     ring.mark_commit_durable(second_live.ticket()).unwrap();
 
     let mut storage = vec![filled(0); logical_slots.len()];
@@ -470,6 +633,16 @@ fn hostile_geometry_duplicates_escape_and_slot_overlap_are_refused() {
     assert_eq!(
         JournalRing::new_clean(9, UUID, MAXIMUM_BLOCK, true, &[0, 101, 102]),
         Err(JournalTransactionError::RingGeometry)
+    );
+
+    let mut unmapped =
+        JournalRing::new_clean(20, UUID, MAXIMUM_BLOCK, true, &[100, 101, 102]).unwrap();
+    let mut transaction = unmapped.begin_transaction().unwrap();
+    transaction.stage_metadata(2, &filled(2)).unwrap();
+    let prepared = unmapped.prepare(&transaction).unwrap();
+    assert_eq!(
+        unmapped.prepare_commit_plan(&prepared),
+        Err(JournalTransactionError::JournalStateUnavailable)
     );
 
     let mut exhausted =
