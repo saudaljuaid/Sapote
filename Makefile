@@ -236,6 +236,8 @@ SDL2_CFLAGS := --target=x86_64-unknown-none-elf -D__SAPOTE__=1 \
 	-ffreestanding -fno-pie -fno-stack-protector -mcmodel=large \
 	-mno-red-zone -fno-builtin -ffunction-sections -fdata-sections \
 	-ftls-model=local-exec -Wall -Wextra -Werror
+SDL2_VENDOR_CFLAGS := $(SDL2_CFLAGS) -Wno-sign-compare \
+	-Wno-unused-parameter
 SDK_LDFLAGS := -nostdlib -static --gc-sections --build-id=none \
 	-z max-page-size=0x1000 -z noexecstack --fatal-warnings \
 	--orphan-handling=error -T sdk/linker.ld
@@ -370,7 +372,7 @@ $(ZLIB_OBJECT_DIR)/%.o: vendor/zlib/src/%.c $(ZLIB_HEADERS)
 $(SDL2_OBJECT_DIR)/%.o: vendor/sdl2/src/%.c $(SDL2_PUBLIC_HEADERS) \
 		vendor/sdl2/include/SDL_config_sapote.h
 	mkdir -p $(dir $@)
-	$(SDK_CC) $(SDL2_CFLAGS) -MMD -MP -c $< -o $@
+	$(SDK_CC) $(SDL2_VENDOR_CFLAGS) -MMD -MP -c $< -o $@
 
 $(TEST_BUILD_DIR)/bearssl/%.o: vendor/bearssl/src/%.c
 	mkdir -p $(dir $@)
