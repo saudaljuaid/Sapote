@@ -188,7 +188,8 @@ close, stale-handle refusal, and process-exit cleanup.
 images, and the host WAV controls. `make qemu-test-native-audio` attaches the
 same QEMU ICH9/`hda-duplex` model as the kernel proof. If that QEMU build
 advertises its `wav` audio driver, the scenario writes
-`build/tests/native-audio/native-audio.wav` and independently verifies:
+`build/tests/native-audio/native-audio.wav` with explicit 48 kHz, stereo,
+signed-16 host output settings and independently verifies:
 
 - 48,000 Hz, signed 16-bit, two-channel uncompressed PCM;
 - a bounded nonempty frame count and reported duration;

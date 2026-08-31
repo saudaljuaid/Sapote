@@ -35,7 +35,7 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	native-https
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 EXPECTED_TEST_SCENARIO_COUNT := 116
-EXPECTED_SHELL_ASSERTION_COUNT := 454
+EXPECTED_SHELL_ASSERTION_COUNT := 456
 
 CC := gcc
 LD := ld
@@ -2180,7 +2180,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 				audio_wav='$(abspath $(TEST_BUILD_DIR)/$*/native-audio.wav)'; rm -f "$$audio_wav"; audio_capture=false; \
 				if qemu-system-x86_64 -audiodev help 2>&1 | grep -Eq '(^|[[:space:]])wav([[:space:]]|$$)'; then \
 					audio_capture=true; \
-					audio_backend="-audiodev wav,id=wav0,path=$$audio_wav"; \
+					audio_backend="-audiodev wav,id=wav0,path=$$audio_wav,out.frequency=48000,out.channels=2,out.format=s16"; \
 				else audio_backend='-audiodev none,id=wav0'; fi; \
 				hardware="-boot order=d -blockdev driver=file,filename=$(AUDIO_SYSTEM_IMAGE),node-name=audio-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=audio-system-file,node-name=audio-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=audio-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=audio-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=audio-data-file,node-name=audio-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=audio-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -device ich9-intel-hda,id=hda -device hda-duplex,bus=hda.0,audiodev=wav0 $$audio_backend" ;; \
 			native-sdl) \
@@ -2189,7 +2189,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 				audio_wav='$(abspath $(TEST_BUILD_DIR)/$*/native-sdl.wav)'; rm -f "$$audio_wav"; audio_capture=false; \
 				if qemu-system-x86_64 -audiodev help 2>&1 | grep -Eq '(^|[[:space:]])wav([[:space:]]|$$)'; then \
 					audio_capture=true; \
-					audio_backend="-audiodev wav,id=wav0,path=$$audio_wav"; \
+					audio_backend="-audiodev wav,id=wav0,path=$$audio_wav,out.frequency=48000,out.channels=2,out.format=s16"; \
 				else audio_backend='-audiodev none,id=wav0'; fi; \
 			hardware="-boot order=d -blockdev driver=file,filename=$(SDL_PROOF_SYSTEM_IMAGE),node-name=sdl-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=sdl-system-file,node-name=sdl-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=sdl-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=sdl-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=sdl-data-file,node-name=sdl-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=sdl-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -device ich9-intel-hda,id=hda -device hda-duplex,bus=hda.0,audiodev=wav0 $$audio_backend" ;; \
 		native-dynamic) \
