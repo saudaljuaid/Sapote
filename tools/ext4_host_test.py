@@ -22,6 +22,33 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ext4_image as ext4  # noqa: E402
 
 
+def image_difference_summary(left: Path, right: Path) -> str:
+    """Render bounded byte/range evidence when reproducibility regresses."""
+    left_bytes = left.read_bytes()
+    right_bytes = right.read_bytes()
+    first: list[str] = []
+    ranges: list[list[int]] = []
+    different = 0
+    for offset, (left_byte, right_byte) in enumerate(zip(left_bytes, right_bytes)):
+        if left_byte == right_byte:
+            continue
+        different += 1
+        if len(first) < 64:
+            first.append(f"0x{offset:x}:{left_byte:02x}->{right_byte:02x}")
+        if not ranges or offset != ranges[-1][1] + 1:
+            if len(ranges) < 64:
+                ranges.append([offset, offset])
+        elif len(ranges) <= 64:
+            ranges[-1][1] = offset
+    if len(left_bytes) != len(right_bytes):
+        different += abs(len(left_bytes) - len(right_bytes))
+    rendered_ranges = ", ".join(
+        f"0x{start:x}-0x{end:x}" for start, end in ranges)
+    return (
+        f"different_bytes={different}; first={','.join(first)}; "
+        f"ranges={rendered_ranges}")
+
+
 def fake_profile_image() -> bytearray:
     data = bytearray(16 * ext4.BLOCK_BYTES)
     sb = 1024
@@ -148,7 +175,10 @@ class E2fsprogsIntegrationTests(unittest.TestCase):
             first_report = ext4.build_image(first)
             second_report = ext4.build_image(second)
 
-            self.assertTrue(filecmp.cmp(first, second, shallow=False), "two builds must be byte-identical")
+            if not filecmp.cmp(first, second, shallow=False):
+                self.fail(
+                    "two builds must be byte-identical: " +
+                    image_difference_summary(first, second))
             self.assertEqual(first_report["sha256"], second_report["sha256"])
             self.assertEqual(first_report["block_size"], 4096)
             self.assertEqual(first_report["large_sparse_bytes"], ext4.LARGE_SPARSE_BYTES)
