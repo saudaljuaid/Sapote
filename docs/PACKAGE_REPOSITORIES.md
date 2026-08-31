@@ -2,16 +2,17 @@
 
 # Signed package repositories
 
-`tools/sapote-repository.py` defines Sapote's deterministic host-side repository
-index and dependency-resolution foundation. It builds and verifies a canonical
-binary index, authenticates it against an external immutable Ed25519 root, checks
-freshness and repository-version floors, verifies downloaded package bytes, and
-emits an exact dependency-first install plan and lock representation.
+`tools/sapote-repository.py` defines Sapote's deterministic repository index and
+host lock format. It builds and verifies a canonical binary index, authenticates
+it against an external immutable Ed25519 root, checks freshness and
+repository-version floors, verifies downloaded package bytes, and emits an exact
+dependency-first install plan and lock representation.
 
-This is not guest package management. The kernel, guest service, package CLI,
-transactional filesystem update, and package-v3 admission path do not consume the
-index yet. The host tool establishes the bounded format and resolution behavior
-for that later integration.
+The guest parser/planner in `package_manager.c` now consumes the same canonical
+index and package-v3 metadata behind caller-supplied immutable-key and Ed25519
+callbacks. It is not yet connected to guest crypto, HTTPS fetch, staging,
+transaction commits, a package CLI, or Store. See
+[`PACKAGE_MANAGER.md`](PACKAGE_MANAGER.md) for that exact boundary.
 
 ## Repository index version 1
 

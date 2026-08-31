@@ -9,11 +9,11 @@ exercises staging, commit recovery, rollback, removal, dependency retention,
 integrity verification, and repair.
 
 The host tool remains format/reference groundwork and does not write a host
-System image or install a package into Sapote. The guest now has a privileged,
-VFS-backed recovery service for already staged generations. It deliberately does
-not authenticate downloads, stage an install, resolve dependencies, or expose a
-package CLI. Those operations still need to connect authenticated package-v3
-bytes and a signed repository lock to this transaction contract.
+System image or install a package into Sapote. The guest has a privileged,
+VFS-backed recovery service for already staged generations plus a bounded parser
+and dependency planner for signed repository/package bytes. No guest Ed25519
+provider, download path, generation builder, staging installer, or package CLI
+connects those two cores yet. See [`PACKAGE_MANAGER.md`](PACKAGE_MANAGER.md).
 
 ## Trust and namespace boundary
 

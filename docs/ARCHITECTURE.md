@@ -115,6 +115,17 @@ remains the writable backend. Ext4 mutations and sync return `EROFS` because no
 JBD2 writer or crash-recovery proof exists. The exact storage designs and limits
 are in [`FAT32.md`](FAT32.md) and [`EXT4.md`](EXT4.md).
 
+`package_manager.c` parses the canonical signed repository-index and package-v3
+formats and produces bounded deterministic install/remove plans against
+`package_state.c` installed databases. Its serialized graph workspace is kept
+off the 16 KiB syscall stack, and every trust decision is delegated to explicit
+immutable-key and Ed25519 callbacks that fail closed when unavailable. The
+existing VFS-backed `package_service.c` recovers already-staged package
+generations. These cores are not yet connected by guest crypto, download,
+staging, public `sap` commands, or Store UI; the current boundary is documented
+in [`PACKAGE_MANAGER.md`](PACKAGE_MANAGER.md) and
+[`PACKAGE_TRANSACTIONS.md`](PACKAGE_TRANSACTIONS.md).
+
 `nvidia.c` is fifteen bounded drivers for the register and configuration
 contracts an NVIDIA board publishes, written from envytools, Nouveau, Mesa/NVK
 and NVIDIA's own published material rather than from a datasheet that does not

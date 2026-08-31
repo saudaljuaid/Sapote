@@ -197,7 +197,10 @@ operation is explicitly refused. There is no checksum-as-signature or
 embedded-key fallback.
 
 The existing `install-system` command writes the legacy FAT32 System image and
-therefore refuses version 3 after authenticating it. Guest repository admission,
-dependency solving, transactional installation, and ELF shared-library loading
-must consume this format in later integration work; this host format alone does
-not claim those guest features.
+therefore refuses version 3 after authenticating it. The bounded guest
+`package_manager.c` parser now admits these bytes through caller-supplied trust
+callbacks and binds them to signed repository metadata; it does not yet have an
+in-kernel Ed25519 provider, extract files, commit an installed generation, or
+expose a package CLI. The ELF shared-library loader consumes the older installed
+System package/catalog profile independently. See
+[`PACKAGE_MANAGER.md`](PACKAGE_MANAGER.md).

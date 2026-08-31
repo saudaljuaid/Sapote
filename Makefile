@@ -77,6 +77,7 @@ WALL_CLOCK_HOST_TEST := $(TEST_BUILD_DIR)/wall-clock-host-test
 SDK_TIME_HOST_TEST := $(TEST_BUILD_DIR)/sdk-time-host-test
 PACKAGE_STATE_HOST_TEST := $(TEST_BUILD_DIR)/package-state-host-test
 PACKAGE_SERVICE_HOST_TEST := $(TEST_BUILD_DIR)/package-service-host-test
+PACKAGE_MANAGER_HOST_TEST := $(TEST_BUILD_DIR)/package-manager-host-test
 TLS_HOST_TEST := $(TEST_BUILD_DIR)/tls-client-host-test$(HOST_EXEEXT)
 TLS_HOST_OBJECT := $(TEST_BUILD_DIR)/tls-client.o
 TLS_HOST_WRAPPER_OBJECT := $(TEST_BUILD_DIR)/tls-wrapper.o
@@ -364,7 +365,7 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d) $(SDL2_OBJECTS:.o=.d)
 # They never create a file of their own name, so they rerun regardless.
 .PHONY: all audio-wav-tests capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios dynamic-elf-tests ext4-images ext4-tests fat32-images hooks https-tests \
 	iso kernel lint native-apps native-audio-proof native-dynamic-proof native-https-proof native-sdl-proof port-tests qemu-port-tests reproducible-sdk run \
-	package-repository-tests package-service-tests package-state-tests package-transaction-tests screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests zlib-tests
+	package-manager-tests package-repository-tests package-service-tests package-state-tests package-transaction-tests screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests zlib-tests
 
 all: kernel
 
@@ -1098,6 +1099,21 @@ $(PACKAGE_SERVICE_HOST_TEST): tools/package-service-host-test.c \
 package-service-tests: $(PACKAGE_SERVICE_HOST_TEST)
 	$(PACKAGE_SERVICE_HOST_TEST)
 
+$(PACKAGE_MANAGER_HOST_TEST): tools/package-manager-host-test.c \
+		src/kernel/package_manager.c src/kernel/package_state.c \
+		include/sapote/package_manager.h include/sapote/package_state.h
+	mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -Wshadow \
+		-Wundef -Wstrict-prototypes -Wmissing-prototypes -Iinclude \
+		tools/package-manager-host-test.c src/kernel/package_manager.c \
+		src/kernel/package_state.c -o $@
+
+package-manager-tests: $(PACKAGE_MANAGER_HOST_TEST) \
+		tools/package_manager_host_test.py tools/sapote-repository.py \
+		tools/sapote-package.py
+	SAPOTE_REQUIRE_ED25519=1 $(PYTHON) -u \
+		tools/package_manager_host_test.py $(PACKAGE_MANAGER_HOST_TEST)
+
 $(ZLIB_HOST_TEST): tools/zlib-host-test.c sdk/src/zlib.c \
 		sdk/include/sapote/zlib.h $(ZLIB_SOURCE) $(ZLIB_HEADERS)
 	mkdir -p $(dir $@)
@@ -1176,6 +1192,7 @@ verify: toolchain lint
 	$(MAKE) kernel
 	$(MAKE) wall-clock-tests ext4-tests package-repository-tests \
 		package-transaction-tests package-state-tests package-service-tests \
+		package-manager-tests \
 		dynamic-elf-tests \
 		https-tests tls-tests zlib-tests
 	$(PYTHON) tools/verify-ui-assets.py
