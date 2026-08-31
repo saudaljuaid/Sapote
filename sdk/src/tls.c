@@ -347,7 +347,7 @@ enum sapote_tls_status sapote_tls_client_close(
     status = client->status;
     if (client->connected) {
         client->deadline_ns = deadline_ns;
-        if (br_sslio_close(&client->io) != 0 && status == SAPOTE_TLS_OK) {
+        if (br_sslio_close(&client->io) == 0 && status == SAPOTE_TLS_OK) {
             status = SAPOTE_TLS_CLOSE;
         }
     }
