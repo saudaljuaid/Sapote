@@ -21,6 +21,7 @@ use super::descriptor_block::{DescriptorBlockTagIter, validate_descriptor_block_
 use super::revocation_block::{read_revocation_block_table, validate_revocation_block_checksum};
 use super::superblock::JournalSuperblock;
 use crate::checksum::Checksum;
+use crate::util::read_u32be;
 use crate::uuid::Uuid;
 use alloc::collections::VecDeque;
 use alloc::vec;
@@ -39,6 +40,24 @@ pub const JOURNAL_TRANSACTION_MAX_REVOKED_BLOCKS: usize = 64;
 
 /// The maximum clean-journal data slots admitted by the bounded ring planner.
 pub const JOURNAL_RING_MAX_SLOTS: usize = 8192;
+
+/// The byte size of the JBD2 superblock admitted by the public ring boundary.
+pub const JOURNAL_SUPERBLOCK_BYTES: usize = 1024;
+
+const JOURNAL_SUPERBLOCK_BLOCK_SIZE_OFFSET: usize = 0x0c;
+const JOURNAL_SUPERBLOCK_MAX_LENGTH_OFFSET: usize = 0x10;
+const JOURNAL_SUPERBLOCK_FIRST_BLOCK_OFFSET: usize = 0x14;
+const JOURNAL_SUPERBLOCK_SEQUENCE_OFFSET: usize = 0x18;
+const JOURNAL_SUPERBLOCK_START_BLOCK_OFFSET: usize = 0x1c;
+const JOURNAL_SUPERBLOCK_FEATURE_INCOMPAT_OFFSET: usize = 0x28;
+const JOURNAL_SUPERBLOCK_UUID_OFFSET: usize = 0x30;
+const JOURNAL_SUPERBLOCK_USER_COUNT_OFFSET: usize = 0x40;
+const JOURNAL_SUPERBLOCK_CHECKSUM_TYPE_OFFSET: usize = 0x50;
+const JOURNAL_SUPERBLOCK_CHECKSUM_OFFSET: usize = 0xfc;
+const JOURNAL_FEATURE_BLOCK_REVOCATIONS: u32 = 0x1;
+const JOURNAL_FEATURE_64_BIT: u32 = 0x2;
+const JOURNAL_FEATURE_CHECKSUM_V3: u32 = 0x10;
+const JOURNAL_CHECKSUM_TYPE_CRC32C: u8 = 4;
 
 /// A checked block image owned by a transaction or replay result.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -138,6 +157,12 @@ pub enum JournalTransactionError {
     CorruptCommit,
     /// A revocation header, table, sequence, or checksum is invalid.
     CorruptRevocation,
+    /// A journal superblock header, feature set, or checksum is invalid.
+    CorruptSuperblock,
+    /// A clean-only operation was requested for a live journal.
+    JournalNotClean,
+    /// A transaction requested revokes without the journal feature bit.
+    RevocationsUnsupported,
     /// The clean-journal ring geometry is too small, too large, or malformed.
     RingGeometry,
     /// The ring has insufficient uncheckpointed space for a transaction.
@@ -171,6 +196,9 @@ impl Display for JournalTransactionError {
             Self::MissingCommit => "durable journal commit is missing",
             Self::CorruptCommit => "journal commit is corrupt",
             Self::CorruptRevocation => "journal revocation record is corrupt",
+            Self::CorruptSuperblock => "journal superblock is corrupt or incompatible",
+            Self::JournalNotClean => "journal contains a live transaction",
+            Self::RevocationsUnsupported => "journal does not advertise block revocations",
             Self::RingGeometry => "journal ring geometry is invalid",
             Self::RingFull => "journal ring has insufficient free slots",
             Self::RingTransactionMismatch => "journal transaction does not match the ring",
@@ -180,6 +208,200 @@ impl Display for JournalTransactionError {
             Self::ReservationOverflow => "journal reservation ticket would overflow",
         };
         formatter.write_str(message)
+    }
+}
+
+/// A checksum-validated JBD2 superblock for Sapote's bounded 4 KiB profile.
+///
+/// The image preserves every admitted byte when its sequence/start state is
+/// changed. Sapote admits logical journal data beginning at block one; callers
+/// must supply the complete physical journal-inode map, including logical block
+/// zero, before a clean ring can be constructed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JournalSuperblockImage {
+    bytes: Vec<u8>,
+    maximum_length: u32,
+    sequence: u32,
+    start_block: u32,
+    uuid: Uuid,
+    block_revocations: bool,
+}
+
+impl JournalSuperblockImage {
+    /// Build a canonical clean JBD2 superblock for deterministic image tooling.
+    pub fn new_clean(
+        next_sequence: u32,
+        journal_uuid: [u8; 16],
+        maximum_length: u32,
+    ) -> Result<Self, JournalTransactionError> {
+        if next_sequence == u32::MAX {
+            return Err(JournalTransactionError::SequenceOverflow);
+        }
+        let data_slots = maximum_length
+            .checked_sub(1)
+            .ok_or(JournalTransactionError::RingGeometry)?;
+        if data_slots < 3
+            || usize::try_from(data_slots).map_err(|_| JournalTransactionError::RingGeometry)?
+                > JOURNAL_RING_MAX_SLOTS
+        {
+            return Err(JournalTransactionError::RingGeometry);
+        }
+        let mut bytes = vec![0; JOURNAL_SUPERBLOCK_BYTES];
+        write_u32be(&mut bytes, 0, JournalBlockHeader::MAGIC);
+        write_u32be(&mut bytes, 4, JournalBlockType::SUPERBLOCK_V2.0);
+        write_u32be(
+            &mut bytes,
+            JOURNAL_SUPERBLOCK_BLOCK_SIZE_OFFSET,
+            u32::try_from(JOURNAL_BLOCK_BYTES).expect("4096 fits u32"),
+        );
+        write_u32be(
+            &mut bytes,
+            JOURNAL_SUPERBLOCK_MAX_LENGTH_OFFSET,
+            maximum_length,
+        );
+        write_u32be(&mut bytes, JOURNAL_SUPERBLOCK_FIRST_BLOCK_OFFSET, 1);
+        write_u32be(
+            &mut bytes,
+            JOURNAL_SUPERBLOCK_SEQUENCE_OFFSET,
+            next_sequence,
+        );
+        write_u32be(
+            &mut bytes,
+            JOURNAL_SUPERBLOCK_FEATURE_INCOMPAT_OFFSET,
+            JOURNAL_FEATURE_BLOCK_REVOCATIONS
+                | JOURNAL_FEATURE_64_BIT
+                | JOURNAL_FEATURE_CHECKSUM_V3,
+        );
+        bytes[JOURNAL_SUPERBLOCK_UUID_OFFSET..JOURNAL_SUPERBLOCK_UUID_OFFSET + 16]
+            .copy_from_slice(&journal_uuid);
+        write_u32be(&mut bytes, JOURNAL_SUPERBLOCK_USER_COUNT_OFFSET, 1);
+        bytes[JOURNAL_SUPERBLOCK_CHECKSUM_TYPE_OFFSET] = JOURNAL_CHECKSUM_TYPE_CRC32C;
+        update_journal_superblock_checksum(&mut bytes);
+        Self::from_bytes(&bytes)
+    }
+
+    /// Parse and validate one complete JBD2 superblock image.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, JournalTransactionError> {
+        if bytes.len() != JOURNAL_SUPERBLOCK_BYTES {
+            return Err(JournalTransactionError::CorruptSuperblock);
+        }
+        let superblock = JournalSuperblock::read_bytes(bytes)
+            .map_err(|_| JournalTransactionError::CorruptSuperblock)?;
+        let maximum_length = read_u32be(bytes, JOURNAL_SUPERBLOCK_MAX_LENGTH_OFFSET);
+        let first_block = read_u32be(bytes, JOURNAL_SUPERBLOCK_FIRST_BLOCK_OFFSET);
+        let sequence = read_u32be(bytes, JOURNAL_SUPERBLOCK_SEQUENCE_OFFSET);
+        let start_block = read_u32be(bytes, JOURNAL_SUPERBLOCK_START_BLOCK_OFFSET);
+        let incompat = read_u32be(bytes, JOURNAL_SUPERBLOCK_FEATURE_INCOMPAT_OFFSET);
+        let data_slots = maximum_length
+            .checked_sub(first_block)
+            .ok_or(JournalTransactionError::RingGeometry)?;
+        if superblock.block_size != u32::try_from(JOURNAL_BLOCK_BYTES).expect("4096 fits u32")
+            || first_block != 1
+            || data_slots < 3
+            || usize::try_from(data_slots).map_err(|_| JournalTransactionError::RingGeometry)?
+                > JOURNAL_RING_MAX_SLOTS
+            || (start_block != 0 && (start_block < first_block || start_block >= maximum_length))
+        {
+            return Err(JournalTransactionError::RingGeometry);
+        }
+        if sequence == u32::MAX {
+            return Err(JournalTransactionError::SequenceOverflow);
+        }
+        Ok(Self {
+            bytes: Vec::from(bytes),
+            maximum_length,
+            sequence,
+            start_block,
+            uuid: Uuid::new(*superblock.uuid.as_bytes()),
+            block_revocations: incompat & JOURNAL_FEATURE_BLOCK_REVOCATIONS != 0,
+        })
+    }
+
+    /// Return the exact 1,024-byte checksummed image.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Return the journal inode length in logical blocks, including block zero.
+    #[must_use]
+    pub fn maximum_length(&self) -> u32 {
+        self.maximum_length
+    }
+
+    /// Return the oldest sequence to replay or the next sequence when clean.
+    #[must_use]
+    pub fn sequence(&self) -> u32 {
+        self.sequence
+    }
+
+    /// Return the oldest live logical journal block, or zero when clean.
+    #[must_use]
+    pub fn start_block(&self) -> u32 {
+        self.start_block
+    }
+
+    /// Return whether the journal advertises block-revocation records.
+    #[must_use]
+    pub fn block_revocations(&self) -> bool {
+        self.block_revocations
+    }
+
+    /// Produce a checksummed state image while preserving all other fields.
+    pub fn with_state(
+        &self,
+        sequence: u32,
+        start_block: u32,
+    ) -> Result<Self, JournalTransactionError> {
+        if sequence == u32::MAX {
+            return Err(JournalTransactionError::SequenceOverflow);
+        }
+        if start_block != 0 && (start_block < 1 || start_block >= self.maximum_length) {
+            return Err(JournalTransactionError::RingGeometry);
+        }
+        let mut bytes = self.bytes.clone();
+        write_u32be(&mut bytes, JOURNAL_SUPERBLOCK_SEQUENCE_OFFSET, sequence);
+        write_u32be(
+            &mut bytes,
+            JOURNAL_SUPERBLOCK_START_BLOCK_OFFSET,
+            start_block,
+        );
+        update_journal_superblock_checksum(&mut bytes);
+        Self::from_bytes(&bytes)
+    }
+
+    /// Map a complete, distinct journal inode into an empty ring.
+    pub fn map_clean_ring(
+        &self,
+        maximum_block: u64,
+        physical_journal_blocks: &[u64],
+    ) -> Result<JournalRing, JournalTransactionError> {
+        if self.start_block != 0 {
+            return Err(JournalTransactionError::JournalNotClean);
+        }
+        let maximum_length = usize::try_from(self.maximum_length)
+            .map_err(|_| JournalTransactionError::RingGeometry)?;
+        if physical_journal_blocks.len() != maximum_length
+            || physical_journal_blocks
+                .iter()
+                .any(|block| *block > maximum_block)
+        {
+            return Err(JournalTransactionError::RingGeometry);
+        }
+        let mut sorted = Vec::from(physical_journal_blocks);
+        sorted.sort_unstable();
+        if sorted.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(JournalTransactionError::RingGeometry);
+        }
+        let mut ring = JournalRing::new_clean(
+            self.sequence,
+            *self.uuid.as_bytes(),
+            maximum_block,
+            self.block_revocations,
+            &physical_journal_blocks[1..],
+        )?;
+        ring.superblock_block = Some(physical_journal_blocks[0]);
+        Ok(ring)
     }
 }
 
@@ -541,6 +763,8 @@ impl JournalPreparedTransaction {
 pub struct JournalRing {
     uuid: Uuid,
     maximum_block: u64,
+    block_revocations: bool,
+    superblock_block: Option<u64>,
     slots: Vec<u64>,
     head: usize,
     tail: usize,
@@ -556,6 +780,7 @@ impl JournalRing {
         next_sequence: u32,
         journal_uuid: [u8; 16],
         maximum_block: u64,
+        block_revocations: bool,
         journal_slots: &[u64],
     ) -> Result<Self, JournalTransactionError> {
         if next_sequence == u32::MAX {
@@ -575,6 +800,8 @@ impl JournalRing {
         Ok(Self {
             uuid: Uuid::new(journal_uuid),
             maximum_block,
+            block_revocations,
+            superblock_block: None,
             slots: Vec::from(journal_slots),
             head: 0,
             tail: 0,
@@ -604,6 +831,19 @@ impl JournalRing {
             || transaction.maximum_block != self.maximum_block
         {
             return Err(JournalTransactionError::RingTransactionMismatch);
+        }
+        if !self.block_revocations && !transaction.revoked_blocks.is_empty() {
+            return Err(JournalTransactionError::RevocationsUnsupported);
+        }
+        if self.superblock_block.is_some_and(|superblock_block| {
+            transaction
+                .ordered_data
+                .iter()
+                .chain(transaction.metadata.iter())
+                .any(|image| image.block_index == superblock_block)
+                || transaction.revoked_blocks.contains(&superblock_block)
+        }) {
+            return Err(JournalTransactionError::JournalSlotOverlap);
         }
         let required = transaction.required_journal_slots()?;
         let free = self
@@ -880,6 +1120,17 @@ fn write_u32be(bytes: &mut [u8], offset: usize, value: u32) {
     bytes[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
 }
 
+fn update_journal_superblock_checksum(bytes: &mut [u8]) {
+    write_u32be(bytes, JOURNAL_SUPERBLOCK_CHECKSUM_OFFSET, 0);
+    let mut checksum = Checksum::new();
+    checksum.update(bytes);
+    write_u32be(
+        bytes,
+        JOURNAL_SUPERBLOCK_CHECKSUM_OFFSET,
+        checksum.finalize(),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1106,7 +1357,7 @@ mod tests {
     #[test]
     fn clean_ring_wraps_and_reclaims_only_after_checkpoint() {
         let slots = [3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007];
-        let mut ring = JournalRing::new_clean(40, UUID, MAXIMUM_BLOCK, &slots).unwrap();
+        let mut ring = JournalRing::new_clean(40, UUID, MAXIMUM_BLOCK, true, &slots).unwrap();
 
         let mut first = ring.begin_transaction().unwrap();
         first.stage_metadata(100, &filled(1)).unwrap();
@@ -1135,7 +1386,7 @@ mod tests {
     #[test]
     fn ring_refuses_reuse_and_out_of_order_transitions() {
         let slots = [3000, 3001, 3002, 3003, 3004, 3005];
-        let mut ring = JournalRing::new_clean(50, UUID, MAXIMUM_BLOCK, &slots).unwrap();
+        let mut ring = JournalRing::new_clean(50, UUID, MAXIMUM_BLOCK, true, &slots).unwrap();
         let mut first = ring.begin_transaction().unwrap();
         first.stage_metadata(100, &filled(1)).unwrap();
         let first = ring.prepare(&first).unwrap();
@@ -1238,17 +1489,23 @@ mod tests {
             transaction.stage_revocation(MAXIMUM_BLOCK + 1),
             Err(JournalTransactionError::BlockOutOfRange)
         );
+        let mut no_revocations =
+            JournalRing::new_clean(9, UUID, MAXIMUM_BLOCK, false, &[100, 101, 102, 103]).unwrap();
+        assert_eq!(
+            no_revocations.prepare(&transaction),
+            Err(JournalTransactionError::RevocationsUnsupported)
+        );
 
         assert_eq!(
-            JournalRing::new_clean(1, UUID, MAXIMUM_BLOCK, &[1, 2]),
+            JournalRing::new_clean(1, UUID, MAXIMUM_BLOCK, true, &[1, 2]),
             Err(JournalTransactionError::RingGeometry)
         );
         assert_eq!(
-            JournalRing::new_clean(1, UUID, MAXIMUM_BLOCK, &[1, 2, 2]),
+            JournalRing::new_clean(1, UUID, MAXIMUM_BLOCK, true, &[1, 2, 2]),
             Err(JournalTransactionError::RingGeometry)
         );
         assert_eq!(
-            JournalRing::new_clean(u32::MAX, UUID, MAXIMUM_BLOCK, &[3000, 3001, 3002]),
+            JournalRing::new_clean(u32::MAX, UUID, MAXIMUM_BLOCK, true, &[3000, 3001, 3002]),
             Err(JournalTransactionError::SequenceOverflow)
         );
 

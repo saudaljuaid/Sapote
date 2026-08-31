@@ -98,6 +98,16 @@ aborted without leaving a sequence gap. Public tests cover wrap, full-ring
 refusal, early/out-of-order reclamation refusal, abort, revoke corruption, and
 replay suppression.
 
+`JournalSuperblockImage` closes the next hostile-input boundary. It validates
+the exact 1,024-byte JBD2 v2 superblock header, checksum-v3/64-bit feature set,
+CRC32C checksum, 4 KiB block size, sequence, clean/live start, and a bounded
+logical journal length. Deterministic tooling can build the canonical clean
+image or derive checksummed clean/live sequence-and-start images without
+changing other admitted bytes. Clean admission requires a complete, distinct,
+in-range physical map of the journal inode (including its superblock), and the
+mapped ring refuses home metadata that aliases that superblock or revoke records
+when the corresponding incompatible-feature bit is absent.
+
 The caller must supply a distinct physical journal block for the descriptor,
 each metadata image, and the commit. The resulting operation list has one legal
 order:
@@ -126,10 +136,11 @@ only the committed Cargo source mirror.
 
 Sapote's NVMe layer already exposes the required `nvme_volume_flush()` fence,
 but the ext4 backend deliberately does not bind the plan to it yet. The ring
-planner operates on an already-admitted clean journal; it does not read or
-update the journal superblock or discover/recover a live head and tail. The
-remaining work is not a small wrapper: it needs journal-inode mapping and live
-superblock state, binding operations and barriers to the platform writer,
+planner operates only on an already-admitted clean journal. It can validate a
+caller-supplied journal-inode map and construct superblock state images, but it
+does not discover that map from extents, recover a non-empty head/tail, or issue
+the state writes. The remaining work is not a small wrapper: it needs live-ring
+recovery, binding operations and barriers to the platform writer,
 redirecting ext4plus mutations away from immediate home writes, allocation
 rollback, a writable Rust/C volume lease, VFS-level mutation/handle coherency,
 and power-cut QEMU coverage. Until all of those are integrated,

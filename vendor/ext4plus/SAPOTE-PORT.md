@@ -29,8 +29,15 @@ reservation without leaving a sequence gap. Replay and public tests cover
 corruption, every power-cut prefix, revocation suppression, wrap, exhaustion,
 abort, and out-of-order reclamation.
 
-This planner does not map the journal inode, read or update the live journal
-superblock, recover a non-empty ring head/tail, bind a barrier to platform I/O,
+`JournalSuperblockImage` validates and preserves the exact JBD2 v2 superblock,
+admits Sapote's 4 KiB/checksum-v3/64-bit profile, emits checksummed clean/live
+sequence-and-start images, and maps a complete clean journal-inode block list
+into the ring. The mapping is bounded, distinct, in-range, and includes the
+physical superblock in alias checks. Ring preparation also refuses revokes when
+the admitted superblock does not advertise block revocations.
+
+This planner does not discover the journal inode's extents, issue superblock
+writes, recover a non-empty ring head/tail, bind a barrier to platform I/O,
 or redirect ext4 mutation methods away from their upstream home-block writes.
 Those gaps keep the Sapote backend read-only.
 

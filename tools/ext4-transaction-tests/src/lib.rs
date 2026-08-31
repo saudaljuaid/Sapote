@@ -3,7 +3,8 @@
 
 use ext4plus::{
     JOURNAL_BLOCK_BYTES, JournalCommitOperation, JournalFlush, JournalRecordKind, JournalRing,
-    JournalTransaction, JournalTransactionError, replay_committed_transaction,
+    JournalSuperblockImage, JournalTransaction, JournalTransactionError,
+    replay_committed_transaction,
 };
 use std::collections::BTreeMap;
 
@@ -171,7 +172,7 @@ fn revocation_records_are_checksummed_and_suppress_stale_images() {
 #[test]
 fn clean_ring_wraps_and_refuses_early_reclamation() {
     let slots = [3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007];
-    let mut ring = JournalRing::new_clean(40, UUID, MAXIMUM_BLOCK, &slots).unwrap();
+    let mut ring = JournalRing::new_clean(40, UUID, MAXIMUM_BLOCK, true, &slots).unwrap();
     let mut first = ring.begin_transaction().unwrap();
     first.stage_metadata(100, &filled(1)).unwrap();
     let first = ring.prepare(&first).unwrap();
@@ -202,6 +203,61 @@ fn clean_ring_wraps_and_refuses_early_reclamation() {
 }
 
 #[test]
+fn superblock_images_admit_only_a_complete_clean_inode_map() {
+    let superblock = JournalSuperblockImage::new_clean(70, UUID, 9).unwrap();
+    assert_eq!(superblock.maximum_length(), 9);
+    assert_eq!(superblock.sequence(), 70);
+    assert_eq!(superblock.start_block(), 0);
+    assert!(superblock.block_revocations());
+    assert_eq!(
+        JournalSuperblockImage::from_bytes(superblock.bytes()).unwrap(),
+        superblock
+    );
+
+    let physical = [3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008];
+    let mut ring = superblock.map_clean_ring(MAXIMUM_BLOCK, &physical).unwrap();
+    let mut transaction = ring.begin_transaction().unwrap();
+    transaction.stage_metadata(100, &filled(1)).unwrap();
+    let prepared = ring.prepare(&transaction).unwrap();
+    assert_eq!(prepared.journal_blocks(), &[3001, 3002, 3003]);
+    ring.abort_precommit(prepared.ticket()).unwrap();
+
+    let mut overlaps_superblock = ring.begin_transaction().unwrap();
+    overlaps_superblock
+        .stage_metadata(physical[0], &filled(2))
+        .unwrap();
+    assert_eq!(
+        ring.prepare(&overlaps_superblock),
+        Err(JournalTransactionError::JournalSlotOverlap)
+    );
+
+    let dirty = superblock.with_state(70, 1).unwrap();
+    assert_eq!(dirty.start_block(), 1);
+    assert_eq!(
+        dirty.map_clean_ring(MAXIMUM_BLOCK, &physical),
+        Err(JournalTransactionError::JournalNotClean)
+    );
+    let clean = dirty.with_state(71, 0).unwrap();
+    assert_eq!(clean.sequence(), 71);
+    assert_eq!(clean.start_block(), 0);
+
+    let mut corrupt = Vec::from(clean.bytes());
+    corrupt[128] ^= 0x80;
+    assert_eq!(
+        JournalSuperblockImage::from_bytes(&corrupt),
+        Err(JournalTransactionError::CorruptSuperblock)
+    );
+    assert_eq!(
+        clean.with_state(71, 9),
+        Err(JournalTransactionError::RingGeometry)
+    );
+    assert_eq!(
+        clean.map_clean_ring(MAXIMUM_BLOCK, &physical[..8]),
+        Err(JournalTransactionError::RingGeometry)
+    );
+}
+
+#[test]
 fn hostile_geometry_duplicates_escape_and_slot_overlap_are_refused() {
     let mut transaction = JournalTransaction::new(9, UUID, MAXIMUM_BLOCK).unwrap();
     assert_eq!(
@@ -222,5 +278,12 @@ fn hostile_geometry_duplicates_escape_and_slot_overlap_are_refused() {
     assert_eq!(
         transaction.commit_plan(&[2, 101, 102]),
         Err(JournalTransactionError::JournalSlotOverlap)
+    );
+    transaction.stage_revocation(4).unwrap();
+    let mut ring =
+        JournalRing::new_clean(9, UUID, MAXIMUM_BLOCK, false, &[100, 101, 102, 103]).unwrap();
+    assert_eq!(
+        ring.prepare(&transaction),
+        Err(JournalTransactionError::RevocationsUnsupported)
     );
 }

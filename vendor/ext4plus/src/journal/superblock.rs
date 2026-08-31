@@ -101,7 +101,7 @@ impl JournalSuperblock {
     /// * The superblock type is unsupported.
     /// * The checksum type is unsupported.
     /// * The superblock's checksum is incorrect.
-    fn read_bytes(bytes: &[u8]) -> Result<Self, Ext4Error> {
+    pub(super) fn read_bytes(bytes: &[u8]) -> Result<Self, Ext4Error> {
         assert_eq!(bytes.len(), SUPERBLOCK_SIZE);
 
         let header = JournalBlockHeader::read_bytes(bytes)
