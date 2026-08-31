@@ -768,7 +768,7 @@ toolchain:
 		{ echo 'run: rustup target add $(RUST_TARGET)'; exit 1; }
 
 lint:
-	@if git grep -nI -E '[[:blank:]]+$$' -- . ':!assets/*'; then \
+	@if git grep -nI -E '[[:blank:]]+$$' -- . ':!assets/*' ':!vendor/*'; then \
 		echo "trailing whitespace is forbidden"; exit 1; \
 	fi
 
