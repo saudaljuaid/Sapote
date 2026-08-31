@@ -120,6 +120,12 @@ class SuperblockTests(unittest.TestCase):
 
 
 class ToolDiscoveryTests(unittest.TestCase):
+    def test_tool_environment_pins_mkfs_debugfs_and_e2fsck_time(self) -> None:
+        environment = ext4._tool_env()
+        self.assertEqual(environment["SOURCE_DATE_EPOCH"], str(ext4.FIXED_EPOCH))
+        self.assertEqual(environment["E2FSPROGS_FAKE_TIME"], str(ext4.FIXED_EPOCH))
+        self.assertEqual(environment["E2FSCK_TIME"], str(ext4.FIXED_EPOCH))
+
     def test_missing_tool_names_e2fsprogs_and_linux_install_command(self) -> None:
         with mock.patch.object(ext4.shutil, "which", return_value=None):
             with self.assertRaisesRegex(

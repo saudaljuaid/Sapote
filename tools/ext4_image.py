@@ -246,6 +246,7 @@ def _tool_env() -> dict[str, str]:
     env = os.environ.copy()
     env.update(
         {
+            "E2FSCK_TIME": str(FIXED_EPOCH),
             "E2FSPROGS_FAKE_TIME": str(FIXED_EPOCH),
             "SOURCE_DATE_EPOCH": str(FIXED_EPOCH),
             "TZ": "UTC",
