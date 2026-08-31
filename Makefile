@@ -225,6 +225,18 @@ ZLIB_CFLAGS := --target=x86_64-unknown-none-elf -Isdk/include -Iinclude \
 	-mcmodel=large -mno-red-zone -fno-builtin -ffunction-sections \
 	-fdata-sections -Wall -Wextra -Werror -Wpedantic -Wshadow -Wundef \
 	-Wstrict-prototypes -Wmissing-prototypes
+include ports/sdl2/sources.mk
+SDL2_OBJECT_DIR := $(SDK_BUILD_DIR)/sdl2
+SDL2_OBJECTS := $(patsubst vendor/sdl2/src/%.c,\
+	$(SDL2_OBJECT_DIR)/%.o,$(SDL2_SOURCES))
+SDL2_LIB := $(SDK_BUILD_DIR)/lib/libSDL2.a
+SDL2_PUBLIC_HEADERS := $(wildcard vendor/sdl2/include/*.h)
+SDL2_CFLAGS := --target=x86_64-unknown-none-elf -D__SAPOTE__=1 \
+	-DSDL_DYNAMIC_API=0 \
+	-Ivendor/sdl2/include -Isdk/include -Iinclude -std=c11 -O2 -g \
+	-ffreestanding -fno-pie -fno-stack-protector -mcmodel=large \
+	-mno-red-zone -fno-builtin -ffunction-sections -fdata-sections \
+	-ftls-model=local-exec -Wall -Wextra -Werror
 SDK_LDFLAGS := -nostdlib -static --gc-sections --build-id=none \
 	-z max-page-size=0x1000 -z noexecstack --fatal-warnings \
 	--orphan-handling=error -T sdk/linker.ld
@@ -318,7 +330,7 @@ OBJECTS := $(ASM_OBJECTS) $(C_OBJECTS)
 RUSTFLAGS := -C panic=abort -C relocation-model=static \
 	-C llvm-args=-max-store-memcpy=1024 \
 	-C llvm-args=-max-store-memset=1024
-DEPENDENCIES := $(C_OBJECTS:.o=.d)
+DEPENDENCIES := $(C_OBJECTS:.o=.d) $(SDL2_OBJECTS:.o=.d)
 
 # The qemu-test-% scenarios are deliberately absent from .PHONY. GNU Make skips
 # implicit and pattern rule search for a phony target, so declaring them phony
@@ -351,6 +363,11 @@ $(ZLIB_OBJECT_DIR)/%.o: vendor/zlib/src/%.c $(ZLIB_HEADERS)
 	mkdir -p $(dir $@)
 	$(SDK_CC) $(ZLIB_CFLAGS) -c $< -o $@
 
+$(SDL2_OBJECT_DIR)/%.o: vendor/sdl2/src/%.c $(SDL2_PUBLIC_HEADERS) \
+		vendor/sdl2/include/SDL_config_sapote.h
+	mkdir -p $(dir $@)
+	$(SDK_CC) $(SDL2_CFLAGS) -MMD -MP -c $< -o $@
+
 $(TEST_BUILD_DIR)/bearssl/%.o: vendor/bearssl/src/%.c
 	mkdir -p $(dir $@)
 	$(CC) -Ivendor/bearssl/inc -Ivendor/bearssl/src -std=c11 -O2 \
@@ -375,15 +392,21 @@ $(BEARSSL_LIB): $(BEARSSL_OBJECTS) | $(SDK_BUILD_DIR)/lib
 $(ZLIB_LIB): $(ZLIB_OBJECTS) | $(SDK_BUILD_DIR)/lib
 	$(SDK_AR) rcsD $@ $(ZLIB_OBJECTS)
 
-$(SDK_BUILD_DIR)/.installed: Makefile $(SDK_LIB) $(BEARSSL_LIB) $(ZLIB_LIB) $(SDK_CRT) \
+$(SDL2_LIB): $(SDL2_OBJECTS) | $(SDK_BUILD_DIR)/lib
+	$(SDK_AR) rcsD $@ $(SDL2_OBJECTS)
+
+$(SDK_BUILD_DIR)/.installed: Makefile $(SDK_LIB) $(BEARSSL_LIB) $(ZLIB_LIB) \
+		$(SDL2_LIB) $(SDK_CRT) \
 		sdk/linker.ld \
 		sdk/bin/sapote-cc $(wildcard sdk/include/*.h) \
 		$(wildcard sdk/include/sapote/*.h) $(wildcard sdk/include/sys/*.h) \
 		$(wildcard vendor/bearssl/inc/*.h) \
 		$(wildcard vendor/zlib/include/*.h) \
+		$(SDL2_PUBLIC_HEADERS) \
 		$(wildcard include/sapote/abi/*.h) \
 		include/sapote/abi.h | $(SDK_BUILD_DIR)/include $(SDK_BUILD_DIR)/bin
-	mkdir -p $(SDK_BUILD_DIR)/include/sapote/abi $(SDK_BUILD_DIR)/include/sys
+	mkdir -p $(SDK_BUILD_DIR)/include/sapote/abi $(SDK_BUILD_DIR)/include/sys \
+		$(SDK_BUILD_DIR)/include/SDL2
 	cp sdk/include/*.h $(SDK_BUILD_DIR)/include/
 	cp sdk/include/sapote/*.h $(SDK_BUILD_DIR)/include/sapote/
 	cp sdk/include/sys/*.h $(SDK_BUILD_DIR)/include/sys/
@@ -391,6 +414,7 @@ $(SDK_BUILD_DIR)/.installed: Makefile $(SDK_LIB) $(BEARSSL_LIB) $(ZLIB_LIB) $(SD
 	cp include/sapote/abi/*.h $(SDK_BUILD_DIR)/include/sapote/abi/
 	cp vendor/bearssl/inc/*.h $(SDK_BUILD_DIR)/include/
 	cp vendor/zlib/include/*.h $(SDK_BUILD_DIR)/include/
+	cp vendor/sdl2/include/*.h $(SDK_BUILD_DIR)/include/SDL2/
 	cp sdk/linker.ld $(SDK_BUILD_DIR)/linker.ld
 	cp sdk/bin/sapote-cc $(SDK_BUILD_DIR)/bin/sapote-cc
 	touch $@

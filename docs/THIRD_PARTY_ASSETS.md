@@ -59,6 +59,21 @@ the allocation-backed `compress*` convenience API are deliberately excluded.
 contract. The reproducible SDK installs this profile as the static `libz.a`;
 there is not yet a shared-library ABI or dynamic-code-sharing claim.
 
+## SDL 2
+
+The multimedia compatibility layer is the official SDL 2.32.10 source from
+[`libsdl-org/SDL`](https://github.com/libsdl-org/SDL) at commit
+`5d249570393f7a37e037abf22cd6012a4cc56a71` (tag `release-2.32.10`). The
+retained `include/` and `src/` trees and upstream zlib license are committed
+under `vendor/sdl2/`; exact retained-tree and license hashes are recorded in
+`vendor/sdl2/UPSTREAM-COMMIT.txt`.
+
+Sapote adds an explicitly selected `__SAPOTE__` configuration and native
+Redwood video/input, PCM audio, pthread/futex, timer, and preference-filesystem
+backends. Disabled subsystems and the evidence boundary are recorded in
+`vendor/sdl2/SAPOTE-PORT.md` and `docs/SDL.md`. No Linux compatibility layer or
+SDL dummy video/audio backend is used.
+
 ## Inter
 
 The graphical shell uses `InterVariable.ttf` from the official Inter repository

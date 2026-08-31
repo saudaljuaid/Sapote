@@ -68,6 +68,7 @@ what order, so nothing boots blind.
 - [Processes](docs/MULTIPROCESS.md)
 - [Drivers](docs/DRIVERS.md)
 - [HD Audio](docs/AUDIO.md)
+- [SDL 2](docs/SDL.md)
 - [NVIDIA](docs/NVIDIA.md)
 - [Linux syscall boundary](docs/LINUX_SYSCALL_ABI.md)
 - [Rust boundary](docs/RUST.md)
