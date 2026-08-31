@@ -232,7 +232,6 @@ SDL2_OBJECTS := $(patsubst vendor/sdl2/src/%.c,\
 SDL2_LIB := $(SDK_BUILD_DIR)/lib/libSDL2.a
 SDL2_PUBLIC_HEADERS := $(wildcard vendor/sdl2/include/*.h)
 SDL2_CFLAGS := --target=x86_64-unknown-none-elf -D__SAPOTE__=1 \
-	-DSDL_DYNAMIC_API=0 \
 	-Ivendor/sdl2/include -Isdk/include -Iinclude -std=c11 -O2 -g \
 	-ffreestanding -fno-pie -fno-stack-protector -mcmodel=large \
 	-mno-red-zone -fno-builtin -ffunction-sections -fdata-sections \
@@ -275,6 +274,11 @@ AUDIO_PACKAGE := $(AUDIO_APP_DIR)/AUDIO.SPK
 AUDIO_REFUSAL_PACKAGE := $(AUDIO_APP_DIR)/AUDIONO.SPK
 AUDIO_SYSTEM_IMAGE := $(AUDIO_APP_DIR)/system.raw
 AUDIO_DATA_IMAGE := $(AUDIO_APP_DIR)/data.raw
+SDL_PROOF_DIR := $(BUILD_DIR)/native-sdl
+SDL_PROOF_APP := $(SDL_PROOF_DIR)/SDL.APP
+SDL_PROOF_PACKAGE := $(SDL_PROOF_DIR)/SDLPROOF.SPK
+SDL_PROOF_SYSTEM_IMAGE := $(SDL_PROOF_DIR)/system.raw
+SDL_PROOF_DATA_IMAGE := $(SDL_PROOF_DIR)/data.raw
 RUST_APP_DIR := $(BUILD_DIR)/native-rust
 RUST_APP_CARGO_TARGET := $(RUST_APP_DIR)/cargo
 RUST_APP_SOURCE := $(RUST_APP_CARGO_TARGET)/x86_64-unknown-none/release/sapote-native-rust-proof
@@ -337,7 +341,7 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d) $(SDL2_OBJECTS:.o=.d)
 # makes every scenario resolve to "nothing to be done" and pass without booting.
 # They never create a file of their own name, so they rerun regardless.
 .PHONY: all audio-wav-tests capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios dynamic-elf-tests ext4-images ext4-tests fat32-images hooks \
-	iso kernel lint native-apps native-audio-proof port-tests qemu-port-tests reproducible-sdk run \
+	iso kernel lint native-apps native-audio-proof native-sdl-proof port-tests qemu-port-tests reproducible-sdk run \
 	package-repository-tests package-service-tests package-state-tests package-transaction-tests screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests zlib-tests
 
 all: kernel
@@ -446,6 +450,9 @@ $(NETAPP_DIR):
 	mkdir -p $@
 
 $(AUDIO_APP_DIR):
+	mkdir -p $@
+
+$(SDL_PROOF_DIR):
 	mkdir -p $@
 
 $(RUST_APP_DIR):
@@ -604,6 +611,27 @@ $(AUDIO_SYSTEM_IMAGE): $(AUDIO_PACKAGE) $(AUDIO_REFUSAL_PACKAGE) \
 $(AUDIO_DATA_IMAGE): tools/fat32_image.py | $(AUDIO_APP_DIR)
 	$(PYTHON) tools/fat32_image.py format data $@
 
+$(SDL_PROOF_DIR)/main.o: apps/native-sdl/main.c \
+		$(SDK_BUILD_DIR)/.installed | $(SDL_PROOF_DIR)
+	$(SDK_CC) $(SDL2_CFLAGS) -Wpedantic -Wshadow -Wundef \
+		-Wstrict-prototypes -Wmissing-prototypes -c $< -o $@
+
+$(SDL_PROOF_APP): $(SDL_PROOF_DIR)/main.o $(SDK_BUILD_DIR)/.installed
+	$(SDK_LD) $(SDK_LDFLAGS) -Map=$(SDL_PROOF_DIR)/SDL.map \
+		-o $@ $(SDK_CRT) $< $(SDL2_LIB) $(SDK_LIB)
+
+$(SDL_PROOF_PACKAGE): $(SDL_PROOF_APP) apps/native-sdl/manifest.json
+	$(PYTHON) tools/sapote-package.py build \
+		--spec apps/native-sdl/manifest.json --executable $< --output $@
+
+$(SDL_PROOF_SYSTEM_IMAGE): $(SDL_PROOF_PACKAGE) tools/sapote-package.py \
+		tools/fat32_image.py
+	$(PYTHON) tools/sapote-package.py install-system \
+		--output $@ $(SDL_PROOF_PACKAGE)
+
+$(SDL_PROOF_DATA_IMAGE): tools/fat32_image.py | $(SDL_PROOF_DIR)
+	$(PYTHON) tools/fat32_image.py format data $@
+
 $(RUST_APP): apps/native-rust/Cargo.toml apps/native-rust/Cargo.lock \
 		apps/native-rust/manifest.json apps/native-rust/src/main.rs \
 		rust/sapote/Cargo.toml rust/sapote/src/lib.rs sdk/linker.ld | $(RUST_APP_DIR)
@@ -653,13 +681,16 @@ $(ADMISSION_DATA_IMAGE): tools/fat32_image.py | $(ADMISSION_DIR)
 native-apps: $(NATIVE_TEST_PACKAGE) $(LUA_PACKAGE) $(SQLITE_PACKAGE) \
 	$(CANVAS_PACKAGE) $(CANVAS_PROOF_PACKAGE) $(NETAPP_PACKAGE) \
 	$(AUDIO_PACKAGE) $(AUDIO_REFUSAL_PACKAGE) $(RUST_APP_PACKAGE) \
-	$(CRASH_PACKAGE)
+	$(CRASH_PACKAGE) $(SDL_PROOF_PACKAGE)
 
 audio-wav-tests:
 	$(PYTHON) -S tools/audio-wav-host-test.py --self-test
 
 native-audio-proof: $(AUDIO_SYSTEM_IMAGE) $(AUDIO_DATA_IMAGE) audio-wav-tests
 	@echo 'native audio proof packages, images and WAV controls built'
+
+native-sdl-proof: $(SDL_PROOF_SYSTEM_IMAGE) $(SDL_PROOF_DATA_IMAGE)
+	@echo 'native SDL proof package and images built'
 
 port-tests: native-apps audio-wav-tests
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(NATIVE_TEST_APP)' \
@@ -676,6 +707,8 @@ port-tests: native-apps audio-wav-tests
 		$(RUST_NATIVE_IMAGE_TEST)
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(AUDIO_APP)' \
 		$(RUST_NATIVE_IMAGE_TEST)
+	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(SDL_PROOF_APP)' \
+		$(RUST_NATIVE_IMAGE_TEST)
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(RUST_APP)' \
 		$(RUST_NATIVE_IMAGE_TEST)
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(CRASH_APP)' \
@@ -689,6 +722,7 @@ port-tests: native-apps audio-wav-tests
 	$(PYTHON) tools/sapote-package.py inspect $(NETAPP_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(AUDIO_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(AUDIO_REFUSAL_PACKAGE)
+	$(PYTHON) tools/sapote-package.py inspect $(SDL_PROOF_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(RUST_APP_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(CRASH_PACKAGE)
 
@@ -940,8 +974,10 @@ wall-clock-tests: $(WALL_CLOCK_HOST_TEST) $(SDK_TIME_HOST_TEST)
 
 ext4-tests: tools/ext4_image.py tools/ext4_host_test.py
 	$(PYTHON) -u tools/ext4_host_test.py
-	$(CARGO) test --manifest-path vendor/ext4plus/Cargo.toml \
-		--no-default-features --features sync --locked --offline
+	CARGO_TARGET_DIR='$(CURDIR)/$(BUILD_DIR)/ext4-transaction-target' \
+		$(CARGO) test \
+		--manifest-path tools/ext4-transaction-tests/Cargo.toml \
+		--locked --offline
 
 package-repository-tests: tools/sapote-repository.py \
 		tools/sapote_repository_host_test.py tools/sapote-package.py

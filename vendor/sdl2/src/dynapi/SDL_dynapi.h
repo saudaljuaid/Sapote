@@ -65,6 +65,8 @@
 #define SDL_DYNAMIC_API 0 /* vitasdk doesn't support dynamic linking */
 #elif defined(__NGAGE__)
 #define SDL_DYNAMIC_API 0 /* The N-Gage doesn't support dynamic linking either */
+#elif defined(__SAPOTE__)
+#define SDL_DYNAMIC_API 0 /* Sapote's admitted SDL 2 profile is a static SDK. */
 #elif defined(__3DS__)
 #define SDL_DYNAMIC_API 0 /* devkitARM doesn't support dynamic linking */
 #elif defined(DYNAPI_NEEDS_DLOPEN) && !defined(HAVE_DLOPEN)

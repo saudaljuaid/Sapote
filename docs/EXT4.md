@@ -106,9 +106,11 @@ checksummed commit is required before `replay_committed_transaction()` returns
 any home image. Pure tests cut the operation list at every boundary and verify
 that every pre-commit prefix is non-replayable and has no durable home metadata;
 they also corrupt descriptor, data, and commit bytes independently.
-`make ext4-tests` runs those vendored-crate controls in the admitted
-`--no-default-features --features sync` profile as well as the existing hostile
-image suite, using only the committed Cargo source mirror.
+`make ext4-tests` runs equivalent public-API transaction controls from the
+isolated `tools/ext4-transaction-tests` harness in the admitted
+`--no-default-features --features sync` profile, as well as the existing hostile
+image suite. This avoids importing unrelated upstream fixture tests while using
+only the committed Cargo source mirror.
 
 Sapote's NVMe layer already exposes the required `nvme_volume_flush()` fence,
 but the ext4 backend deliberately does not bind the plan to it yet. The missing
