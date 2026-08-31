@@ -27,6 +27,12 @@ journal superblock, bind a barrier to platform I/O, or redirect ext4 mutation
 methods away from their upstream home-block writes. Those gaps keep the Sapote
 backend read-only.
 
+Sapote also tightens upstream writer admission: an image carrying ext4's
+`RO_COMPAT_READONLY` feature now discards the supplied writer just as an image
+requiring recovery or carrying an unsupported read-only-compatible feature
+does. A focused superblock test pins that refusal. This is a prerequisite for a
+future writable profile, not writable-backend admission by itself.
+
 Sapote-specific changes stay in reviewable commits and are summarized here as
 they land. The intended port configuration is `--no-default-features
 --features sync`; the asynchronous and hosted `std` surfaces are out of scope.

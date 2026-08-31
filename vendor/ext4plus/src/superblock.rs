@@ -262,6 +262,9 @@ impl Superblock {
     pub(crate) fn read_only(&self) -> bool {
         self.incompatible_features()
             .contains(IncompatibleFeatures::RECOVERY)
+            || self
+                .read_only_compatible_features()
+                .contains(ReadOnlyCompatibleFeatures::READ_ONLY)
             || !check_read_only_compat_features(
                 self.read_only_compatible_features().bits(),
             )
@@ -614,6 +617,27 @@ mod tests {
         let sb = Superblock::from_bytes(&data).unwrap();
         // Check that the correct seed was calculated.
         assert_eq!(sb.checksum_seed, expected_seed);
+    }
+
+    #[test]
+    fn read_only_feature_refuses_writer_admission() {
+        let mut data = include_bytes!("../test_data/raw_superblock.bin").to_vec();
+        let feature_offset = 0x64;
+        let checksum_offset = 0x3fc;
+        let mut features = u32::from_le_bytes(
+            data[feature_offset..feature_offset + 4].try_into().unwrap(),
+        );
+
+        features |= ReadOnlyCompatibleFeatures::READ_ONLY.bits();
+        data[feature_offset..feature_offset + 4]
+            .copy_from_slice(&features.to_le_bytes());
+        let mut checksum = Checksum::new();
+        checksum.update(&data[..checksum_offset]);
+        data[checksum_offset..]
+            .copy_from_slice(&checksum.finalize().to_le_bytes());
+
+        let superblock = Superblock::from_bytes(&data).unwrap();
+        assert!(superblock.read_only());
     }
 
     #[test]
