@@ -14,6 +14,7 @@
 #include "../../events/SDL_keyboard_c.h"
 #include "../../events/SDL_mouse_c.h"
 #include "../../events/SDL_windowevents_c.h"
+#include "SDL_timer.h"
 
 #include <sapote/event.h>
 #include <sapote/runtime.h>
@@ -364,7 +365,7 @@ static int SAPOTE_CreateWindowFramebuffer(_THIS, SDL_Window *window,
     SapoteWindowData *data = (SapoteWindowData *)window->driverdata;
     (void)_this;
 
-    if (data == NULL || data->pitch > INT_MAX) {
+    if (data == NULL || data->pitch > SDL_MAX_SINT32) {
         return SDL_SetError("Sapote window framebuffer is unavailable");
     }
     *format = SDL_PIXELFORMAT_RGB888;
