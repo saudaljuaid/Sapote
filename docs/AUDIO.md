@@ -192,15 +192,19 @@ advertises its `wav` audio driver, the scenario writes
 signed-16 host output settings and independently verifies:
 
 - 48,000 Hz, signed 16-bit, two-channel uncompressed PCM;
-- a bounded nonempty frame count and reported duration;
-- an exact 1,024-frame Q15 mixed waveform with SHA-256
+- at least 256 persisted frames, a bounded frame count, and reported duration;
+- either the exact 1,024-frame Q15 mixed waveform or an exact, frame-aligned
+  prefix of it, anchored to the complete fixture SHA-256
   `5864c13557496ba86294adbbfe8078e9f2c0b5e808e4d0c4f49738fd465d1261`;
 - non-silence and absence of the chunk canceled before DMA ownership.
 
-After both public drain calls complete, the proof yields through the public
-absolute-deadline sleep service for 100 ms before teardown. This bounded
-settle lets QEMU's host audio timer deliver its already-consumed backend
-buffer; it does not replace or relax either drain assertion.
+QEMU's HDA codec stages guest DMA in front of the WAV backend. The guest stops
+the controller only after both complete 1,024-frame drain calls, but the host
+WAV timer can persist a shorter prefix before stream deactivation discards its
+private staging tail. The verifier therefore authenticates either the whole
+chunk or a bounded exact prefix, reports the matched-frame count and digest,
+and has negative controls for truncation below 256 frames and prefix
+corruption. This does not replace or relax either guest drain assertion.
 
 When the runner does not expose the WAV backend, the scenario uses the null
 backend and prints an explicit WAV skip while retaining all serial, refusal,
