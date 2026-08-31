@@ -4,6 +4,7 @@
 
 int isalnum(int value);
 int isalpha(int value);
+int isblank(int value);
 int iscntrl(int value);
 int isdigit(int value);
 int isgraph(int value);
