@@ -189,7 +189,7 @@ TLS_HOST_BEARSSL_OBJECTS := $(patsubst vendor/bearssl/src/%.c,\
 	$(TEST_BUILD_DIR)/bearssl/%.o,$(BEARSSL_SOURCE))
 TLS_HOST_BEARSSL_LIB := $(TEST_BUILD_DIR)/libbearssl-host.a
 SDK_CFLAGS := --target=x86_64-unknown-none-elf -Isdk/include -Iinclude \
-	-Isdk/src -std=c11 -O2 -g -ffreestanding -fno-pie \
+	-Ivendor/bearssl/inc -Isdk/src -std=c11 -O2 -g -ffreestanding -fno-pie \
 	-fno-stack-protector -mcmodel=large -mno-red-zone -fno-builtin \
 	-ffunction-sections -fdata-sections -ftls-model=local-exec \
 	-Wall -Wextra -Werror -Wpedantic -Wshadow -Wundef \
