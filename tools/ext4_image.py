@@ -499,7 +499,10 @@ def _parse_stat(output: str, path: str) -> dict[str, object]:
 
 def _e2fsck_read_only(image: Path, tools: dict[str, str]) -> None:
     result = _run((tools["e2fsck"], "-f", "-n", image), accepted=(0, 4))
-    if result.returncode != 0:
+    descriptor_checksum = re.search(
+        r"(?:group descriptor \d+ checksum is|block group descriptor "
+        r"checksums are invalid)", result.stdout, re.IGNORECASE)
+    if result.returncode != 0 or descriptor_checksum is not None:
         raise Ext4ImageError("e2fsck refusal: filesystem metadata is inconsistent\n" + result.stdout.strip())
 
 

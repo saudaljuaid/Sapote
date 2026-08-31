@@ -138,6 +138,17 @@ class ToolDiscoveryTests(unittest.TestCase):
         with mock.patch.object(ext4.shutil, "which", side_effect=lambda name: f"/bin/{name}" if name != "debugfs" else None):
             self.assertEqual(ext4.available_tools(), {})
 
+    def test_group_descriptor_checksum_diagnostic_refuses_even_with_zero_exit(self) -> None:
+        completed = mock.Mock(
+            returncode=0,
+            stdout=("Group descriptor 0 checksum is 1234, should be 5678.  "
+                    "Fix? no\n"),
+        )
+        with mock.patch.object(ext4, "_run", return_value=completed):
+            with self.assertRaisesRegex(ext4.Ext4ImageError, "metadata is inconsistent"):
+                ext4._e2fsck_read_only(
+                    Path("fixture.img"), {"e2fsck": "/bin/e2fsck"})
+
 
 class FixtureScriptTests(unittest.TestCase):
     def test_format_invocation_and_debugfs_script_pin_reproducibility_inputs(self) -> None:
