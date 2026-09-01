@@ -14,7 +14,6 @@
 #define PACKAGE_MAX_FILE_BYTES (64U * 1024U * 1024U)
 #define PACKAGE_CAPABILITY_MASK UINT64_C(0x7ff)
 #define SOLVER_MAX_BINDINGS 256U
-#define DATABASE_EXPLICIT_FLAG UINT32_C(1)
 
 struct semver {
     struct package_manager_text core[3];
@@ -1597,19 +1596,22 @@ static bool installed_package(
         return false;
     }
     for (uint32_t current = 0U; current < installed->package_count; ++current) {
-        const uint8_t *record = installed->bytes + installed->package_offset +
-            (size_t)current * PACKAGE_STATE_DATABASE_PACKAGE_RECORD_BYTES;
+        struct package_state_package_view package;
         struct package_manager_text candidate;
-        if (fixed_text(record, 64U, false, &candidate) != PACKAGE_MANAGER_STATUS_OK) {
+
+        if (package_state_database_package(installed, current, &package) !=
+                PACKAGE_STATE_STATUS_OK) {
             return false;
         }
+        candidate = (struct package_manager_text){
+            package.identifier.bytes, package.identifier.length
+        };
         if (text_equal(&candidate, identifier)) {
-            if (fixed_text(record + 64U, 64U, false, version) !=
-                PACKAGE_MANAGER_STATUS_OK) {
-                return false;
-            }
             *index = current;
-            *publisher_key_id = record + 160U;
+            *version = (struct package_manager_text){
+                package.version.bytes, package.version.length
+            };
+            *publisher_key_id = package.publisher_key_id;
             return true;
         }
     }
@@ -1831,15 +1833,6 @@ enum package_manager_status package_manager_plan_dependency_binding(
     return PACKAGE_MANAGER_STATUS_OK;
 }
 
-static const uint8_t *installed_record(
-    const struct package_state_database_view *installed,
-    uint32_t index
-)
-{
-    return installed->bytes + installed->package_offset +
-        (size_t)index * PACKAGE_STATE_DATABASE_PACKAGE_RECORD_BYTES;
-}
-
 static bool installed_index_for(
     const struct package_state_database_view *installed,
     const struct package_manager_text *identifier,
@@ -1847,11 +1840,16 @@ static bool installed_index_for(
 )
 {
     for (uint32_t index = 0U; index < installed->package_count; ++index) {
+        struct package_state_package_view package;
         struct package_manager_text candidate;
-        if (fixed_text(installed_record(installed, index), 64U, false, &candidate) !=
-            PACKAGE_MANAGER_STATUS_OK) {
+
+        if (package_state_database_package(installed, index, &package) !=
+                PACKAGE_STATE_STATUS_OK) {
             return false;
         }
+        candidate = (struct package_manager_text){
+            package.identifier.bytes, package.identifier.length
+        };
         if (text_equal(&candidate, identifier)) {
             *result = index;
             return true;
@@ -1880,30 +1878,48 @@ enum package_manager_status package_manager_plan_remove(
     if (!installed_index_for(installed, &requested, &target)) {
         return PACKAGE_MANAGER_STATUS_NOT_FOUND;
     }
-    if ((read_u32(installed_record(installed, target) + 192U) &
-        DATABASE_EXPLICIT_FLAG) == 0U) {
+    struct package_state_package_view target_package;
+    if (package_state_database_package(installed, target, &target_package) !=
+            PACKAGE_STATE_STATUS_OK) {
+        return PACKAGE_MANAGER_STATUS_STATE;
+    }
+    if (!target_package.explicit_root) {
         return PACKAGE_MANAGER_STATUS_IN_USE;
     }
     for (uint32_t index = 0U; index < installed->package_count; ++index) {
-        if (index != target && (read_u32(installed_record(installed, index) + 192U) &
-            DATABASE_EXPLICIT_FLAG) != 0U) {
+        struct package_state_package_view package;
+
+        if (package_state_database_package(installed, index, &package) !=
+                PACKAGE_STATE_STATUS_OK) {
+            return PACKAGE_MANAGER_STATUS_STATE;
+        }
+        if (index != target && package.explicit_root) {
             reachable[index] = true;
             queue[tail++] = (uint16_t)index;
         }
     }
     while (head < tail) {
         uint32_t owner = queue[head++];
-        const uint8_t *package = installed_record(installed, owner);
-        uint32_t first = read_u32(package + 196U);
-        uint32_t count = read_u32(package + 200U);
-        for (uint32_t offset = 0U; offset < count; ++offset) {
-            const uint8_t *edge = installed->bytes + installed->edge_offset +
-                (size_t)(first + offset) * PACKAGE_STATE_DATABASE_EDGE_RECORD_BYTES;
+        struct package_state_package_view package;
+
+        if (package_state_database_package(installed, owner, &package) !=
+                PACKAGE_STATE_STATUS_OK) {
+            return PACKAGE_MANAGER_STATUS_STATE;
+        }
+        for (uint32_t offset = 0U; offset < package.dependency_count; ++offset) {
+            struct package_state_dependency_view dependency;
             struct package_manager_text provider;
             uint32_t provider_index;
-            if (fixed_text(edge + 120U, 64U, false, &provider) !=
-                    PACKAGE_MANAGER_STATUS_OK ||
-                !installed_index_for(installed, &provider, &provider_index)) {
+
+            if (package_state_database_dependency(installed,
+                    package.dependency_start + offset, &dependency) !=
+                    PACKAGE_STATE_STATUS_OK) {
+                return PACKAGE_MANAGER_STATUS_STATE;
+            }
+            provider = (struct package_manager_text){
+                dependency.provider.bytes, dependency.provider.length
+            };
+            if (!installed_index_for(installed, &provider, &provider_index)) {
                 return PACKAGE_MANAGER_STATUS_STATE;
             }
             if (!reachable[provider_index]) {
@@ -1931,18 +1947,27 @@ enum package_manager_status package_manager_plan_remove(
                 if (reachable[owner] || emitted[owner] || owner == candidate) {
                     continue;
                 }
-                const uint8_t *owner_record = installed_record(installed, owner);
-                uint32_t first = read_u32(owner_record + 196U);
-                uint32_t count = read_u32(owner_record + 200U);
-                for (uint32_t offset = 0U; offset < count; ++offset) {
-                    const uint8_t *edge = installed->bytes + installed->edge_offset +
-                        (size_t)(first + offset) *
-                            PACKAGE_STATE_DATABASE_EDGE_RECORD_BYTES;
+                struct package_state_package_view owner_package;
+                if (package_state_database_package(installed, owner,
+                        &owner_package) != PACKAGE_STATE_STATUS_OK) {
+                    return PACKAGE_MANAGER_STATUS_STATE;
+                }
+                for (uint32_t offset = 0U;
+                    offset < owner_package.dependency_count; ++offset) {
+                    struct package_state_dependency_view dependency;
                     struct package_manager_text provider;
                     uint32_t provider_index;
-                    if (fixed_text(edge + 120U, 64U, false, &provider) !=
-                            PACKAGE_MANAGER_STATUS_OK ||
-                        !installed_index_for(installed, &provider, &provider_index)) {
+
+                    if (package_state_database_dependency(installed,
+                            owner_package.dependency_start + offset,
+                            &dependency) != PACKAGE_STATE_STATUS_OK) {
+                        return PACKAGE_MANAGER_STATUS_STATE;
+                    }
+                    provider = (struct package_manager_text){
+                        dependency.provider.bytes, dependency.provider.length
+                    };
+                    if (!installed_index_for(installed, &provider,
+                            &provider_index)) {
                         return PACKAGE_MANAGER_STATUS_STATE;
                     }
                     if (provider_index == candidate) {
@@ -1963,16 +1988,26 @@ enum package_manager_status package_manager_plan_remove(
             if (result->count == PACKAGE_MANAGER_PLAN_MAX_PACKAGES) {
                 return PACKAGE_MANAGER_STATUS_GRAPH_BOUND;
             }
-            const uint8_t *record = installed_record(installed, package_index);
-            struct package_manager_plan_item *item = &result->items[result->count++];
+            struct package_state_package_view package;
+
+            if (package_state_database_package(installed, package_index,
+                    &package) != PACKAGE_STATE_STATUS_OK) {
+                return PACKAGE_MANAGER_STATUS_STATE;
+            }
+            struct package_manager_plan_item *item =
+                &result->items[result->count++];
             item->source_index = package_index;
-            (void)fixed_text(record, 64U, false, &item->identifier);
-            (void)fixed_text(record + 64U, 64U, false, &item->version);
+            item->identifier = (struct package_manager_text){
+                package.identifier.bytes, package.identifier.length
+            };
+            item->version = (struct package_manager_text){
+                package.version.bytes, package.version.length
+            };
             item->download_path.bytes = NULL;
             item->download_path.length = 0U;
             item->package_bytes = 0U;
-            item->package_sha256 = record + 128U;
-            item->publisher_key_id = record + 160U;
+            item->package_sha256 = package.package_sha256;
+            item->publisher_key_id = package.publisher_key_id;
             emitted[package_index] = true;
         }
     }
@@ -1997,11 +2032,16 @@ enum package_manager_status package_manager_installed_search(
     }
     result->count = 0U;
     for (uint32_t index = 0U; index < installed->package_count; ++index) {
+        struct package_state_package_view package;
         struct package_manager_text identifier;
-        if (fixed_text(installed_record(installed, index), 64U, false, &identifier) !=
-            PACKAGE_MANAGER_STATUS_OK) {
+
+        if (package_state_database_package(installed, index, &package) !=
+                PACKAGE_STATE_STATUS_OK) {
             return PACKAGE_MANAGER_STATUS_STATE;
         }
+        identifier = (struct package_manager_text){
+            package.identifier.bytes, package.identifier.length
+        };
         if (contains_casefold(&identifier, query, query_bytes)) {
             if (result->count == PACKAGE_MANAGER_SEARCH_MAX_RESULTS) {
                 return PACKAGE_MANAGER_STATUS_GRAPH_BOUND;
