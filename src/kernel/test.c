@@ -4803,6 +4803,10 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
         kernel_test_fail("ext4 namespace proof skips are invalid");
     }
     if (!drive.present || !drive.mounted || !drive.read_only || !drive.healthy) {
+        console_write("ST EXT4 RECOVERY mount status ");
+        console_write_u64((uint64_t)ext4_backend_last_mount_status(
+            SAPFS_VOLUME_SYSTEM));
+        console_putc('\n');
         kernel_test_fail("ext4 recovered drive state is invalid");
     }
     if (!ext4_backend_recovery_report(SAPFS_VOLUME_SYSTEM, &recovery)) {

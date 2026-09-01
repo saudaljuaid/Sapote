@@ -39,6 +39,7 @@ struct ext4_handle_state {
 
 static struct ext4_mount_state ext4_mounts[SAPFS_VOLUME_COUNT];
 static struct ext4_handle_state ext4_handles[EXT4_MAX_HANDLES];
+static enum sapfs_status ext4_last_mount_status[SAPFS_VOLUME_COUNT];
 static uint64_t next_mount_generation = UINT64_C(1);
 static uint64_t next_handle_generation = UINT64_C(1);
 
@@ -420,6 +421,10 @@ void ext4_backend_initialize(void)
 {
     zero_bytes(ext4_mounts, sizeof(ext4_mounts));
     zero_bytes(ext4_handles, sizeof(ext4_handles));
+    for (enum sapfs_volume volume = SAPFS_VOLUME_SYSTEM;
+         volume < SAPFS_VOLUME_COUNT; ++volume) {
+        ext4_last_mount_status[volume] = SAPFS_STATUS_NOT_MOUNTED;
+    }
 }
 
 enum sapfs_status ext4_backend_mount(enum sapfs_volume volume)
@@ -434,6 +439,7 @@ enum sapfs_status ext4_backend_mount(enum sapfs_volume volume)
     }
     mount = &ext4_mounts[volume];
     if (mount->active) {
+        ext4_last_mount_status[volume] = SAPFS_STATUS_ALREADY_MOUNTED;
         return SAPFS_STATUS_ALREADY_MOUNTED;
     }
     zero_bytes(mount, sizeof(*mount));
@@ -444,6 +450,7 @@ enum sapfs_status ext4_backend_mount(enum sapfs_volume volume)
     status = begin_operation(mount, true);
     if (status != SAPFS_STATUS_OK) {
         zero_bytes(mount, sizeof(*mount));
+        ext4_last_mount_status[volume] = status;
         return status;
     }
     rust_status = sapote_ext4_mount((uintptr_t)mount, mount->media_bytes,
@@ -451,17 +458,28 @@ enum sapfs_status ext4_backend_mount(enum sapfs_volume volume)
     close_status = end_operation(mount);
     status = map_status(rust_status);
     if (status != SAPFS_STATUS_OK || close_status != SAPFS_STATUS_OK) {
+        const enum sapfs_status result = status != SAPFS_STATUS_OK ?
+            status : close_status;
+
         if (mount->rust_mount != 0U) {
             (void)sapote_ext4_unmount(mount->rust_mount);
         }
         zero_bytes(mount, sizeof(*mount));
-        return status != SAPFS_STATUS_OK ? status : close_status;
+        ext4_last_mount_status[volume] = result;
+        return result;
     }
     mount->generation = generation(&next_mount_generation);
     mount->admitted_media_bytes = mount->media_bytes;
     mount->mounting = false;
     mount->active = true;
+    ext4_last_mount_status[volume] = SAPFS_STATUS_OK;
     return SAPFS_STATUS_OK;
+}
+
+enum sapfs_status ext4_backend_last_mount_status(enum sapfs_volume volume)
+{
+    return valid_volume(volume) ? ext4_last_mount_status[volume] :
+        SAPFS_STATUS_INVALID_ARGUMENT;
 }
 
 enum sapfs_status ext4_backend_unmount(enum sapfs_volume volume)

@@ -78,6 +78,7 @@ int32_t sapote_ext4_block_flush(uintptr_t context);
 
 void ext4_backend_initialize(void);
 enum sapfs_status ext4_backend_mount(enum sapfs_volume volume);
+enum sapfs_status ext4_backend_last_mount_status(enum sapfs_volume volume);
 enum sapfs_status ext4_backend_unmount(enum sapfs_volume volume);
 enum sapfs_status ext4_backend_sync(enum sapfs_volume volume);
 struct sapfs_drive_info ext4_backend_drive(enum sapfs_volume volume);
