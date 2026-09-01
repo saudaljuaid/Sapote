@@ -538,6 +538,36 @@ pub(crate) unsafe extern "C" fn sapote_ext4_unlink_file_probe(
     }
 }
 
+/// Execute or retry one private regular-file hard-link acceptance probe.
+///
+/// # Safety
+/// Both path ranges must be live and readable and must not overlap the mounted
+/// object. C must hold a writable storage lease.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn sapote_ext4_link_file_probe(
+    mounted: usize,
+    source: *const u8,
+    source_length: usize,
+    destination: *const u8,
+    destination_length: usize,
+) -> i32 {
+    if mounted == 0 || source.is_null() || destination.is_null() {
+        return ext4::Status::NullArgument as i32;
+    }
+    // SAFETY: the complete readable inputs are the caller's contract.
+    let (mounted, source, destination) = unsafe {
+        (
+            &mut *(mounted as *mut ext4::Mounted),
+            core::slice::from_raw_parts(source, source_length),
+            core::slice::from_raw_parts(destination, destination_length),
+        )
+    };
+    match ext4::link_file_probe(mounted, source, destination) {
+        Ok(()) => ext4::Status::Ok as i32,
+        Err(status) => status as i32,
+    }
+}
+
 /// Return one directory entry by stable enumeration index.
 ///
 /// # Safety

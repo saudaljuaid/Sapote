@@ -103,6 +103,7 @@ enum PendingMutationKind {
     Truncate,
     CreateFile,
     UnlinkFile,
+    LinkFile,
 }
 
 struct PendingMutation {
@@ -328,6 +329,20 @@ fn parent_and_name(
         return Err(Status::Invalid);
     }
     Ok((parent, name))
+}
+
+fn namespace_pair_key(first: &[u8], second: &[u8]) -> Result<Vec<u8>, Status> {
+    let capacity = first
+        .len()
+        .checked_add(second.len())
+        .and_then(|length| length.checked_add(1))
+        .ok_or(Status::Range)?;
+    let mut key = Vec::new();
+    key.try_reserve_exact(capacity).map_err(|_| Status::Range)?;
+    key.extend_from_slice(first);
+    key.push(0);
+    key.extend_from_slice(second);
+    Ok(key)
 }
 
 fn classify(file_type: FileType) -> Result<u8, Status> {
@@ -1122,10 +1137,7 @@ pub(crate) fn unlink_file_probe(
             .filesystem
             .path_to_inode(parent, FollowSymlinks::All)?;
         let mut directory = Dir::open_inode(&mounted.filesystem, parent_inode)?;
-        match directory.unlink(name, inode)? {
-            None => Ok(()),
-            Some(_) => Err(Ext4Error::Readonly),
-        }
+        directory.unlink(name, inode).map(|_| ())
     })();
     if let Err(error) = mutation {
         discard_uncommitted_stage(mounted, true)?;
@@ -1136,6 +1148,57 @@ pub(crate) fn unlink_file_probe(
         return Err(Status::Invalid);
     }
     commit_namespace_mutation(mounted, PendingMutationKind::UnlinkFile, absolute)
+}
+
+/// Create one regular-file hard link through a private journal acceptance path.
+pub(crate) fn link_file_probe(
+    mounted: &mut Mounted,
+    source: &[u8],
+    destination: &[u8],
+) -> Result<(), Status> {
+    let source_absolute = absolute_path(source)?;
+    let destination_absolute = absolute_path(destination)?;
+    let pending_key = namespace_pair_key(&source_absolute, &destination_absolute)?;
+    if mounted.pending_mutation.is_some() {
+        return resume_namespace_mutation(
+            mounted,
+            PendingMutationKind::LinkFile,
+            &pending_key,
+        );
+    }
+    if !mounted.stage.is_empty() || mounted.stage.is_sealed() {
+        let recovery = mounted
+            .journal
+            .filesystem_recovery_marker_is_durable()
+            .map_err(|_| Status::Invalid)?;
+        discard_uncommitted_stage(mounted, recovery)?;
+    }
+    arm_recovery_marker(mounted)?;
+    let source_path = Path::try_from(source_absolute.as_slice())
+        .map_err(|_| Status::Invalid)?;
+    let (parent, name) = parent_and_name(&destination_absolute)?;
+    let mutation = (|| {
+        let mut inode = mounted
+            .filesystem
+            .path_to_inode(source_path, FollowSymlinks::ExcludeFinalComponent)?;
+        if !inode.file_type().is_regular_file() {
+            return Err(Ext4Error::IsADirectory);
+        }
+        let parent_inode = mounted
+            .filesystem
+            .path_to_inode(parent, FollowSymlinks::All)?;
+        let mut directory = Dir::open_inode(&mounted.filesystem, parent_inode)?;
+        directory.link(name, &mut inode)
+    })();
+    if let Err(error) = mutation {
+        discard_uncommitted_stage(mounted, true)?;
+        return Err(map_error(error));
+    }
+    if mounted.stage.is_empty() || mounted.stage.revoked_block_count() != 0 {
+        discard_uncommitted_stage(mounted, true)?;
+        return Err(Status::Invalid);
+    }
+    commit_namespace_mutation(mounted, PendingMutationKind::LinkFile, pending_key)
 }
 
 /// Retry and durably execute the final clean plan while C holds a write lease.

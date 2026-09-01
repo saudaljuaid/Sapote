@@ -337,12 +337,13 @@ the freed physical block to appear in the prepared JBD2 revocation set, commits
 and cleans it, and appends again to prove that a post-sync mutation durably
 re-arms the recovery marker. Because every current transaction checkpoints
 synchronously, a clean sync needs no extra write or flush.
-The same non-power-cut scenario then creates and unlinks an empty file under
-`/data/user`, synchronizing after each transaction and requiring the namespace
-to disappear before the final clean remount. This exercises inode allocation,
-inode and directory bitmaps, group descriptors, directory checksums, link
-counts, and their primary-superblock counters through platform storage while
-the public create/unlink table entries remain read-only.
+The same non-power-cut scenario then creates an empty file under `/data/user`,
+adds a hard link, removes the original name while the linked inode remains, and
+removes the final name, synchronizing every transaction and requiring both
+names to disappear before the final clean remount. This exercises inode
+allocation, inode and directory bitmaps, group descriptors, directory
+checksums, link counts, and their primary-superblock counters through platform
+storage while the public create/link/unlink table entries remain read-only.
 The recovery-marker activation plan is equally retry-stable: its exact
 checksummed write and filesystem-state flush are re-emitted after an I/O refusal
 and acknowledged only after the flush completes. Started commit plans and
