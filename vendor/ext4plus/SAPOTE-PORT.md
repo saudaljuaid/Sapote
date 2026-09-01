@@ -132,12 +132,15 @@ ordered-data set after a staged regular-file write without exposing a writer.
 The real Linux fixture persists the checksummed recovery marker, reloads the
 upstream filesystem on that dirty-marker backing, performs an allocation-bearing
 sparse extension, and verifies that its staged block-zero image cannot clear the
-marker. It then binds that image to the prepared reservation, executes the
-complete ordered commit, and checks both normal checkpoint completion and
-mount replay after a reset following the durable commit record. Both paths
-preserve the allocation counter through tail cleanup, verify the group-zero
-bitmap checksum independently, reopen the appended byte, and require read-only
-`e2fsck` acceptance. Platform VFS writes remain gated.
+marker. One deliberately invalid ordered-data classification then proves that
+discarding the mutated filesystem object and rolling back the stage restores
+the original size and recovery-marked superblock. A fresh mutation binds its
+block-zero image to the prepared reservation, executes the complete ordered
+commit, and checks both normal checkpoint completion and mount replay after a
+reset following the durable commit record. Both paths preserve the allocation
+counter through tail cleanup, verify the group-zero bitmap checksum
+independently, reopen the appended byte, and require read-only `e2fsck`
+acceptance. Platform VFS writes remain gated.
 
 The stage is not yet connected to VFS mutations, which do not yet collect their
 touched offset range and revocation set for the classifier. The retry-safe
@@ -147,10 +150,11 @@ allocation-bearing transaction across an injected live-superblock write
 failure and an injected ordered-data flush failure. A separate Linux target
 cuts ten independent VMs immediately after every named durability barrier,
 reboots each disk, and requires namespace, data, resource, and read-only
-`e2fsck` acceptance. Deliberately injected pre-commit allocation rollback,
-revocation derivation, and fsync/close semantics remain incomplete. Those gaps
-keep every user-facing Sapote ext4 operation
-read-only even though the private recovery and unmount leases are writable.
+`e2fsck` acceptance. The real fixture separately pins pre-commit allocation
+rollback after a refused classification. Revocation derivation and fsync/close
+semantics remain incomplete. Those gaps keep every user-facing Sapote ext4
+operation read-only even though the private recovery and unmount leases are
+writable.
 
 Sapote also tightens upstream writer admission: an image carrying ext4's
 `RO_COMPAT_READONLY` feature discards the supplied writer, as does an image

@@ -985,6 +985,11 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
     )
     .unwrap();
     let mut refused_file = refused_filesystem.open(b"/system/README.TXT").unwrap();
+    let original_size = refused_file.inode().size_in_bytes();
+    let append_offset = original_size
+        .div_ceil(JOURNAL_BLOCK_BYTES as u64)
+        .checked_mul(JOURNAL_BLOCK_BYTES as u64)
+        .unwrap();
     assert!(matches!(
         refused_file.write_bytes_at(b"X", 0),
         Err(Ext4Error::Readonly)
@@ -992,6 +997,68 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
     assert_eq!(refused_stage.staged_block_count(), 0);
     drop(refused_file);
     drop(refused_filesystem);
+
+    let rollback_stage = Rc::new(
+        JournalMutationStage::new(
+            Box::new(marker_backing.clone()),
+            u64::try_from(marker_backing.len()).unwrap(),
+        )
+        .unwrap(),
+    );
+    let rollback_filesystem = Ext4::load_with_recovery_writer(
+        Box::new(rollback_stage.clone()),
+        Some(Box::new(rollback_stage.clone())),
+    )
+    .unwrap();
+    let mut rollback_file = rollback_filesystem
+        .open(b"/system/README.TXT")
+        .unwrap();
+    assert_eq!(
+        rollback_file
+            .write_bytes_at(b"R", append_offset)
+            .unwrap(),
+        1
+    );
+    assert_eq!(rollback_file.inode().size_in_bytes(), append_offset + 1);
+    assert!(
+        rollback_stage
+            .staged_images()
+            .iter()
+            .any(|image| image.block_index() == 0)
+    );
+    let rollback_transaction = commit_ring.begin_transaction().unwrap();
+    assert_eq!(
+        rollback_stage
+            .build_transaction(&rollback_transaction, &[u64::MAX])
+            .unwrap_err(),
+        JournalMutationPlanError::OrderedDataNotStaged
+    );
+    assert!(!rollback_stage.is_sealed());
+    drop(rollback_file);
+    drop(rollback_filesystem);
+    rollback_stage.rollback();
+    assert_eq!(rollback_stage.staged_block_count(), 0);
+    let restored_filesystem = Ext4::load_with_recovery_writer(
+        Box::new(rollback_stage.clone()),
+        Some(Box::new(rollback_stage.clone())),
+    )
+    .unwrap();
+    let restored_journal = load_journal_inode_map(&restored_filesystem).unwrap();
+    assert!(restored_journal.filesystem_needs_recovery());
+    assert_eq!(restored_journal.filesystem_superblock(), &recovery_marker);
+    let mut restored_file = restored_filesystem
+        .open(b"/system/README.TXT")
+        .unwrap();
+    let mut rolled_back_byte = [0u8; 1];
+    assert_eq!(restored_file.inode().size_in_bytes(), original_size);
+    assert_eq!(
+        restored_file
+            .read_bytes_at(&mut rolled_back_byte, append_offset)
+            .unwrap(),
+        0
+    );
+    drop(restored_file);
+    drop(restored_filesystem);
 
     let commit_stage = Rc::new(
         JournalMutationStage::new(
@@ -1011,11 +1078,7 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
             .filesystem_needs_recovery()
     );
     let mut mutating_file = mutating_filesystem.open(b"/system/README.TXT").unwrap();
-    let original_size = mutating_file.inode().size_in_bytes();
-    let append_offset = original_size
-        .div_ceil(JOURNAL_BLOCK_BYTES as u64)
-        .checked_mul(JOURNAL_BLOCK_BYTES as u64)
-        .unwrap();
+    assert_eq!(mutating_file.inode().size_in_bytes(), original_size);
     assert_eq!(mutating_file.write_bytes_at(b"X", append_offset).unwrap(), 1);
     let appended_data_block = mutating_file
         .filesystem_block_at_offset(append_offset)

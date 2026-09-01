@@ -294,20 +294,24 @@ normal checkpoint completion and a reset after the durable commit record.
 Mount recovery replays the block-zero allocation counters before journal-tail
 cleanup and derives the final marker clear from the replayed image. Both paths
 prove the persisted free-block count changed once, reopen the appended byte,
-and require read-only `e2fsck` acceptance. This is a
+and require read-only `e2fsck` acceptance. Before that commit, the same real
+fixture performs an allocation-bearing extension, injects an invalid ordered-
+data classification, discards the mutated ext4plus object, rolls back the
+stage, and reloads the original size and recovery-marked superblock exactly.
+This is a
 host integration proof over the operation executor, not yet a VFS or QEMU
 writable-volume claim.
 
 The stage is retained for the full Rust mount lifetime and both unmount phases
 refuse a nonempty overlay, so no unclassified upstream mutation can be silently
 dropped. Setup failures before a prepared commit discard the overlay and reload
-ext4plus so in-memory allocation counters cannot escape, but allocation rollback
-under a deliberately injected pre-commit mutation failure is not yet proven.
-Once a storage operation has started, rollback would be unsafe because an
-unknown prefix may already be durable; the retained plan is retried instead.
-VFS mutations do not collect the touched offset range and revocation set needed
-to use that classifier. Revocation derivation, fsync binding, and close-failure
-semantics remain incomplete. The admitted
+ext4plus so in-memory allocation counters cannot escape. The real fixture pins
+that rollback across an allocation-bearing, deliberately refused pre-commit
+classification. Once a storage operation has started, rollback would be unsafe
+because an unknown prefix may already be durable; the retained plan is retried
+instead. VFS mutations do not collect the touched offset range and revocation
+set needed to use that classifier. Revocation derivation, fsync binding, and
+close-failure semantics remain incomplete. The admitted
 `JournalRing` is also retained for the full Rust mount lifetime. C opens a
 writable NVMe lease before unmount preparation; Rust
 re-emits the same pending clean plan after a failed write or flush, acknowledges
