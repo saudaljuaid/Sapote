@@ -120,6 +120,7 @@ fn public_executor_maps_every_block_write_and_preserves_flushes() {
     let mut ring = mapped_ring(17, &slots);
     let prepared = ring.prepare(&transaction()).unwrap();
     let operations = ring.prepare_commit_plan(&prepared).unwrap();
+    assert_eq!(ring.prepare_commit_plan(&prepared).unwrap(), operations);
     let mut storage = RecordingStorage::default();
     execute_commit_operations(&mut storage, &operations).unwrap();
 
@@ -1018,6 +1019,12 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
     let checkpoint_plan = commit_ring
         .prepare_checkpoint_plan(prepared.ticket())
         .unwrap();
+    assert_eq!(
+        commit_ring
+            .prepare_checkpoint_plan(prepared.ticket())
+            .unwrap(),
+        checkpoint_plan
+    );
     execute_commit_operations(&mut commit_storage, &checkpoint_plan).unwrap();
     commit_ring.checkpoint_durable(prepared.ticket()).unwrap();
     let clean_plan = commit_ring.prepare_filesystem_clean_plan().unwrap();

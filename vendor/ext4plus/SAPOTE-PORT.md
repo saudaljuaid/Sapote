@@ -83,6 +83,9 @@ the next commit cycle must make the recovery marker durable again.
 Pending recovery-marker activation and final marker clearing plans are both
 retry-stable after a write or flush refusal; acknowledgement alone advances
 their in-memory durability state.
+Started commit plans and checkpoint tail-state plans also re-emit identical
+operations after refusal and retain their ring slots until the corresponding
+durability acknowledgement.
 
 `JournalMutationStage` is the synchronous interception boundary for future
 ext4plus mutations. It accepts only an immutable backing reader, coalesces

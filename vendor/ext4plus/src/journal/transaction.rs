@@ -1636,6 +1636,8 @@ impl JournalRing {
     /// an older durable commit cannot begin its tail update while this plan is
     /// being issued. The filesystem owner must make ext4's incompat-recovery
     /// marker durable before executing the first such plan after a clean mount.
+    /// Re-preparing a started commit returns the exact same plan so any failed
+    /// write or flush can be retried before durability is acknowledged.
     pub fn prepare_commit_plan(
         &mut self,
         prepared: &JournalPreparedTransaction,
@@ -1663,7 +1665,9 @@ impl JournalRing {
             .get(index)
             .copied()
             .ok_or(JournalTransactionError::ReservationUnknown)?;
-        if reservation.state != ReservationState::Prepared {
+        if reservation.state != ReservationState::Prepared
+            && reservation.state != ReservationState::CommitStarted
+        {
             return Err(JournalTransactionError::ReservationState);
         }
         if reservation.sequence != prepared.sequence
@@ -1726,6 +1730,8 @@ impl JournalRing {
     /// [`JournalFlush::Checkpoint`] has completed. If another transaction is
     /// reserved, it must already have a durable commit before the old tail can
     /// advance to it. Otherwise the returned image marks the journal clean.
+    /// Re-preparing a pending tail update returns the same write and flush so
+    /// the checkpoint boundary can be retried before slot reclamation.
     pub fn prepare_checkpoint_plan(
         &mut self,
         ticket: u64,
@@ -1738,7 +1744,9 @@ impl JournalRing {
         if reservation.ticket != ticket {
             return Err(JournalTransactionError::ReservationOrder);
         }
-        if reservation.state != ReservationState::CommitDurable {
+        if reservation.state != ReservationState::CommitDurable
+            && reservation.state != ReservationState::TailStatePrepared
+        {
             return Err(JournalTransactionError::ReservationState);
         }
         if self
