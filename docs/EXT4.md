@@ -172,6 +172,16 @@ QEMU closes the disk, the host independently runs the strict fixture inspector
 and read-only e2fsck over the resulting bytes. This expanded scenario remains
 pending exact-head Linux execution and is not writable-VFS evidence.
 
+`qemu-test-ext4-powercuts` gives every flush an explicit Rust/C ABI boundary
+identifier and repeats the private probe on ten independent fixture copies. It
+terminates QEMU without guest cleanup immediately after each durable recovery,
+commit, checkpoint, journal-state, and final filesystem-state barrier. Every
+copy is then rebooted without a cut, required to pass the guest namespace,
+sparse-data, clean-unmount, remount, and resource census, and independently
+checked with debugfs plus read-only `e2fsck`. Per-cut serial transcripts, disk
+reports, and hashes are retained as a Linux workflow artifact. This is still a
+private mutation-path proof; the VFS read-only gate remains in place.
+
 The caller must supply a distinct physical journal block for the descriptor,
 each metadata image, and the commit. The resulting operation list has one legal
 order:
@@ -253,7 +263,11 @@ ring's retained superblock state, so the later clean-marker write preserves the
 checkpointed free-block and free-inode counters instead of restoring the
 mount-time snapshot. A failed platform write or flush retains the exact
 pending phase and request bytes for an identical retry; a different request is
-refused. Writable namespace methods are still not redirected into the planner.
+refused. The QEMU recovery scenario injects a refusal at the live-journal
+superblock write after an allocation-bearing upstream mutation, then at the
+ordered-data flush while retrying that same pending request. Only the third,
+byte-identical attempt is allowed to complete. Writable namespace methods are
+still not redirected into the planner.
 A bounded `JournalMutationStage`
 now gives synchronous ext4plus mutations an immutable backing reader and a
 copy-on-write overlay: the first partial write reads a complete 4 KiB home
@@ -288,11 +302,12 @@ The stage is retained for the full Rust mount lifetime and both unmount phases
 refuse a nonempty overlay, so no unclassified upstream mutation can be silently
 dropped. Setup failures before a prepared commit discard the overlay and reload
 ext4plus so in-memory allocation counters cannot escape, but allocation rollback
-under injected storage failures is not yet proven. VFS mutations do not collect
-the touched offset range and revocation set needed to use that classifier.
-Revocation derivation, fsync binding, close-failure semantics, write-failure
-injection, and the deliberate power-cut matrix at every commit and recovery
-durability boundary are not complete. The admitted
+under a deliberately injected pre-commit mutation failure is not yet proven.
+Once a storage operation has started, rollback would be unsafe because an
+unknown prefix may already be durable; the retained plan is retried instead.
+VFS mutations do not collect the touched offset range and revocation set needed
+to use that classifier. Revocation derivation, fsync binding, and close-failure
+semantics remain incomplete. The admitted
 `JournalRing` is also retained for the full Rust mount lifetime. C opens a
 writable NVMe lease before unmount preparation; Rust
 re-emits the same pending clean plan after a failed write or flush, acknowledges

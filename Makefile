@@ -366,7 +366,7 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d) $(SDL2_OBJECTS:.o=.d)
 # They never create a file of their own name, so they rerun regardless.
 .PHONY: all audio-wav-tests capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios dynamic-elf-tests ext4-images ext4-tests fat32-images hooks https-tests \
 	iso kernel lint native-apps native-audio-proof native-dynamic-proof native-https-proof native-sdl-proof port-tests qemu-port-tests reproducible-sdk run \
-	package-manager-tests package-repository-tests package-service-tests package-state-tests package-transaction-tests screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests zlib-tests
+	package-manager-tests package-repository-tests package-service-tests package-state-tests package-transaction-tests qemu-test-ext4-powercuts screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests zlib-tests
 
 all: kernel
 
@@ -2079,6 +2079,19 @@ qemu-test-native-https: $(TEST_BUILD_DIR)/native-https/sapote.iso
 		--data '$(HTTPSAPP_DATA_IMAGE)' --full '$(FAT32_FULL_IMAGE)' \
 		--qemu qemu-system-x86_64 --python '$(PYTHON)' \
 		--accel '$(QEMU_ACCEL)' --timeout 180
+
+qemu-test-ext4-powercuts: $(KERNEL) $(EXT4_FIXTURE) \
+		tools/ext4_image.py tools/ext4_powercut_test.py
+	@for tool in qemu-system-x86_64 $(GRUB_MKRESCUE) $(PYTHON); do \
+		command -v $$tool >/dev/null 2>&1 || { echo "missing tool: $$tool"; exit 1; }; \
+	done
+	rm -rf '$(TEST_BUILD_DIR)/ext4-powercuts'
+	$(PYTHON) tools/ext4_powercut_test.py \
+		--kernel '$(KERNEL)' --fixture '$(EXT4_FIXTURE)' \
+		--output '$(TEST_BUILD_DIR)/ext4-powercuts' \
+		--qemu qemu-system-x86_64 --grub-mkrescue '$(GRUB_MKRESCUE)' \
+		$(if $(GRUB_MODULE_DIR),--grub-module-dir '$(GRUB_MODULE_DIR)') \
+		--accel '$(QEMU_ACCEL)' --timeout 90
 
 qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 	@for tool in qemu-system-x86_64 timeout grep; do \

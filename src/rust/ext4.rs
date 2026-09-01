@@ -158,8 +158,16 @@ impl JournalStorage for SapoteJournalStorage {
         }
     }
 
-    fn flush(&mut self, _boundary: JournalFlush) -> Result<(), Self::Error> {
-        if crate::abi::ext4_block_flush(self.context) {
+    fn flush(&mut self, boundary: JournalFlush) -> Result<(), Self::Error> {
+        let boundary = match boundary {
+            JournalFlush::FilesystemState => 0,
+            JournalFlush::OrderedData => 1,
+            JournalFlush::JournalPayload => 2,
+            JournalFlush::Commit => 3,
+            JournalFlush::Checkpoint => 4,
+            JournalFlush::JournalState => 5,
+        };
+        if crate::abi::ext4_block_flush(self.context, boundary) {
             Ok(())
         } else {
             Err(BlockStorageError)

@@ -9,6 +9,7 @@
 #include <sapote/boot_ledger.h>
 #include <sapote/boot_plan.h>
 #include <sapote/console.h>
+#include <sapote/ext4_fs.h>
 #include <sapote/fat32_fs.h>
 #include <sapote/native_process.h>
 #include <sapote/package_service.h>
@@ -135,6 +136,12 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     console_write("Sapote: FAT32 store controls ");
     console_write_u64(filesystem_tests);
     console_write("/6 passed\n");
+    if (installed_context.test_scenario == KERNEL_TEST_EXT4_RECOVERY &&
+        !ext4_backend_test_configure_power_cut(
+            installed_context.information.command_line,
+            installed_context.information.command_line_length)) {
+        console_panic("invalid ext4 power-cut configuration");
+    }
     sapfs_initialize();
     if (installed_context.test_scenario == KERNEL_TEST_NORMAL) {
         recover_package_state();

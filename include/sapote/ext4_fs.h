@@ -70,6 +70,22 @@ struct sapote_ext4_mount_diagnostic {
     uint32_t nvme_resource_mismatches;
 };
 
+enum sapote_ext4_flush_boundary {
+    SAPOTE_EXT4_FLUSH_FILESYSTEM_STATE = 0,
+    SAPOTE_EXT4_FLUSH_ORDERED_DATA,
+    SAPOTE_EXT4_FLUSH_JOURNAL_PAYLOAD,
+    SAPOTE_EXT4_FLUSH_COMMIT,
+    SAPOTE_EXT4_FLUSH_CHECKPOINT,
+    SAPOTE_EXT4_FLUSH_JOURNAL_STATE,
+    SAPOTE_EXT4_FLUSH_COUNT
+};
+
+enum sapote_ext4_test_storage_kind {
+    SAPOTE_EXT4_TEST_STORAGE_WRITE = 0,
+    SAPOTE_EXT4_TEST_STORAGE_FLUSH,
+    SAPOTE_EXT4_TEST_STORAGE_KIND_COUNT
+};
+
 /* Private Rust/C storage callbacks; valid only during a backend operation. */
 int32_t sapote_ext4_block_read(
     uintptr_t context,
@@ -83,7 +99,7 @@ int32_t sapote_ext4_block_write(
     const uint8_t *source,
     size_t length
 );
-int32_t sapote_ext4_block_flush(uintptr_t context);
+int32_t sapote_ext4_block_flush(uintptr_t context, uint32_t boundary);
 
 void ext4_backend_initialize(void);
 enum sapfs_status ext4_backend_mount(enum sapfs_volume volume);
@@ -108,6 +124,13 @@ enum sapfs_status ext4_backend_pread(sapfs_handle handle,
 enum sapfs_status ext4_backend_transaction_probe(enum sapfs_volume volume,
     const char *path, uint64_t offset, const uint8_t *source,
     size_t source_bytes, size_t *written_bytes);
+/* Private ext4-recovery scenario controls; never installed in the VFS table. */
+bool ext4_backend_test_configure_power_cut(const char *command_line,
+    size_t command_line_length);
+bool ext4_backend_test_power_cut_configured(void);
+bool ext4_backend_test_fail_storage_once(uint32_t operation_ordinal);
+bool ext4_backend_test_storage_failure_observed(
+    enum sapote_ext4_test_storage_kind expected_kind);
 enum sapfs_status ext4_backend_write(sapfs_handle handle,
     const uint8_t *source, size_t source_bytes, size_t *written_bytes);
 enum sapfs_status ext4_backend_seek(sapfs_handle handle, int64_t offset,

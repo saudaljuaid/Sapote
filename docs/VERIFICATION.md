@@ -62,6 +62,8 @@ The QEMU suite covers:
 - boot, exception entry, APIC routing, clocks, paging, heap, and threads;
 - framebuffer, cached surfaces, keyboard, pointer, shell, and Redwood;
 - PCI, MSI-X, DMA, xHCI, NVMe, FAT32, and filesystem recovery;
+- ext4 recovery and commit power cuts at every named NVMe flush boundary,
+  followed by reboot, namespace/data checks, resource census, and `e2fsck`;
 - ELF64 loading, isolated processes, user faults, and BusyBox profiles;
 - virtio-net, DHCP, DNS, ICMP, UDP, TCP, HTTP, and downloads to FAT32;
 - PCI driver binding, HD Audio codec transport, and NVIDIA device-model

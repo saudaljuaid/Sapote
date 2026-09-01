@@ -107,6 +107,7 @@ jobs:
             - name: Prove faults and interrupts in QEMU
               run: |
                   make qemu-test-ext4-recovery
+                  make qemu-test-ext4-powercuts
                   make qemu-test-redwood-proof-userland-interactive
                   make qemu-test-fat32-data
                   make qemu-test-fat32-nested qemu-test-fat32-growth \
@@ -117,3 +118,9 @@ jobs:
                       qemu-test-fat32-cache qemu-test-fat32-immutable \
                       qemu-test-fat32-handles
                   make qemu-tests
+            - name: Upload ext4 durability evidence
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+              with:
+                  name: sapote-ext4-powercuts
+                  path: build/tests/ext4-powercuts
+                  if-no-files-found: error

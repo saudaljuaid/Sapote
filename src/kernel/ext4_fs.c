@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <sapote/console.h>
+#include <sapote/cpu.h>
 #include <sapote/ext4_fs.h>
 #include <sapote/nvme.h>
 
@@ -11,6 +13,9 @@
 #define EXT4_CONTROLLER_SYSTEM 0U
 #define EXT4_CONTROLLER_DATA 1U
 #define EXT4_TRANSACTION_PROBE_MAX_BYTES (64U * 4096U)
+#define EXT4_POWER_CUT_BOUNDARY_COUNT 10U
+#define EXT4_POWER_CUT_EXIT_PORT UINT16_C(0xf4)
+#define EXT4_POWER_CUT_EXIT_VALUE UINT32_C(0x6e)
 
 struct ext4_mount_state {
     struct nvme_volume_session session;
@@ -45,6 +50,15 @@ static struct sapote_ext4_mount_diagnostic
     ext4_mount_diagnostics[SAPFS_VOLUME_COUNT];
 static uint64_t next_mount_generation = UINT64_C(1);
 static uint64_t next_handle_generation = UINT64_C(1);
+static bool ext4_test_configured;
+static uint32_t ext4_test_power_cut_boundary;
+static uint32_t ext4_test_durable_boundary;
+static bool ext4_test_storage_failure_armed;
+static bool ext4_test_storage_failure_seen;
+static uint32_t ext4_test_storage_failure_target;
+static uint32_t ext4_test_storage_operation;
+static enum sapote_ext4_test_storage_kind ext4_test_storage_failure_kind =
+    SAPOTE_EXT4_TEST_STORAGE_KIND_COUNT;
 
 extern int32_t sapote_ext4_mount(uintptr_t context, uint64_t media_bytes,
     struct sapote_ext4_identity *identity, uintptr_t *mounted_out);
@@ -106,6 +120,160 @@ static size_t path_length(const char *path)
         ++length;
     }
     return length;
+}
+
+static bool token_has_prefix(const char *token, size_t token_length,
+    const char *prefix, size_t prefix_length)
+{
+    if (token == NULL || prefix == NULL || token_length < prefix_length) {
+        return false;
+    }
+    for (size_t index = 0U; index < prefix_length; ++index) {
+        if (token[index] != prefix[index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ext4_backend_test_configure_power_cut(const char *command_line,
+    size_t command_line_length)
+{
+    static const char prefix[] = "sapote.ext4-cut=";
+    uint32_t selected = 0U;
+    size_t offset = 0U;
+    bool found = false;
+
+    if (ext4_test_configured || command_line == NULL) {
+        return false;
+    }
+    while (offset < command_line_length) {
+        size_t start;
+        size_t length;
+        uint32_t value = 0U;
+
+        while (offset < command_line_length && command_line[offset] == ' ') {
+            ++offset;
+        }
+        start = offset;
+        while (offset < command_line_length && command_line[offset] != ' ') {
+            ++offset;
+        }
+        length = offset - start;
+        if (!token_has_prefix(command_line + start, length, prefix,
+                sizeof(prefix) - 1U)) {
+            continue;
+        }
+        if (found || length == sizeof(prefix) - 1U) {
+            return false;
+        }
+        for (size_t index = sizeof(prefix) - 1U; index < length; ++index) {
+            const char digit = command_line[start + index];
+
+            if (digit < '0' || digit > '9' ||
+                value > (UINT32_MAX - (uint32_t)(digit - '0')) / 10U) {
+                return false;
+            }
+            value = value * 10U + (uint32_t)(digit - '0');
+        }
+        if (value == 0U || value > EXT4_POWER_CUT_BOUNDARY_COUNT) {
+            return false;
+        }
+        selected = value;
+        found = true;
+    }
+    ext4_test_configured = true;
+    ext4_test_power_cut_boundary = selected;
+    ext4_test_durable_boundary = 0U;
+    return true;
+}
+
+bool ext4_backend_test_power_cut_configured(void)
+{
+    return ext4_test_configured && ext4_test_power_cut_boundary != 0U;
+}
+
+bool ext4_backend_test_fail_storage_once(uint32_t operation_ordinal)
+{
+    if (!ext4_test_configured || ext4_test_power_cut_boundary != 0U ||
+        ext4_test_storage_failure_armed || operation_ordinal == 0U) {
+        return false;
+    }
+    ext4_test_storage_failure_armed = true;
+    ext4_test_storage_failure_seen = false;
+    ext4_test_storage_failure_target = operation_ordinal;
+    ext4_test_storage_operation = 0U;
+    ext4_test_storage_failure_kind = SAPOTE_EXT4_TEST_STORAGE_KIND_COUNT;
+    return true;
+}
+
+bool ext4_backend_test_storage_failure_observed(
+    enum sapote_ext4_test_storage_kind expected_kind)
+{
+    const bool observed = ext4_test_storage_failure_seen &&
+        !ext4_test_storage_failure_armed &&
+        ext4_test_storage_failure_kind == expected_kind;
+
+    ext4_test_storage_failure_seen = false;
+    ext4_test_storage_failure_kind = SAPOTE_EXT4_TEST_STORAGE_KIND_COUNT;
+    return observed;
+}
+
+static bool fail_test_storage_operation(
+    enum sapote_ext4_test_storage_kind kind)
+{
+    if (!ext4_test_storage_failure_armed) {
+        return false;
+    }
+    if (ext4_test_storage_operation == UINT32_MAX) {
+        return true;
+    }
+    ++ext4_test_storage_operation;
+    if (ext4_test_storage_operation != ext4_test_storage_failure_target) {
+        return false;
+    }
+    ext4_test_storage_failure_armed = false;
+    ext4_test_storage_failure_seen = true;
+    ext4_test_storage_failure_kind = kind;
+    return true;
+}
+
+static const char *flush_boundary_name(uint32_t boundary)
+{
+    switch (boundary) {
+    case SAPOTE_EXT4_FLUSH_FILESYSTEM_STATE: return "filesystem-state";
+    case SAPOTE_EXT4_FLUSH_ORDERED_DATA: return "ordered-data";
+    case SAPOTE_EXT4_FLUSH_JOURNAL_PAYLOAD: return "journal-payload";
+    case SAPOTE_EXT4_FLUSH_COMMIT: return "commit";
+    case SAPOTE_EXT4_FLUSH_CHECKPOINT: return "checkpoint";
+    case SAPOTE_EXT4_FLUSH_JOURNAL_STATE: return "journal-state";
+    default: return NULL;
+    }
+}
+
+static void report_durable_boundary(uint32_t boundary)
+{
+    const char *name = flush_boundary_name(boundary);
+
+    if (!ext4_test_configured || name == NULL) {
+        return;
+    }
+    ++ext4_test_durable_boundary;
+    console_write("ST EXT4 DURABLE ");
+    console_write_u64(ext4_test_durable_boundary);
+    console_putc(' ');
+    console_write(name);
+    console_putc('\n');
+    if (ext4_test_durable_boundary != ext4_test_power_cut_boundary) {
+        return;
+    }
+    console_write("ST EXT4 POWER CUT ");
+    console_write_u64(ext4_test_durable_boundary);
+    console_putc(' ');
+    console_write(name);
+    console_putc('\n');
+    cpu_out32(EXT4_POWER_CUT_EXIT_PORT, EXT4_POWER_CUT_EXIT_VALUE);
+    console_halt();
 }
 
 static bool valid_volume(enum sapfs_volume volume)
@@ -291,6 +459,9 @@ int32_t sapote_ext4_block_write(
         length > mount->media_bytes - start_byte) {
         return -1;
     }
+    if (fail_test_storage_operation(SAPOTE_EXT4_TEST_STORAGE_WRITE)) {
+        return -1;
+    }
     while (remaining != 0U) {
         const uint64_t lba = position / session->logical_block_bytes;
         const size_t within = (size_t)(position % session->logical_block_bytes);
@@ -323,19 +494,29 @@ int32_t sapote_ext4_block_write(
 }
 
 /* Establish one real NVMe durability boundary for the Rust journal executor. */
-int32_t sapote_ext4_block_flush(uintptr_t context)
+int32_t sapote_ext4_block_flush(uintptr_t context, uint32_t boundary)
 {
     struct ext4_mount_state *mount = (struct ext4_mount_state *)context;
     struct nvme_volume_session *session;
+    enum nvme_status status;
 
-    if (mount == NULL || !mount->operation_active) {
+    if (mount == NULL || !mount->operation_active ||
+        flush_boundary_name(boundary) == NULL) {
         return -1;
     }
     session = &mount->session;
     if (!session->active || !session->writable) {
         return -1;
     }
-    return nvme_volume_flush(session) == NVME_STATUS_OK ? 0 : -1;
+    if (fail_test_storage_operation(SAPOTE_EXT4_TEST_STORAGE_FLUSH)) {
+        return -1;
+    }
+    status = nvme_volume_flush(session);
+    if (status != NVME_STATUS_OK) {
+        return -1;
+    }
+    report_durable_boundary(boundary);
+    return 0;
 }
 
 static enum sapfs_status checked_stat(
@@ -438,6 +619,12 @@ void ext4_backend_initialize(void)
 {
     zero_bytes(ext4_mounts, sizeof(ext4_mounts));
     zero_bytes(ext4_handles, sizeof(ext4_handles));
+    ext4_test_durable_boundary = 0U;
+    ext4_test_storage_failure_armed = false;
+    ext4_test_storage_failure_seen = false;
+    ext4_test_storage_failure_target = 0U;
+    ext4_test_storage_operation = 0U;
+    ext4_test_storage_failure_kind = SAPOTE_EXT4_TEST_STORAGE_KIND_COUNT;
     for (enum sapfs_volume volume = SAPFS_VOLUME_SYSTEM;
          volume < SAPFS_VOLUME_COUNT; ++volume) {
         ext4_last_mount_status[volume] = SAPFS_STATUS_NOT_MOUNTED;

@@ -124,14 +124,15 @@ pub(crate) fn ext4_block_write(context: usize, start_byte: u64, source: &[u8]) -
 }
 
 /// Flush every preceding write through the active C-owned ext4 session.
-pub(crate) fn ext4_block_flush(context: usize) -> bool {
+pub(crate) fn ext4_block_flush(context: usize, boundary: u32) -> bool {
     unsafe extern "C" {
-        fn sapote_ext4_block_flush(context: usize) -> i32;
+        fn sapote_ext4_block_flush(context: usize, boundary: u32) -> i32;
     }
 
     // SAFETY: `context` is the authenticated token installed by the C mount
-    // operation; C rejects inactive and read-only sessions.
-    unsafe { sapote_ext4_block_flush(context) == 0 }
+    // operation; C rejects inactive and read-only sessions. `boundary` is an
+    // explicitly mapped ABI value rather than Rust enum layout.
+    unsafe { sapote_ext4_block_flush(context, boundary) == 0 }
 }
 
 const _: () = {

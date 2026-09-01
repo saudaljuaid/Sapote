@@ -142,9 +142,14 @@ bitmap checksum independently, reopen the appended byte, and require read-only
 The stage is not yet connected to VFS mutations, which do not yet collect their
 touched offset range and revocation set for the classifier. The retry-safe
 final-clean plan is bound to VFS unmount through a writable NVMe lease, but the
-VFS cannot make a dirty mount yet. Allocation rollback, failure injection,
-fsync semantics, and the complete deliberate recovery power-cut QEMU matrix are
-also incomplete. Those gaps keep every user-facing Sapote ext4 operation
+VFS cannot make a dirty mount yet. The private QEMU probe retains one
+allocation-bearing transaction across an injected live-superblock write
+failure and an injected ordered-data flush failure. A separate Linux target
+cuts ten independent VMs immediately after every named durability barrier,
+reboots each disk, and requires namespace, data, resource, and read-only
+`e2fsck` acceptance. Deliberately injected pre-commit allocation rollback,
+revocation derivation, and fsync/close semantics remain incomplete. Those gaps
+keep every user-facing Sapote ext4 operation
 read-only even though the private recovery and unmount leases are writable.
 
 Sapote also tightens upstream writer admission: an image carrying ext4's

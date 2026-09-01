@@ -4785,6 +4785,7 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
     size_t read_bytes = 0U;
     size_t written_bytes = 0U;
     bool contents_match = true;
+    const bool power_cut = ext4_backend_test_power_cut_configured();
     const uint64_t before = sapfs_completion_count(SAPFS_VOLUME_SYSTEM);
 
     if (active_scenario != KERNEL_TEST_EXT4_RECOVERY) {
@@ -4836,9 +4837,19 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
     if (!ext4_backend_recovery_report(SAPFS_VOLUME_SYSTEM, &recovery)) {
         kernel_test_fail("ext4 recovery report is unavailable");
     }
-    if (!recovery.performed || recovery.transactions != 0U ||
-        recovery.replayed_blocks != 0U || recovery.consumed_slots != 0U) {
-        kernel_test_fail("ext4 marker-only recovery report is invalid");
+    if (recovery.performed) {
+        if ((recovery.transactions == 0U &&
+                (recovery.replayed_blocks != 0U ||
+                 recovery.consumed_slots != 0U)) ||
+            (recovery.transactions != 0U &&
+                (recovery.transactions != 1U ||
+                 recovery.replayed_blocks == 0U ||
+                 recovery.consumed_slots != recovery.replayed_blocks + 2U))) {
+            kernel_test_fail("ext4 recovery report is inconsistent");
+        }
+    } else if (recovery.transactions != 0U || recovery.replayed_blocks != 0U ||
+        recovery.consumed_slots != 0U) {
+        kernel_test_fail("clean ext4 mount reported journal recovery");
     }
     if (sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "system/README.TXT", &stat) !=
             SAPFS_STATUS_OK || stat.directory || !stat.read_only ||
@@ -4865,6 +4876,22 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
             SAPFS_STATUS_READ_ONLY ||
         sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_READ_ONLY) {
         kernel_test_fail("ext4 recovery escaped the read-only VFS gate");
+    }
+    if (!power_cut) {
+        if (!ext4_backend_test_fail_storage_once(3U) ||
+            ext4_backend_transaction_probe(SAPFS_VOLUME_SYSTEM,
+                "system/README.TXT", UINT64_C(4096), &transaction_byte,
+                sizeof(transaction_byte), &written_bytes) != SAPFS_STATUS_IO ||
+            !ext4_backend_test_storage_failure_observed(
+                SAPOTE_EXT4_TEST_STORAGE_WRITE) ||
+            !ext4_backend_test_fail_storage_once(3U) ||
+            ext4_backend_transaction_probe(SAPFS_VOLUME_SYSTEM,
+                "system/README.TXT", UINT64_C(4096), &transaction_byte,
+                sizeof(transaction_byte), &written_bytes) != SAPFS_STATUS_IO ||
+            !ext4_backend_test_storage_failure_observed(
+                SAPOTE_EXT4_TEST_STORAGE_FLUSH)) {
+            kernel_test_fail("ext4 pending allocation failure retry is invalid");
+        }
     }
     if (ext4_backend_transaction_probe(SAPFS_VOLUME_SYSTEM,
             "system/README.TXT", UINT64_C(4096), &transaction_byte,
