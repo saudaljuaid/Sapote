@@ -978,6 +978,12 @@ impl JournalTransaction {
         Ok(())
     }
 
+    /// Return whether this transaction revokes an older image of `block_index`.
+    #[must_use]
+    pub fn revokes_block(&self, block_index: u64) -> bool {
+        self.revoked_blocks.contains(&block_index)
+    }
+
     /// Return the exact descriptor/data/revoke/commit slot requirement.
     pub fn required_journal_slots(&self) -> Result<usize, JournalTransactionError> {
         if self.metadata.is_empty() {

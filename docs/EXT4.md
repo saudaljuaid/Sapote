@@ -216,14 +216,17 @@ now gives synchronous ext4plus mutations an immutable backing reader and a
 copy-on-write overlay: the first partial write reads a complete 4 KiB home
 block, later writes coalesce into it, reads see the overlay, and at most 64
 complete images can be exported without any home write. Rollback clears the
-overlay and requires discarding the mutated ext4plus object as well.
+overlay and requires discarding the mutated ext4plus object as well. An atomic
+snapshot builder requires every caller-named ordered file-data block to exist
+exactly once in the stage, journals every remaining image as metadata, refuses
+a staged/revoked overlap, and leaves the input transaction unchanged on error.
 
 The stage is retained for the full Rust mount lifetime and both unmount phases
 refuse a nonempty overlay, so no unclassified upstream mutation can be silently
-dropped. It is not yet connected to VFS mutations or classified into ordered
-file data versus journaled metadata. Allocation rollback and revocations,
-fsync binding, write-failure injection, and the deliberate power-cut matrix at
-every commit and recovery durability boundary are not complete. The admitted
+dropped. VFS mutations do not yet provide the regular-file block mapping and
+revocation set needed to use that classifier. Allocation rollback, fsync
+binding, write-failure injection, and the deliberate power-cut matrix at every
+commit and recovery durability boundary are not complete. The admitted
 `JournalRing` is also retained for the full Rust mount lifetime. C opens a
 writable NVMe lease before unmount preparation; Rust
 re-emits the same pending clean plan after a failed write or flush, acknowledges

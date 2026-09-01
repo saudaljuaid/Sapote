@@ -4,10 +4,10 @@
 use ext4plus::{
     Ext4, Ext4Read, Ext4Write, FILESYSTEM_SUPERBLOCK_START_BYTE, JOURNAL_BLOCK_BYTES,
     JournalCommitOperation, JournalExecutionError, JournalFlush, JournalMutationStage,
-    JournalMutationStageError, JournalPreparedTransaction, JournalRecordKind, JournalRing,
-    JournalStorage, JournalSuperblockImage, JournalTransaction, JournalTransactionError,
-    execute_commit_operations, load_journal_inode_map, recover_committed_ring,
-    replay_committed_transaction,
+    JournalMutationPlanError, JournalMutationStageError, JournalPreparedTransaction,
+    JournalRecordKind, JournalRing, JournalStorage, JournalSuperblockImage, JournalTransaction,
+    JournalTransactionError, execute_commit_operations, load_journal_inode_map,
+    recover_committed_ring, replay_committed_transaction,
 };
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -200,6 +200,55 @@ fn mutation_stage_coalesces_partial_blocks_without_writing_through() {
     assert_eq!(error.to_string(), JournalMutationStageError::TooManyBlocks.to_string());
     assert_eq!(stage.staged_block_count(), 64);
     assert_eq!(backing[65 * JOURNAL_BLOCK_BYTES], (65 * JOURNAL_BLOCK_BYTES % 251) as u8);
+}
+
+#[test]
+fn mutation_stage_classifies_one_atomic_journal_transaction() {
+    let backing = Rc::new(vec![0u8; JOURNAL_BLOCK_BYTES * 8]);
+    let stage = JournalMutationStage::new(
+        Box::new(backing),
+        u64::try_from(JOURNAL_BLOCK_BYTES * 8).unwrap(),
+    )
+    .unwrap();
+    let base = JournalTransaction::new(7, UUID, MAXIMUM_BLOCK).unwrap();
+    assert_eq!(
+        stage.build_transaction(&base, &[]).unwrap_err(),
+        JournalMutationPlanError::EmptyStage
+    );
+    Ext4Write::write(&stage, JOURNAL_BLOCK_BYTES as u64, &[0x11]).unwrap();
+    Ext4Write::write(&stage, JOURNAL_BLOCK_BYTES as u64 * 2, &[0x22]).unwrap();
+    assert_eq!(
+        stage.build_transaction(&base, &[3]).unwrap_err(),
+        JournalMutationPlanError::OrderedDataNotStaged
+    );
+    assert_eq!(
+        stage.build_transaction(&base, &[2, 2]).unwrap_err(),
+        JournalMutationPlanError::DuplicateOrderedData
+    );
+
+    let classified = stage.build_transaction(&base, &[2]).unwrap();
+    assert_eq!(
+        base.required_journal_slots(),
+        Err(JournalTransactionError::EmptyTransaction)
+    );
+    let plan = classified.commit_plan(&[3000, 3001, 3002]).unwrap();
+    assert!(matches!(
+        &plan[0],
+        JournalCommitOperation::WriteOrderedData(image) if image.block_index() == 2
+    ));
+    assert_eq!(plan[1], JournalCommitOperation::Flush(JournalFlush::OrderedData));
+    assert!(matches!(
+        &plan[7],
+        JournalCommitOperation::WriteHomeMetadata(image) if image.block_index() == 1
+    ));
+    assert_eq!(plan[8], JournalCommitOperation::Flush(JournalFlush::Checkpoint));
+
+    let mut revoked = base.clone();
+    revoked.stage_revocation(1).unwrap();
+    assert_eq!(
+        stage.build_transaction(&revoked, &[2]).unwrap_err(),
+        JournalMutationPlanError::StagedBlockRevoked
+    );
 }
 
 fn install_journal_writes(

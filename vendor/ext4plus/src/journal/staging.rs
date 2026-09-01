@@ -10,7 +10,8 @@
 
 use super::transaction::{
     FILESYSTEM_SUPERBLOCK_START_BYTE, JOURNAL_BLOCK_BYTES,
-    JOURNAL_TRANSACTION_MAX_METADATA_BLOCKS, JournalBlockImage,
+    JOURNAL_TRANSACTION_MAX_METADATA_BLOCKS, JournalBlockImage, JournalTransaction,
+    JournalTransactionError,
 };
 use crate::error::BoxedError;
 use crate::sync::RwLock;
@@ -45,6 +46,47 @@ impl Display for JournalMutationStageError {
 }
 
 impl Error for JournalMutationStageError {}
+
+/// A refusal while classifying one immutable stage snapshot for JBD2.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum JournalMutationPlanError {
+    /// No upstream block image was captured for the requested transaction.
+    EmptyStage,
+    /// A block named as ordered file data is not present in the stage.
+    OrderedDataNotStaged,
+    /// The ordered file-data classification repeats one staged block.
+    DuplicateOrderedData,
+    /// A current staged image is also named as an older-image revocation.
+    StagedBlockRevoked,
+    /// The resulting bounded JBD2 transaction is invalid.
+    Transaction(JournalTransactionError),
+}
+
+impl Display for JournalMutationPlanError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyStage => formatter.write_str("mutation stage is empty"),
+            Self::OrderedDataNotStaged => {
+                formatter.write_str("ordered data block is not staged")
+            }
+            Self::DuplicateOrderedData => {
+                formatter.write_str("ordered data classification repeats a block")
+            }
+            Self::StagedBlockRevoked => {
+                formatter.write_str("staged mutation block is also revoked")
+            }
+            Self::Transaction(error) => Display::fmt(error, formatter),
+        }
+    }
+}
+
+impl Error for JournalMutationPlanError {}
+
+impl From<JournalTransactionError> for JournalMutationPlanError {
+    fn from(error: JournalTransactionError) -> Self {
+        Self::Transaction(error)
+    }
+}
 
 /// A bounded overlay that never writes through to its backing reader.
 ///
@@ -103,6 +145,44 @@ impl JournalMutationStage {
                 JournalBlockImage::from_staged(*block_index, bytes.clone())
             })
             .collect()
+    }
+
+    /// Classify one atomic stage snapshot into ordered data and metadata.
+    ///
+    /// Every named ordered-data block must occur exactly once in this stage.
+    /// Every remaining staged image is journaled as metadata. The supplied
+    /// transaction is cloned before classification, so a refusal cannot leave
+    /// the caller's transaction partially populated. Callers must prevent new
+    /// upstream writes until the returned transaction is durably resolved.
+    pub fn build_transaction(
+        &self,
+        transaction: &JournalTransaction,
+        ordered_data_blocks: &[u64],
+    ) -> Result<JournalTransaction, JournalMutationPlanError> {
+        let blocks = self.blocks.read();
+        if blocks.is_empty() {
+            return Err(JournalMutationPlanError::EmptyStage);
+        }
+        for (index, block) in ordered_data_blocks.iter().enumerate() {
+            if ordered_data_blocks[..index].contains(block) {
+                return Err(JournalMutationPlanError::DuplicateOrderedData);
+            }
+            if !blocks.contains_key(block) {
+                return Err(JournalMutationPlanError::OrderedDataNotStaged);
+            }
+        }
+        let mut output = transaction.clone();
+        for (block, bytes) in blocks.iter() {
+            if output.revokes_block(*block) {
+                return Err(JournalMutationPlanError::StagedBlockRevoked);
+            }
+            if ordered_data_blocks.contains(block) {
+                output.stage_ordered_data(*block, bytes)?;
+            } else {
+                output.stage_metadata(*block, bytes)?;
+            }
+        }
+        Ok(output)
     }
 
     /// Discard every staged byte.

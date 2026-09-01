@@ -194,7 +194,9 @@ pub use journal::transaction::{
     replay_committed_transaction,
 };
 #[cfg(feature = "sync")]
-pub use journal::staging::{JournalMutationStage, JournalMutationStageError};
+pub use journal::staging::{
+    JournalMutationPlanError, JournalMutationStage, JournalMutationStageError,
+};
 pub use label::Label;
 pub use mem_io_error::MemIoError;
 pub use metadata::Metadata;
