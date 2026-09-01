@@ -2,13 +2,20 @@
 
 # Bounded native HTTPS profile
 
-`sapote_https_get()` is a bounded HTTP/1.1 download operation over
-Sapote's BearSSL TLS 1.2 client. It is a Ring 3 SDK facility; it reaches the
-network only through `sapote_dns_resolve()` and the Sapote stream API.
+`sapote_https_get()` and `sapote_https_get_stream()` are bounded HTTP/1.1
+download operations over Sapote's BearSSL TLS 1.2 client. They are Ring 3 SDK
+facilities; they reach the network only through `sapote_dns_resolve()` and the
+Sapote stream API. The first fills one caller buffer. The streaming form uses a
+bounded 4 KiB transfer buffer and requires a sink to accept each complete chunk,
+so repository indexes and packages do not need one contiguous application
+allocation. A short or failed sink write aborts the connection with a distinct
+status; callers can therefore stage to a temporary file, hash, sync, and publish
+only after the complete authenticated response succeeds.
 
 The caller supplies one lowercase DNS hostname, a port, an origin-form path,
 an immutable external trust-anchor set, one absolute monotonic deadline, and a
-fixed output buffer. The TLS layer snapshots at most 16 anchors and 80 KiB of
+fixed output buffer or maximum streamed body length. The TLS layer snapshots at
+most 16 anchors and 80 KiB of
 anchor bytes before performing external work. DNS, SNI, the HTTP `Host` field,
 and X.509 hostname validation use the same hostname. BearSSL checks the chain
 against the explicitly supplied anchors and checks validity against the
@@ -58,8 +65,10 @@ No key or certificate is generated during a test. These are public test-only
 keys and must never be installed as production roots.
 
 `tools/https_host_test.py` drives the compiled SDK source and pinned BearSSL
-archive over real loopback TCP. Its success case verifies the canonical
-request, chain, hostname, time, exact body, and authenticated close. Negative
+archive over real loopback TCP. Its buffered and streaming success cases verify
+the canonical request, chain, hostname, time, exact body, and authenticated
+close; a separate case proves sink refusal tears down without accepting a
+partial result. Negative
 peers name and prove hostname, expired, future, untrusted, timeout,
 reset, truncated TLS, wrong HTTP version/status, duplicate or transfer framing,
 non-identity content encoding, malformed line endings, missing/oversized

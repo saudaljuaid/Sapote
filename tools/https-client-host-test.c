@@ -420,6 +420,29 @@ static int parse_unsigned(const char *text, unsigned long maximum,
     return 0;
 }
 
+struct stream_sink {
+    unsigned char body[128];
+    size_t used;
+    bool refuse;
+};
+
+static long stream_body_write(
+    void *context,
+    const void *bytes,
+    size_t byte_count
+)
+{
+    struct stream_sink *sink = context;
+    if (sink == NULL || bytes == NULL || sink->refuse ||
+        sink->used > sizeof(sink->body) ||
+        byte_count > sizeof(sink->body) - sink->used) {
+        return -(long)SAPOTE_EIO;
+    }
+    (void)memcpy(sink->body + sink->used, bytes, byte_count);
+    sink->used += byte_count;
+    return (long)byte_count;
+}
+
 static int run_cancel(const char *hostname, uint64_t deadline_ns)
 {
     struct sapote_tls_client *client = NULL;
@@ -530,7 +553,7 @@ int main(int argc, char **argv)
 #endif
     if (argc != 5 || parse_unsigned(argv[1], UINT16_MAX, &parsed_port) != 0 ||
         parsed_port == 0U ||
-        parse_unsigned(argv[4], SAPOTE_HTTPS_CLOSE, &expected) != 0) {
+        parse_unsigned(argv[4], SAPOTE_HTTPS_BODY_WRITE, &expected) != 0) {
         fprintf(stderr, "usage: %s PORT HOSTNAME MODE EXPECTED_STATUS\n",
             argv[0]);
         result = 2;
@@ -549,6 +572,35 @@ int main(int argc, char **argv)
     } else if (strcmp(mode, "expired-operation") == 0) {
         result = expected == SAPOTE_HTTPS_TIMEOUT ?
             run_expired_operation(hostname, deadline_ns) : 1;
+    } else if (strcmp(mode, "stream-success") == 0 ||
+            strcmp(mode, "stream-refusal") == 0) {
+        struct stream_sink sink = {{0U}, 0U,
+            strcmp(mode, "stream-refusal") == 0};
+        struct sapote_https_response response;
+        const struct sapote_https_stream_request request = {
+            hostname, peer_port, 0U, "/artifact.bin",
+            sapote_https_test_anchors,
+            sizeof(sapote_https_test_anchors) /
+                sizeof(sapote_https_test_anchors[0]),
+            deadline_ns, sizeof(sink.body), stream_body_write, &sink};
+        const enum sapote_https_status status =
+            sapote_https_get_stream(&request, &response);
+        static const unsigned char expected_body[] =
+            "hello from the Sapote HTTPS peer\n";
+
+        printf("HTTPS STREAM RESULT %u %s tls=%d transport=%ld handles=%u\n",
+            (unsigned)status, sapote_https_status_string(status),
+            response.bearssl_error, response.transport_error, live_handles);
+        if ((unsigned long)status != expected ||
+            (status == SAPOTE_HTTPS_OK &&
+             (response.status_code != 200U ||
+              response.body_length != sizeof(expected_body) - 1U ||
+              sink.used != sizeof(expected_body) - 1U ||
+              memcmp(sink.body, expected_body,
+                  sizeof(expected_body) - 1U) != 0)) ||
+            (status == SAPOTE_HTTPS_BODY_WRITE && sink.used != 0U)) {
+            result = 1;
+        }
     } else {
         unsigned char body[128];
         struct sapote_https_response response;

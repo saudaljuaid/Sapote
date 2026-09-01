@@ -77,8 +77,15 @@ enum sapote_https_status {
     SAPOTE_HTTPS_CONTENT_TOO_LARGE,
     SAPOTE_HTTPS_BODY_TRUNCATED,
     SAPOTE_HTTPS_BODY_EXTRA,
-    SAPOTE_HTTPS_CLOSE
+    SAPOTE_HTTPS_CLOSE,
+    SAPOTE_HTTPS_BODY_WRITE
 };
+
+typedef long (*sapote_https_body_write_function)(
+    void *context,
+    const void *bytes,
+    size_t byte_count
+);
 
 struct sapote_https_request {
     const char *hostname;
@@ -99,6 +106,19 @@ struct sapote_https_response {
     size_t body_length;
     int bearssl_error;
     long transport_error;
+};
+
+struct sapote_https_stream_request {
+    const char *hostname;
+    uint16_t port;
+    uint16_t reserved;
+    const char *path;
+    const br_x509_trust_anchor *trust_anchors;
+    size_t trust_anchor_count;
+    uint64_t deadline_ns;
+    size_t body_limit;
+    sapote_https_body_write_function write_body;
+    void *write_context;
 };
 
 enum sapote_tls_status sapote_tls_client_open(
@@ -124,6 +144,9 @@ long sapote_tls_client_transport_error(const struct sapote_tls_client *client);
 const char *sapote_tls_status_string(enum sapote_tls_status status);
 enum sapote_https_status sapote_https_get(
     const struct sapote_https_request *request,
+    struct sapote_https_response *response);
+enum sapote_https_status sapote_https_get_stream(
+    const struct sapote_https_stream_request *request,
     struct sapote_https_response *response);
 const char *sapote_https_status_string(enum sapote_https_status status);
 

@@ -18,6 +18,7 @@
 #define SAPOTE_TLS_CLOCK_MIN UINT64_C(1577836800)
 #define SAPOTE_TLS_CLOCK_MAX UINT64_C(4102444799)
 #define SAPOTE_HTTPS_REQUEST_BYTES 1536U
+#define SAPOTE_HTTPS_BODY_CHUNK_BYTES 4096U
 
 struct sapote_tls_client {
     br_ssl_client_context ssl;
@@ -739,7 +740,7 @@ static bool append_port(char *output, size_t capacity, size_t *used,
     return true;
 }
 
-static bool make_http_request(const struct sapote_https_request *request,
+static bool make_http_request(const struct sapote_https_stream_request *request,
     char *output, size_t capacity, size_t *length)
 {
     size_t path_length;
@@ -920,14 +921,15 @@ static void capture_response_diagnostics(struct sapote_tls_client *client,
     response->transport_error = sapote_tls_client_transport_error(client);
 }
 
-enum sapote_https_status sapote_https_get(
-    const struct sapote_https_request *request,
+enum sapote_https_status sapote_https_get_stream(
+    const struct sapote_https_stream_request *request,
     struct sapote_https_response *response)
 {
     struct sapote_tls_client_config tls_config;
     struct sapote_tls_diagnostics diagnostics;
     struct sapote_tls_client *client = NULL;
     unsigned char header[SAPOTE_HTTPS_MAX_HEADER_BYTES];
+    unsigned char body[SAPOTE_HTTPS_BODY_CHUNK_BYTES];
     char wire_request[SAPOTE_HTTPS_REQUEST_BYTES];
     size_t request_length;
     size_t sent = 0U;
@@ -944,7 +946,7 @@ enum sapote_https_status sapote_https_get(
         !hostname_valid(request->hostname) || request->port == 0U ||
         request->trust_anchors == NULL || request->trust_anchor_count == 0U ||
         request->deadline_ns <= sapote_monotonic_ns() ||
-        (request->body == NULL && request->body_capacity != 0U) ||
+        request->write_body == NULL ||
         !make_http_request(request, wire_request, sizeof(wire_request),
             &request_length)) {
         return SAPOTE_HTTPS_ARGUMENT;
@@ -1005,17 +1007,17 @@ enum sapote_https_status sapote_https_get(
         return SAPOTE_HTTPS_HTTP_HEADERS;
     }
     status = parse_http_headers(header, header_length,
-        request->body_capacity, response);
+        request->body_limit, response);
     if (status != SAPOTE_HTTPS_OK) {
         capture_response_diagnostics(client, response);
         abort_client(client, request->deadline_ns);
         return status;
     }
     while (response->body_length < response->content_length) {
+        size_t remaining = response->content_length - response->body_length;
+        size_t requested = remaining < sizeof(body) ? remaining : sizeof(body);
         long count = sapote_tls_client_read(client,
-            (unsigned char *)request->body + response->body_length,
-            response->content_length - response->body_length,
-            request->deadline_ns);
+            body, requested, request->deadline_ns);
 
         if (count <= 0) {
             if (count == 0 || sapote_tls_client_transport_error(client) ==
@@ -1028,6 +1030,12 @@ enum sapote_https_status sapote_https_get(
             capture_response_diagnostics(client, response);
             abort_client(client, request->deadline_ns);
             return status;
+        }
+        if (request->write_body(request->write_context, body,
+                (size_t)count) != count) {
+            capture_response_diagnostics(client, response);
+            abort_client(client, request->deadline_ns);
+            return SAPOTE_HTTPS_BODY_WRITE;
         }
         response->body_length += (size_t)count;
     }
@@ -1056,6 +1064,54 @@ enum sapote_https_status sapote_https_get(
             SAPOTE_HTTPS_CLOSE);
 }
 
+struct https_buffer_sink {
+    unsigned char *bytes;
+    size_t capacity;
+    size_t used;
+};
+
+static long write_buffer_body(
+    void *context,
+    const void *bytes,
+    size_t byte_count
+)
+{
+    struct https_buffer_sink *sink = context;
+    if (sink == NULL || (bytes == NULL && byte_count != 0U) ||
+        sink->used > sink->capacity || byte_count > sink->capacity - sink->used ||
+        byte_count > LONG_MAX) {
+        return -1;
+    }
+    (void)memcpy(sink->bytes + sink->used, bytes, byte_count);
+    sink->used += byte_count;
+    return (long)byte_count;
+}
+
+enum sapote_https_status sapote_https_get(
+    const struct sapote_https_request *request,
+    struct sapote_https_response *response)
+{
+    struct https_buffer_sink sink;
+    struct sapote_https_stream_request stream;
+    if (response == NULL) {
+        return SAPOTE_HTTPS_ARGUMENT;
+    }
+    (void)memset(response, 0, sizeof(*response));
+    if (request == NULL ||
+        (request->body == NULL && request->body_capacity != 0U)) {
+        return SAPOTE_HTTPS_ARGUMENT;
+    }
+    sink = (struct https_buffer_sink){
+        request->body, request->body_capacity, 0U
+    };
+    stream = (struct sapote_https_stream_request){
+        request->hostname, request->port, request->reserved, request->path,
+        request->trust_anchors, request->trust_anchor_count,
+        request->deadline_ns, request->body_capacity, write_buffer_body, &sink
+    };
+    return sapote_https_get_stream(&stream, response);
+}
+
 const char *sapote_https_status_string(enum sapote_https_status status)
 {
     static const char *const names[] = {
@@ -1072,7 +1128,8 @@ const char *sapote_https_status_string(enum sapote_https_status status)
         "Content-Length is required", "Content-Length exceeds output bound",
         "HTTP body shorter than Content-Length",
         "HTTP body longer than Content-Length",
-        "authenticated TLS close failed"
+        "authenticated TLS close failed",
+        "HTTPS body sink refused bytes"
     };
 
     return (unsigned)status < sizeof(names) / sizeof(names[0]) ?

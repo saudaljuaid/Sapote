@@ -34,6 +34,7 @@ HTTPS_CONTENT_LENGTH_REQUIRED = 20
 HTTPS_CONTENT_TOO_LARGE = 21
 HTTPS_BODY_TRUNCATED = 22
 HTTPS_BODY_EXTRA = 23
+HTTPS_BODY_WRITE = 25
 
 
 RESPONSES = {
@@ -62,6 +63,8 @@ RESPONSES = {
     "body-truncated": b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\nshort",
     "body-extra": b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nnoextra",
 }
+RESPONSES["stream-success"] = RESPONSES["success"]
+RESPONSES["stream-refusal"] = RESPONSES["success"]
 
 
 class Peer:
@@ -102,7 +105,7 @@ class Peer:
         return context
 
     def _serve(self) -> None:
-        strict = self.mode == "success"
+        strict = self.mode in ("success", "stream-success")
         try:
             connection, _ = self.listener.accept()
             with connection:
@@ -147,7 +150,8 @@ class Peer:
                         "Accept-Encoding: identity\r\n"
                         "Connection: close\r\n\r\n"
                     ).encode("ascii")
-                    if self.mode == "success" and bytes(request) != expected:
+                    if self.mode in ("success", "stream-success",
+                                     "stream-refusal") and bytes(request) != expected:
                         raise RuntimeError("canonical HTTPS request bytes changed")
                     response = RESPONSES[self.mode]
                     secure.sendall(response)
@@ -191,6 +195,9 @@ def main() -> int:
         raise SystemExit(f"missing HTTPS host client: {binary}")
     cases = [
         ("trusted-download", "valid", HOSTNAME, "success", HTTPS_OK),
+        ("trusted-stream", "valid", HOSTNAME, "stream-success", HTTPS_OK),
+        ("stream-sink-refusal", "valid", HOSTNAME,
+         "stream-refusal", HTTPS_BODY_WRITE),
         ("hostname-mismatch", "valid", "wrong.sapote.test", "success", HTTPS_HOSTNAME),
         ("expired", "expired", HOSTNAME, "success", HTTPS_CERTIFICATE_TIME),
         ("not-yet-valid", "future", HOSTNAME, "success", HTTPS_CERTIFICATE_TIME),
