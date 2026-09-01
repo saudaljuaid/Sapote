@@ -144,18 +144,21 @@ def match_sdl_run(payload: bytes, chunks: list[bytes],
         chunk = chunks[(first_segment + count - 1) % SDL_CHUNKS]
         next_positions: set[int] = set()
         for position in positions:
-            remaining_frames = (len(payload) - position) // frame_bytes
-            limit = min(CHUNK_FRAMES, remaining_frames)
-            matched = 0
-            while matched < limit:
-                start = matched * frame_bytes
-                if payload[position + start:
-                        position + start + frame_bytes] != \
-                        chunk[start:start + frame_bytes]:
-                    break
-                matched += 1
-            for frames in range(MIN_CAPTURE_FRAMES, matched + 1):
-                next_positions.add(position + frames * frame_bytes)
+            starts = range(CHUNK_FRAMES - MIN_CAPTURE_FRAMES + 1) \
+                if count == 1 and position == 0 else (0,)
+            for first_frame in starts:
+                remaining_frames = (len(payload) - position) // frame_bytes
+                limit = min(CHUNK_FRAMES - first_frame, remaining_frames)
+                matched = 0
+                while matched < limit:
+                    source = (first_frame + matched) * frame_bytes
+                    destination = position + matched * frame_bytes
+                    if payload[destination:destination + frame_bytes] != \
+                            chunk[source:source + frame_bytes]:
+                        break
+                    matched += 1
+                for frames in range(MIN_CAPTURE_FRAMES, matched + 1):
+                    next_positions.add(position + frames * frame_bytes)
         positions = next_positions
         if len(payload) in positions:
             matches.add(count)
@@ -312,6 +315,23 @@ def self_test() -> None:
         if fragmented_report["segments"] != SDL_CHUNKS * SDL_PROOF_RUNS or \
                 fragmented_report["runs"] != SDL_CHUNKS * SDL_PROOF_RUNS:
             raise VerificationError("fragmented SDL fixture geometry changed")
+        offset_fixture = root / "sdl-offset-fragmented.wav"
+        offset_payload = bytes(29 * CHANNELS * SAMPLE_BYTES)
+        offsets = (73, 121, 19, 207, 88, 144, 33, 176)
+        for index, (offset, frames) in enumerate(zip(offsets, prefixes)):
+            start = offset * CHANNELS * SAMPLE_BYTES
+            end = (offset + frames) * CHANNELS * SAMPLE_BYTES
+            offset_payload += chunks[index % SDL_CHUNKS][start:end]
+            offset_payload += bytes((index + 3) * CHANNELS * SAMPLE_BYTES)
+        with wave.open(str(offset_fixture), "wb") as output:
+            output.setnchannels(CHANNELS)
+            output.setsampwidth(SAMPLE_BYTES)
+            output.setframerate(RATE)
+            output.writeframes(offset_payload)
+        offset_report = verify(offset_fixture, "sdl")
+        if offset_report["segments"] != SDL_CHUNKS * SDL_PROOF_RUNS or \
+                offset_report["runs"] != SDL_CHUNKS * SDL_PROOF_RUNS:
+            raise VerificationError("offset SDL fixture geometry changed")
         try:
             verify(sdl_fixture, "native-audio")
         except VerificationError:
@@ -322,6 +342,9 @@ def self_test() -> None:
             "one-run": bytes(31 * CHANNELS * SAMPLE_BYTES) + b"".join(
                 chunks[index][:prefixes[index] * CHANNELS * SAMPLE_BYTES]
                 for index in range(SDL_CHUNKS)),
+            "reordered": bytes(31 * CHANNELS * SAMPLE_BYTES) + b"".join(
+                chunks[index][:prefixes[position] * CHANNELS * SAMPLE_BYTES]
+                for position, index in enumerate((0, 2, 1, 3, 0, 1, 2, 3))),
             "corrupted": bytearray(sdl_payload),
         }
         invalid_sdl["corrupted"][
