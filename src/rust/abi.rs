@@ -288,15 +288,21 @@ pub(crate) unsafe extern "C" fn sapote_ext4_mount(
 ///
 /// # Safety
 /// `mounted` must be a live, uniquely owned value returned by one successful
-/// mount call and must not be used again.
+/// mount call. It is consumed on success and remains live on refusal.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn sapote_ext4_unmount(mounted: usize) -> i32 {
     if mounted == 0 {
         return ext4::Status::NullArgument as i32;
     }
     // SAFETY: uniqueness and provenance are the function contract.
-    drop(unsafe { Box::from_raw(mounted as *mut ext4::Mounted) });
-    ext4::Status::Ok as i32
+    let mounted = unsafe { Box::from_raw(mounted as *mut ext4::Mounted) };
+    match ext4::unmount(&mounted) {
+        Ok(()) => ext4::Status::Ok as i32,
+        Err(status) => {
+            let _ = Box::into_raw(mounted);
+            status as i32
+        }
+    }
 }
 
 /// Resolve one mount-relative ext4 path.

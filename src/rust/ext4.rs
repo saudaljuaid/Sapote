@@ -12,7 +12,7 @@ use ext4plus::path::Path;
 use ext4plus::{
     Ext4, Ext4Read, FileType, FollowSymlinks, JOURNAL_BLOCK_BYTES,
     JournalExecutionError, JournalFlush, JournalInodeMap, JournalInodeMapError,
-    JournalStorage, execute_commit_operations, load_journal_inode_map,
+    JournalRing, JournalStorage, execute_commit_operations, load_journal_inode_map,
     recover_committed_ring,
 };
 
@@ -77,6 +77,7 @@ impl Default for DirectoryEntry {
 /// A loaded read-only filesystem. C installs a short NVMe lease per call.
 pub(crate) struct Mounted {
     filesystem: Ext4,
+    journal: JournalRing,
 }
 
 #[derive(Debug)]
@@ -418,10 +419,8 @@ pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, I
         if journal.filesystem_needs_recovery() {
             return Err(Status::Invalid);
         }
-        let _clean_ring = journal.into_clean_ring().map_err(|_| Status::Invalid)?;
-    } else {
-        let _clean_ring = journal.into_clean_ring().map_err(|_| Status::Invalid)?;
     }
+    let clean_ring = journal.into_clean_ring().map_err(|_| Status::Invalid)?;
     validate_namespace(&filesystem)?;
     let identity = Identity {
         label: *filesystem.label().as_bytes(),
@@ -432,7 +431,15 @@ pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, I
         recovery_performed,
         reserved: [0; 3],
     };
-    Ok((Box::new(Mounted { filesystem }), identity))
+    Ok((Box::new(Mounted { filesystem, journal: clean_ring }), identity))
+}
+
+/// Refuse to release a mount unless its retained journal state is idle and clean.
+pub(crate) fn unmount(mounted: &Mounted) -> Result<(), Status> {
+    match mounted.journal.filesystem_is_clean() {
+        Ok(true) => Ok(()),
+        Ok(false) | Err(_) => Err(Status::Invalid),
+    }
 }
 
 /// Resolve a path and return inode-stable metadata.

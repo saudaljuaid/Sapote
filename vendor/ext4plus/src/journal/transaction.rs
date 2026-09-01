@@ -1367,6 +1367,43 @@ impl JournalRing {
         )
     }
 
+    /// Return whether the admitted filesystem and journal are idle and clean.
+    ///
+    /// A clean filesystem has no active reservation or occupied ring slot, a
+    /// zero JBD2 start block, matching head/tail and sequence state, and a
+    /// cleared ext4 recovery marker. Transitional marker states and a durable
+    /// recovery marker report `false`; inconsistent in-memory marker state is
+    /// rejected.
+    pub fn filesystem_is_clean(&self) -> Result<bool, JournalTransactionError> {
+        let state = self
+            .filesystem_recovery_state
+            .ok_or(JournalTransactionError::FilesystemStateUnavailable)?;
+        let superblock = self
+            .superblock
+            .as_ref()
+            .ok_or(JournalTransactionError::JournalStateUnavailable)?;
+        let filesystem = self
+            .filesystem_superblock
+            .as_ref()
+            .ok_or(JournalTransactionError::FilesystemStateUnavailable)?;
+        let marker_matches_state = match state {
+            FilesystemRecoveryState::Clean | FilesystemRecoveryState::PlanPrepared => {
+                !filesystem.needs_recovery()
+            }
+            FilesystemRecoveryState::Durable
+            | FilesystemRecoveryState::CleanPlanPrepared => filesystem.needs_recovery(),
+        };
+        if !marker_matches_state {
+            return Err(JournalTransactionError::RecoveryStateMismatch);
+        }
+        Ok(state == FilesystemRecoveryState::Clean
+            && self.active.is_empty()
+            && self.used == 0
+            && self.head == self.tail
+            && superblock.start_block() == 0
+            && superblock.sequence() == self.next_sequence)
+    }
+
     /// Build the write and flush that make ext4's recovery marker durable.
     ///
     /// A ring discovered from a real clean ext4 image must execute this plan
@@ -2211,13 +2248,22 @@ mod tests {
     #[test]
     fn clean_filesystem_state_waits_for_durable_empty_journal() {
         let mut ring = mapped_filesystem_ring(17, &JOURNAL_SLOTS);
+        assert_eq!(ring.filesystem_is_clean(), Ok(true));
+        let mut mismatched_head = ring.clone();
+        mismatched_head.head = 1;
+        assert_eq!(mismatched_head.filesystem_is_clean(), Ok(false));
+        let mut mismatched_sequence = ring.clone();
+        mismatched_sequence.next_sequence = 18;
+        assert_eq!(mismatched_sequence.filesystem_is_clean(), Ok(false));
         assert_eq!(
             ring.prepare_filesystem_clean_plan(),
             Err(JournalTransactionError::ReservationState)
         );
         let marker = ring.prepare_recovery_marker_plan().unwrap();
         assert_eq!(marker.len(), 2);
+        assert_eq!(ring.filesystem_is_clean(), Ok(false));
         ring.mark_recovery_marker_durable().unwrap();
+        assert_eq!(ring.filesystem_is_clean(), Ok(false));
 
         let mut transaction = ring.begin_transaction().unwrap();
         transaction.stage_metadata(200, &filled(0x22)).unwrap();
@@ -2229,6 +2275,7 @@ mod tests {
         finish_transaction(&mut ring, &prepared);
 
         let clean = ring.prepare_filesystem_clean_plan().unwrap();
+        assert_eq!(ring.filesystem_is_clean(), Ok(false));
         assert!(matches!(
             &clean[0],
             JournalCommitOperation::WriteFilesystemSuperblock { start_byte, image }
@@ -2246,12 +2293,14 @@ mod tests {
             Err(JournalTransactionError::ReservationState)
         );
         ring.mark_filesystem_clean_durable().unwrap();
+        assert_eq!(ring.filesystem_is_clean(), Ok(true));
         assert_eq!(
             ring.mark_filesystem_clean_durable(),
             Err(JournalTransactionError::ReservationState)
         );
 
         let prepared = ring.prepare(&blocked).unwrap();
+        assert_eq!(ring.filesystem_is_clean(), Ok(false));
         assert_eq!(
             ring.prepare_commit_plan(&prepared),
             Err(JournalTransactionError::RecoveryMarkerNotDurable)

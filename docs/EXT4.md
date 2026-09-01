@@ -216,8 +216,12 @@ overlay and requires discarding the mutated ext4plus object as well.
 
 The staging layer is not yet connected to VFS mutations or classified into
 ordered file data versus journaled metadata. Allocation rollback and
-revocations, clean unmount/fsync, write-failure injection, and the deliberate
-power-cut matrix at every commit and recovery durability boundary are not
-complete; the QEMU proof above covers only the marker-durable/journal-clean
-recovery point. All VFS mutation operations therefore continue to return
-`EROFS`.
+revocations, clean-plan execution during unmount/fsync, write-failure
+injection, and the deliberate power-cut matrix at every commit and recovery
+durability boundary are not complete. The admitted `JournalRing` is retained
+for the full Rust mount lifetime, and unmount refuses to drop it unless its
+ext4 recovery marker, JBD2 start block, reservations, and used-slot census are
+all clean, with matching in-memory/durable sequence and head/tail state. The
+QEMU proof above still covers only the
+marker-durable/journal-clean recovery point. All VFS mutation operations
+therefore continue to return `EROFS`.

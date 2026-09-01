@@ -720,7 +720,9 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
 
     let physical = Vec::from(journal.physical_blocks());
     let mut ring = journal.into_clean_ring().unwrap();
+    assert_eq!(ring.filesystem_is_clean(), Ok(true));
     let marker_plan = ring.prepare_recovery_marker_plan().unwrap();
+    assert_eq!(ring.filesystem_is_clean(), Ok(false));
     assert!(matches!(
         &marker_plan[0],
         JournalCommitOperation::WriteFilesystemSuperblock { start_byte, image }
@@ -745,6 +747,7 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
         Err(JournalTransactionError::RecoveryMarkerNotDurable)
     );
     ring.mark_recovery_marker_durable().unwrap();
+    assert_eq!(ring.filesystem_is_clean(), Ok(false));
     assert!(ring.prepare_commit_plan(&prepared).is_ok());
     assert_eq!(
         ring.prepare_filesystem_clean_plan(),
@@ -762,6 +765,7 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
         JournalCommitOperation::Flush(JournalFlush::JournalState)
     );
     ring.checkpoint_durable(prepared.ticket()).unwrap();
+    assert_eq!(ring.filesystem_is_clean(), Ok(false));
     let clean_plan = ring.prepare_filesystem_clean_plan().unwrap();
     assert!(matches!(
         &clean_plan[0],
@@ -774,10 +778,12 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
         JournalCommitOperation::Flush(JournalFlush::FilesystemState)
     );
     ring.mark_filesystem_clean_durable().unwrap();
+    assert_eq!(ring.filesystem_is_clean(), Ok(true));
 
     let mut next = ring.begin_transaction().unwrap();
     next.stage_metadata(home_block, &filled(0x55)).unwrap();
     let next = ring.prepare(&next).unwrap();
+    assert_eq!(ring.filesystem_is_clean(), Ok(false));
     assert_eq!(
         ring.prepare_commit_plan(&next),
         Err(JournalTransactionError::RecoveryMarkerNotDurable)
