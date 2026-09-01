@@ -232,6 +232,10 @@ it clears failures and returns success only after the normal installed-state
 parser accepts the complete generated database. Its host proof requires exact
 byte equality with the independently assembled two-package fixture and refuses
 bad ordering, file collisions, missing digests, and output-length mismatch.
+The companion verifier re-parses already encoded bytes and compares every
+header, package, provider edge, and file field to the source specification. A
+stager can therefore bind file-source entries to the exact database it persists
+without allocating and trusting a second encoded copy.
 
 `package_builder.c` supplies those arrays from an authenticated plan without
 performing filesystem I/O. It reopens the signed repository and package bytes,

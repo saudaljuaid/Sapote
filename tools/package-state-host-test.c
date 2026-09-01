@@ -604,6 +604,17 @@ static int test_generation_encoder(
     CHECK(package_generation_encode(&spec, encoded, sizeof(encoded), &view) ==
             PACKAGE_STATE_STATUS_OK && view.generation == 2U &&
         same_bytes(encoded, expected, sizeof(encoded)), 51);
+    CHECK(package_generation_verify(&spec, encoded, sizeof(encoded), &view) ==
+            PACKAGE_STATE_STATUS_OK && view.generation == 2U, 56);
+
+    packages[0].explicit_root = false;
+    CHECK(package_generation_verify(&spec, encoded, sizeof(encoded), &view) ==
+            PACKAGE_STATE_STATUS_MISMATCH && view.bytes == NULL, 57);
+    packages[0].explicit_root = true;
+    files[0].length = 4U;
+    CHECK(package_generation_verify(&spec, encoded, sizeof(encoded), &view) ==
+            PACKAGE_STATE_STATUS_MISMATCH && view.bytes == NULL, 58);
+    files[0].length = 3U;
 
     packages[0].identifier = state_text("org.sapote.lib");
     encoded[0] = 1U;
@@ -627,6 +638,8 @@ static int test_generation_encoder(
     CHECK(package_generation_encode(&spec, encoded, sizeof(encoded) - 1U,
             &view) == PACKAGE_STATE_STATUS_LENGTH &&
         all_zero(encoded, sizeof(encoded) - 1U) && view.bytes == NULL, 55);
+    CHECK(package_generation_verify(&spec, encoded, sizeof(encoded) - 1U,
+            &view) == PACKAGE_STATE_STATUS_MISMATCH && view.bytes == NULL, 59);
     return 0;
 }
 

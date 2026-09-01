@@ -19,6 +19,29 @@ static void copy_bytes(uint8_t *destination, const uint8_t *source, size_t count
     }
 }
 
+static bool equal_bytes(const uint8_t *left, const uint8_t *right, size_t count)
+{
+    uint8_t difference = 0U;
+
+    if (left == NULL || right == NULL) {
+        return false;
+    }
+    for (size_t index = 0U; index < count; ++index) {
+        difference |= left[index] ^ right[index];
+    }
+    return difference == 0U;
+}
+
+static bool equal_text(
+    const struct package_state_text *left,
+    const struct package_state_text *right
+)
+{
+    return left->length == right->length &&
+        (left->length == 0U || equal_bytes(left->bytes, right->bytes,
+            left->length));
+}
+
 static void write_u16(uint8_t *bytes, uint16_t value)
 {
     bytes[0] = (uint8_t)value;
@@ -274,4 +297,99 @@ enum package_state_status package_generation_encode(
         *view = (struct package_state_database_view){ 0 };
     }
     return status;
+}
+
+enum package_state_status package_generation_verify(
+    const struct package_generation_spec *spec,
+    const uint8_t *database,
+    size_t database_bytes,
+    struct package_state_database_view *view
+)
+{
+    struct package_state_database_view parsed;
+    size_t expected_bytes;
+    enum package_state_status status;
+
+    if (spec == NULL || database == NULL || view == NULL) {
+        return PACKAGE_STATE_STATUS_NULL_ARGUMENT;
+    }
+    *view = (struct package_state_database_view){ 0 };
+    status = package_generation_size(spec, &expected_bytes);
+    if (status != PACKAGE_STATE_STATUS_OK) {
+        return status;
+    }
+    if (database_bytes != expected_bytes || spec->generation == 0U ||
+        spec->abi == 0U ||
+        (spec->packages == NULL && spec->package_count != 0U) ||
+        (spec->dependencies == NULL && spec->dependency_count != 0U) ||
+        (spec->files == NULL && spec->file_count != 0U)) {
+        return PACKAGE_STATE_STATUS_MISMATCH;
+    }
+    status = package_state_database_parse(database, database_bytes, &parsed);
+    if (status != PACKAGE_STATE_STATUS_OK) {
+        return status;
+    }
+    if (parsed.generation != spec->generation || parsed.abi != spec->abi ||
+        parsed.package_count != spec->package_count ||
+        parsed.edge_count != spec->dependency_count ||
+        parsed.file_count != spec->file_count) {
+        return PACKAGE_STATE_STATUS_MISMATCH;
+    }
+    for (uint32_t index = 0U; index < spec->package_count; ++index) {
+        const struct package_generation_package *expected =
+            &spec->packages[index];
+        struct package_state_package_view actual;
+
+        status = package_state_database_package(&parsed, index, &actual);
+        if (status != PACKAGE_STATE_STATUS_OK) {
+            return status;
+        }
+        if (!equal_text(&actual.identifier, &expected->identifier) ||
+            !equal_text(&actual.version, &expected->version) ||
+            !equal_bytes(actual.package_sha256, expected->package_sha256,
+                PACKAGE_STATE_SHA256_BYTES) ||
+            !equal_bytes(actual.publisher_key_id, expected->publisher_key_id,
+                PACKAGE_STATE_SHA256_BYTES) ||
+            actual.explicit_root != expected->explicit_root ||
+            actual.dependency_start != expected->dependency_start ||
+            actual.dependency_count != expected->dependency_count ||
+            actual.file_count != expected->file_count) {
+            return PACKAGE_STATE_STATUS_MISMATCH;
+        }
+    }
+    for (uint32_t index = 0U; index < spec->dependency_count; ++index) {
+        const struct package_generation_dependency *expected =
+            &spec->dependencies[index];
+        struct package_state_dependency_view actual;
+
+        status = package_state_database_dependency(&parsed, index, &actual);
+        if (status != PACKAGE_STATE_STATUS_OK) {
+            return status;
+        }
+        if (!equal_text(&actual.requested, &expected->requested) ||
+            !equal_text(&actual.constraint, &expected->constraint) ||
+            !equal_text(&actual.provider, &expected->provider)) {
+            return PACKAGE_STATE_STATUS_MISMATCH;
+        }
+    }
+    for (uint32_t index = 0U; index < spec->file_count; ++index) {
+        const struct package_generation_file *expected = &spec->files[index];
+        struct package_state_file_view actual;
+
+        status = package_state_database_file(&parsed, index, &actual);
+        if (status != PACKAGE_STATE_STATUS_OK) {
+            return status;
+        }
+        if (!equal_text(&actual.path, &expected->path) ||
+            actual.owner_index != expected->owner_index ||
+            actual.kind != expected->kind || actual.mode != expected->mode ||
+            actual.length != expected->length ||
+            !equal_bytes(actual.sha256, expected->sha256,
+                PACKAGE_STATE_SHA256_BYTES) ||
+            !equal_text(&actual.soname, &expected->soname)) {
+            return PACKAGE_STATE_STATUS_MISMATCH;
+        }
+    }
+    *view = parsed;
+    return PACKAGE_STATE_STATUS_OK;
 }

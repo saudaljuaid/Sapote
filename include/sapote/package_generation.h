@@ -64,4 +64,17 @@ enum package_state_status package_generation_encode(
     struct package_state_database_view *view
 );
 
+/*
+ * Re-parses a canonical encoded database and requires every header, package,
+ * provider edge, and owned-file field to match spec exactly.  This lets a
+ * filesystem stager bind its source table to the bytes it will persist without
+ * allocating a second encoded database.  The view is cleared on refusal.
+ */
+enum package_state_status package_generation_verify(
+    const struct package_generation_spec *spec,
+    const uint8_t *database,
+    size_t database_bytes,
+    struct package_state_database_view *view
+);
+
 #endif
