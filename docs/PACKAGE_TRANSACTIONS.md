@@ -473,7 +473,11 @@ authority commit. Its real signed-fixture host proof covers fresh install,
 persisted-state update, wrong-owner and wrong-payload refusal, stale handles,
 and allocation census.
 
-This is still an internal privileged core, not a completed package feature. A
-durable minimum-repository-version record, native control-handle ABI, remove
-and repair sessions, client presentation, and writable-ext4 backend evidence
-remain separate integration layers.
+The privileged native ABI exposes this core through a typed control handle.
+Callers can enumerate exact plan items, attach sealed uploads, commit, retry a
+prepared durability failure, duplicate the session handle, and release it by
+final close or process teardown without gaining filesystem paths to private
+staging. This remains a foundation rather than a completed package feature: a
+durable minimum-repository-version record, remove and repair sessions, client
+presentation, and writable-ext4 backend evidence remain separate integration
+layers.

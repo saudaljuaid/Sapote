@@ -148,7 +148,10 @@ snapshots installed authority, exposes a bounded eight-package plan, copies
 only exact repository-bound sealed payloads, re-authenticates every package,
 rebuilds canonical state, and invokes bootstrap or prepare/commit. Its signed
 host lifecycle also proves retry of a prepared commit after a durability error
-and zero controller allocations after close or refusal. A persistent repository
-rollback floor, native control-handle syscalls, remove/repair control sessions,
+and zero controller allocations after close or refusal. The privileged native
+ABI exposes this session as a typed control handle with item, attach, commit,
+duplicate, final-close, and process-teardown semantics; repository and package
+upload handles remain independently closeable after the controller copies them.
+A persistent repository rollback floor, remove/repair control sessions,
 end-user client commands, Store presentation, and writable-ext4 integration
 remain separate unfinished layers.

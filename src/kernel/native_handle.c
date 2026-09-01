@@ -20,7 +20,7 @@ static void zero_bytes(void *pointer, size_t length)
 static bool valid_type(uint8_t type)
 {
     return type >= SAPOTE_HANDLE_FILE &&
-        type <= SAPOTE_HANDLE_PACKAGE_UPLOAD;
+        type <= SAPOTE_HANDLE_PACKAGE_CONTROL;
 }
 
 static sapote_handle_t encode_handle(
@@ -312,8 +312,8 @@ bool native_handle_self_test(size_t *completed_tests)
         return false;
     }
     *completed_tests = 0U;
-    if (!valid_type(SAPOTE_HANDLE_PACKAGE_UPLOAD) ||
-        valid_type((uint8_t)(SAPOTE_HANDLE_PACKAGE_UPLOAD + 1U))) {
+    if (!valid_type(SAPOTE_HANDLE_PACKAGE_CONTROL) ||
+        valid_type((uint8_t)(SAPOTE_HANDLE_PACKAGE_CONTROL + 1U))) {
         return false;
     }
     ++*completed_tests;

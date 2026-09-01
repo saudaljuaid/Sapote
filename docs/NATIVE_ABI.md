@@ -39,7 +39,7 @@ foreign-process, immutable executable, or read-only output mapping.
 | `0x0500` | DNS, TCP, UDP, address query | Open calls return owned stream/datagram handles. Deadlines are absolute monotonic nanoseconds. Shutdown changes stream direction state but does not close the handle. |
 | `0x0600` | thread create/exit/join, FS-base TLS, futex wait/wake | Create returns an owned thread handle. Join parks and reports the target exit status; the handle is still closed explicitly. Futex wait compares one aligned user `u32` before parking. |
 | `0x0700` | PCM output open, submit, volume, drain | Open returns a typed HDA output handle. Submission is one fixed 4 KiB PCM chunk; drain may park the calling thread. |
-| `0x0800` | package upload open, write, seal | Requires the privileged `packages` capability. Upload bytes live only in a kernel-private Data path; exact caller-supplied length, SHA-256, and a volume flush are required before sealing. Package control must separately prove metadata authority. |
+| `0x0800` | package upload and transaction control | Requires the privileged `packages` capability. Upload bytes live only in a kernel-private Data path; the controller separately authenticates repository metadata, binds each payload, snapshots installed authority, and enters bootstrap or prepare/commit. |
 
 ## Per-call contract
 
@@ -142,18 +142,29 @@ for applications that must keep another userspace thread runnable.
 | `0x0605 FUTEX_WAIT(*request)` | `0`, `-EAGAIN`, or timeout | P | Atomically validates and compares one aligned mapped `u32` before parking. The word remains userspace-owned; process teardown cancels the wait. |
 | `0x0606 FUTEX_WAKE(*request)` | Threads woken | I | Wakes up to the bounded requested count for one exact process-local address. It never owns or modifies the futex word. |
 
-### Package upload
+### Package upload and transaction control
 
 | Number and signature | Result | Mode | Ownership, concurrency, and cleanup |
 | --- | --- | --- | --- |
 | `0x0800 PACKAGE_UPLOAD_OPEN()` | Owned package-upload handle | K | Allocates one of four kernel slots and a private 8.3-safe Data file. The file is inaccessible through the caller's application namespace. |
 | `0x0801 PACKAGE_UPLOAD_WRITE(*request)` | Bytes written | K | Copies at most 4 KiB into the private file and advances an incremental kernel SHA-256. Any storage failure poisons the upload so it can only be closed. |
 | `0x0802 PACKAGE_UPLOAD_SEAL(*request)` | `0` | K | Closes the writer, requires exact nonzero length and SHA-256 from the privileged caller, then flushes Data. The all-or-nothing output reports actual length, digest, and sealed/durable flags; it does not authenticate the metadata's origin. |
+| `0x0803 PACKAGE_CONTROL_OPEN_INSTALL(*request)` | Owned package-control handle | K | Copies and authenticates the sealed repository upload with platform trust and realtime freshness, snapshots recovered installed authority, and produces one bounded install/update plan. The repository-upload handle remains caller-owned and may be closed after return. |
+| `0x0804 PACKAGE_CONTROL_ITEM(*request)` | `0` | K | Copies one exact plan item, including its repository-bound length, SHA-256, and download path. No pointer into privileged parser state is exposed. |
+| `0x0805 PACKAGE_CONTROL_ATTACH(*request)` | `0` | K | Requires a sealed upload whose length and digest match the named plan item, copies it into the controller, and re-authenticates the signed package against the repository entry. The upload handle remains caller-owned. |
+| `0x0806 PACKAGE_CONTROL_COMMIT(*request)` | `0` | K | Rebuilds and encodes canonical state, then bootstraps generation one or prepares and commits an update. A durability refusal after prepare leaves the control handle retryable; `PREPARED` and `COMMITTED` report the exact state. |
 
 The installed VFS currently bounds one staged file at 16 MiB, so the upload
 ABI publishes that real limit even though package format v3 can represent a
 larger host-side container. A final close durably unlinks the upload; duplicate
 handles share it and only the last close performs cleanup.
+
+One package-control session may be live system-wide. Its native handle may be
+duplicated; the final close releases the authenticated repository snapshot,
+installed-state snapshot, and copied payloads. Process teardown performs the
+same close. The v1 control profile admits at most eight changed packages with
+4 MiB of aggregate package bytes and does not yet expose remove, repair, or a
+durable minimum-repository-version floor.
 
 Directory enumeration reports the canonical printable form of each accepted
 ASCII 8.3 name in lower case. Path lookup remains case-insensitive.

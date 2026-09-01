@@ -21,6 +21,7 @@
 #include <sapote/network.h>
 #include <sapote/keyboard.h>
 #include <sapote/paging.h>
+#include <sapote/package_control.h>
 #include <sapote/package_upload.h>
 #include <sapote/process.h>
 #include <sapote/random.h>
@@ -89,6 +90,15 @@ _Static_assert(SAPOTE_PACKAGE_UPLOAD_WRITE_MAX == PACKAGE_UPLOAD_WRITE_MAX,
     "kernel and public package-upload write bounds differ");
 _Static_assert(SAPOTE_PACKAGE_UPLOAD_MAX_BYTES == PACKAGE_UPLOAD_MAX_BYTES,
     "kernel and public package-upload size bounds differ");
+_Static_assert(SAPOTE_PACKAGE_CONTROL_PLAN_MAX ==
+    PACKAGE_CONTROL_PLAN_MAX_PACKAGES,
+    "kernel and public package-control plan bounds differ");
+_Static_assert(SAPOTE_PACKAGE_CONTROL_TEXT_BYTES ==
+    PACKAGE_CONTROL_TEXT_BYTES,
+    "kernel and public package-control text bounds differ");
+_Static_assert(SAPOTE_PACKAGE_CONTROL_PATH_BYTES ==
+    PACKAGE_CONTROL_PATH_BYTES,
+    "kernel and public package-control path bounds differ");
 
 enum native_thread_state {
     NATIVE_THREAD_UNUSED = 0,
@@ -399,6 +409,17 @@ static bool bytes_equal(const uint8_t *left, const uint8_t *right,
         difference |= left[index] ^ right[index];
     }
     return difference == 0U;
+}
+
+static bool bytes_are_zero(const void *pointer, size_t count)
+{
+    const uint8_t *bytes = pointer;
+    uint8_t combined = 0U;
+
+    for (size_t index = 0U; index < count; ++index) {
+        combined |= bytes[index];
+    }
+    return combined == 0U;
 }
 
 static size_t shared_code_hash(const uint8_t digest[32], uint64_t page_offset)
@@ -838,6 +859,69 @@ static int64_t package_upload_error(
     }
 }
 
+static int64_t package_control_error(
+    enum package_control_status status,
+    const struct package_control_report *report
+)
+{
+    switch (status) {
+    case PACKAGE_CONTROL_STATUS_OK:
+        return 0;
+    case PACKAGE_CONTROL_STATUS_BUSY:
+        return -SAPOTE_EBUSY;
+    case PACKAGE_CONTROL_STATUS_NO_SLOT:
+    case PACKAGE_CONTROL_STATUS_RESOURCE:
+        return -SAPOTE_ENOMEM;
+    case PACKAGE_CONTROL_STATUS_STALE:
+        return -SAPOTE_ESTALE;
+    case PACKAGE_CONTROL_STATUS_UPLOAD:
+        return report == NULL ? -SAPOTE_EIO : package_upload_error(
+            report->upload_status, SAPFS_STATUS_IO);
+    case PACKAGE_CONTROL_STATUS_MANAGER:
+        if (report == NULL) {
+            return -SAPOTE_EIO;
+        }
+        if (report->manager_status == PACKAGE_MANAGER_STATUS_NOT_FOUND) {
+            return -SAPOTE_ENOENT;
+        }
+        if (report->manager_status ==
+                PACKAGE_MANAGER_STATUS_ALREADY_INSTALLED) {
+            return -SAPOTE_EEXIST;
+        }
+        if (report->manager_status ==
+                PACKAGE_MANAGER_STATUS_CRYPTO_UNAVAILABLE) {
+            return -SAPOTE_ENOTSUP;
+        }
+        return -SAPOTE_EACCES;
+    case PACKAGE_CONTROL_STATUS_CLOCK:
+    case PACKAGE_CONTROL_STATUS_SERVICE:
+        return -SAPOTE_EIO;
+    case PACKAGE_CONTROL_STATUS_TRUST:
+        return -SAPOTE_EACCES;
+    case PACKAGE_CONTROL_STATUS_NULL_ARGUMENT:
+    case PACKAGE_CONTROL_STATUS_STATE:
+    case PACKAGE_CONTROL_STATUS_RANGE:
+    case PACKAGE_CONTROL_STATUS_COUNT:
+    default:
+        return -SAPOTE_EINVAL;
+    }
+}
+
+static uint32_t package_control_result_flags(
+    const struct package_control_report *report
+)
+{
+    uint32_t result = 0U;
+
+    if (report->prepared) {
+        result |= SAPOTE_PACKAGE_CONTROL_PREPARED;
+    }
+    if (report->committed) {
+        result |= SAPOTE_PACKAGE_CONTROL_COMMITTED;
+    }
+    return result;
+}
+
 static void window_finalize_if_unreferenced(struct native_process *process)
 {
     if (process != NULL && process->window.allocated &&
@@ -974,6 +1058,12 @@ static bool close_resource(
 
         return package_upload_close(process->generation, resource->words[0],
             &report) == PACKAGE_UPLOAD_STATUS_OK;
+    }
+    case SAPOTE_HANDLE_PACKAGE_CONTROL: {
+        struct package_control_report report;
+
+        return package_control_close(process->generation, resource->words[0],
+            &report) == PACKAGE_CONTROL_STATUS_OK;
     }
     default:
         return false;
@@ -4823,6 +4913,233 @@ static int64_t syscall_package_upload_seal(
     return package_upload_error(upload_status, report.filesystem_status);
 }
 
+static int64_t syscall_package_control_open_install(
+    struct native_process *process,
+    uint64_t request_address
+)
+{
+    struct sapote_package_control_open_request request;
+    struct package_control_report report;
+    struct native_resource *upload;
+    struct native_resource resource = {{0U, 0U, 0U, 0U}};
+    sapote_handle_t handle;
+
+    if ((process->manifest.capabilities & SAPOTE_CAP_PACKAGES) == 0U) {
+        return -SAPOTE_EACCES;
+    }
+    if (!validate_user_range(process, request_address, sizeof(request), true) ||
+        !copy_from_user(process, &request, request_address, sizeof(request))) {
+        return -SAPOTE_EFAULT;
+    }
+    if (request.size != sizeof(request) ||
+        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
+        request.identifier_bytes == 0U ||
+        request.identifier_bytes >= SAPOTE_PACKAGE_CONTROL_TEXT_BYTES ||
+        request.repository_version != 0U || request.generation != 0U ||
+        request.plan_count != 0U || request.result_flags != 0U) {
+        return -SAPOTE_EINVAL;
+    }
+    if (!copy_from_user(process, process->transfer, request.identifier,
+            request.identifier_bytes)) {
+        return -SAPOTE_EFAULT;
+    }
+    enum native_handle_status handle_status = native_handle_resolve(
+        &process->handles, request.repository_upload,
+        SAPOTE_HANDLE_PACKAGE_UPLOAD, &upload);
+
+    if (handle_status != NATIVE_HANDLE_OK) {
+        return handle_error(handle_status);
+    }
+    if (process->handles.active_handles >= process->handles.limit ||
+        process->handles.active_objects >= process->handles.limit) {
+        return -SAPOTE_ENOMEM;
+    }
+    cpu_interrupt_enable();
+    enum package_control_status control_status = package_control_open_install(
+        process->generation, upload->words[0], process->transfer,
+        request.identifier_bytes, &report);
+    cpu_interrupt_disable();
+    if (control_status != PACKAGE_CONTROL_STATUS_OK) {
+        return package_control_error(control_status, &report);
+    }
+    resource.words[0] = report.token;
+    handle_status = native_handle_install(&process->handles,
+        SAPOTE_HANDLE_PACKAGE_CONTROL, &resource, &handle);
+    if (handle_status != NATIVE_HANDLE_OK) {
+        cpu_interrupt_enable();
+        (void)package_control_close(process->generation, report.token, &report);
+        cpu_interrupt_disable();
+        return handle_error(handle_status);
+    }
+    request.repository_version = report.repository_version;
+    request.generation = report.generation;
+    request.plan_count = report.plan_count;
+    request.result_flags = package_control_result_flags(&report);
+    if (!copy_to_user(process, request_address, &request, sizeof(request))) {
+        cpu_interrupt_enable();
+        (void)native_handle_close(&process->handles, handle, close_resource,
+            process);
+        cpu_interrupt_disable();
+        return -SAPOTE_EFAULT;
+    }
+    if (process->handles.active_handles > process->peak_handles) {
+        process->peak_handles = process->handles.active_handles;
+    }
+    return (int64_t)handle;
+}
+
+static int64_t syscall_package_control_item(
+    struct native_process *process,
+    uint64_t request_address
+)
+{
+    struct sapote_package_control_item_request request;
+    struct package_control_item item;
+    struct package_control_report report;
+    struct native_resource *control;
+
+    if ((process->manifest.capabilities & SAPOTE_CAP_PACKAGES) == 0U) {
+        return -SAPOTE_EACCES;
+    }
+    if (!validate_user_range(process, request_address, sizeof(request), true) ||
+        !copy_from_user(process, &request, request_address, sizeof(request))) {
+        return -SAPOTE_EFAULT;
+    }
+    if (request.size != sizeof(request) ||
+        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
+        request.index >= SAPOTE_PACKAGE_CONTROL_PLAN_MAX ||
+        request.package_bytes != 0U || request.identifier_bytes != 0U ||
+        request.version_bytes != 0U || request.path_bytes != 0U ||
+        request.reserved != 0U ||
+        !bytes_are_zero(request.package_sha256,
+            sizeof(request.package_sha256)) ||
+        !bytes_are_zero(request.identifier, sizeof(request.identifier)) ||
+        !bytes_are_zero(request.package_version,
+            sizeof(request.package_version)) ||
+        !bytes_are_zero(request.download_path,
+            sizeof(request.download_path))) {
+        return -SAPOTE_EINVAL;
+    }
+    enum native_handle_status handle_status = native_handle_resolve(
+        &process->handles, request.control, SAPOTE_HANDLE_PACKAGE_CONTROL,
+        &control);
+
+    if (handle_status != NATIVE_HANDLE_OK) {
+        return handle_error(handle_status);
+    }
+    cpu_interrupt_enable();
+    enum package_control_status control_status = package_control_item(
+        process->generation, control->words[0], request.index, &item, &report);
+    cpu_interrupt_disable();
+    if (control_status != PACKAGE_CONTROL_STATUS_OK) {
+        return package_control_error(control_status, &report);
+    }
+    request.package_bytes = item.package_bytes;
+    request.identifier_bytes = item.identifier_bytes;
+    request.version_bytes = item.version_bytes;
+    request.path_bytes = item.path_bytes;
+    copy_bytes(request.package_sha256, item.package_sha256,
+        sizeof(request.package_sha256));
+    copy_bytes(request.identifier, item.identifier, sizeof(request.identifier));
+    copy_bytes(request.package_version, item.version,
+        sizeof(request.package_version));
+    copy_bytes(request.download_path, item.download_path,
+        sizeof(request.download_path));
+    return copy_to_user(process, request_address, &request, sizeof(request)) ?
+        0 : -SAPOTE_EFAULT;
+}
+
+static int64_t syscall_package_control_attach(
+    struct native_process *process,
+    uint64_t request_address
+)
+{
+    struct sapote_package_control_attach_request request;
+    struct package_control_report report;
+    struct native_resource *control;
+    struct native_resource *upload;
+
+    if ((process->manifest.capabilities & SAPOTE_CAP_PACKAGES) == 0U) {
+        return -SAPOTE_EACCES;
+    }
+    if (!validate_user_range(process, request_address, sizeof(request), true) ||
+        !copy_from_user(process, &request, request_address, sizeof(request))) {
+        return -SAPOTE_EFAULT;
+    }
+    if (request.size != sizeof(request) ||
+        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
+        request.index >= SAPOTE_PACKAGE_CONTROL_PLAN_MAX ||
+        request.attached_count != 0U || request.result_flags != 0U) {
+        return -SAPOTE_EINVAL;
+    }
+    enum native_handle_status handle_status = native_handle_resolve(
+        &process->handles, request.control, SAPOTE_HANDLE_PACKAGE_CONTROL,
+        &control);
+
+    if (handle_status == NATIVE_HANDLE_OK) {
+        handle_status = native_handle_resolve(&process->handles,
+            request.package_upload, SAPOTE_HANDLE_PACKAGE_UPLOAD, &upload);
+    }
+    if (handle_status != NATIVE_HANDLE_OK) {
+        return handle_error(handle_status);
+    }
+    cpu_interrupt_enable();
+    enum package_control_status control_status = package_control_attach(
+        process->generation, control->words[0], request.index,
+        upload->words[0], &report);
+    cpu_interrupt_disable();
+    request.attached_count = report.attached_count;
+    request.result_flags = package_control_result_flags(&report);
+    if (!copy_to_user(process, request_address, &request, sizeof(request))) {
+        return -SAPOTE_EFAULT;
+    }
+    return package_control_error(control_status, &report);
+}
+
+static int64_t syscall_package_control_commit(
+    struct native_process *process,
+    uint64_t request_address
+)
+{
+    struct sapote_package_control_commit_request request;
+    struct package_control_report report;
+    struct native_resource *control;
+
+    if ((process->manifest.capabilities & SAPOTE_CAP_PACKAGES) == 0U) {
+        return -SAPOTE_EACCES;
+    }
+    if (!validate_user_range(process, request_address, sizeof(request), true) ||
+        !copy_from_user(process, &request, request_address, sizeof(request))) {
+        return -SAPOTE_EFAULT;
+    }
+    if (request.size != sizeof(request) ||
+        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
+        request.reserved != 0U || request.generation != 0U ||
+        request.plan_count != 0U || request.attached_count != 0U ||
+        request.result_flags != 0U || request.result_reserved != 0U) {
+        return -SAPOTE_EINVAL;
+    }
+    enum native_handle_status handle_status = native_handle_resolve(
+        &process->handles, request.control, SAPOTE_HANDLE_PACKAGE_CONTROL,
+        &control);
+
+    if (handle_status != NATIVE_HANDLE_OK) {
+        return handle_error(handle_status);
+    }
+    cpu_interrupt_enable();
+    enum package_control_status control_status = package_control_commit(
+        process->generation, control->words[0], &report);
+    cpu_interrupt_disable();
+    request.generation = report.generation;
+    request.plan_count = report.plan_count;
+    request.attached_count = report.attached_count;
+    request.result_flags = package_control_result_flags(&report);
+    if (!copy_to_user(process, request_address, &request, sizeof(request))) {
+        return -SAPOTE_EFAULT;
+    }
+    return package_control_error(control_status, &report);
+}
+
 static int64_t syscall_cancel(
     struct native_process *process,
     sapote_handle_t handle
@@ -5392,6 +5709,14 @@ static int64_t dispatch_syscall(
         return syscall_package_upload_write(process, frame->rdi);
     case SAPOTE_SYS_PACKAGE_UPLOAD_SEAL:
         return syscall_package_upload_seal(process, frame->rdi);
+    case SAPOTE_SYS_PACKAGE_CONTROL_OPEN_INSTALL:
+        return syscall_package_control_open_install(process, frame->rdi);
+    case SAPOTE_SYS_PACKAGE_CONTROL_ITEM:
+        return syscall_package_control_item(process, frame->rdi);
+    case SAPOTE_SYS_PACKAGE_CONTROL_ATTACH:
+        return syscall_package_control_attach(process, frame->rdi);
+    case SAPOTE_SYS_PACKAGE_CONTROL_COMMIT:
+        return syscall_package_control_commit(process, frame->rdi);
     default:
         return -SAPOTE_ENOSYS;
     }
@@ -6124,6 +6449,7 @@ bool native_process_resources_released(void)
         !native_syscall_is_active() && !process_user_boundary_active() &&
         audio_native_resources_released() &&
         package_upload_resources_released() &&
+        package_control_resources_released() &&
         interrupt_process_gate_resources_released() &&
         (!paging.active ||
             (cpu_read_cr3() & ~(PAGING_PAGE_SIZE - 1U)) ==
