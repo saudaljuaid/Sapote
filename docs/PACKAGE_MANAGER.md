@@ -113,7 +113,8 @@ and the dependency-depth bound.
 
 `package_service.c` recovers generations, durably prepares a complete builder
 result without advancing package authority, and separately commits only a
-revalidated prepared journal through an ordered authority switch. Fetching,
-signature-provider setup, fresh-store bootstrap, repair, client commands, Store
-presentation, and writable-ext4 integration remain outside this parser and
-planner.
+revalidated prepared journal through an ordered authority switch. A distinct
+generation-one bootstrap uses only admitted signed payload sources and a durable
+authority receipt rather than inventing a generation-zero database. Fetching,
+signature-provider setup, repair, client commands, Store presentation, and
+writable-ext4 integration remain outside this parser and planner.

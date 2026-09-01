@@ -361,6 +361,24 @@ error. There is still no shell or native ABI endpoint, signature-key provider,
 fresh-store bootstrap, repair path, or end-user lifecycle that can present this
 private service as a completed installation feature.
 
+Fresh-store bootstrap is a distinct privileged operation because the normal
+journal format intentionally requires a real base database and never invents a
+generation zero. It accepts only an authenticated fresh-install builder for
+generation one, requires every file source to be an admitted signed payload,
+and refuses every existing authority, journal, transient, or generation-one
+tree. After namespace and free-space preflight, it writes canonical `auth.new`
+and syncs that recovery receipt before creating any generation content. It then
+stages and verifies the complete generation, syncs it, renames `auth.new` to
+`auth.bin`, and syncs authority.
+
+Boot recovery recognizes only a canonical generation-one `auth.new` when no
+authority, fallback, or journal exists. An incomplete target is removed with the
+receipt and recovery returns the store to the absent state; a complete target is
+fully verified and promoted to `auth.bin`. A malformed receipt is retained and
+refused rather than silently discarded. Host tests persist the receipt-only,
+complete-target, and selected-authority prefixes independently and inject a sync
+failure at each of the three durability boundaries.
+
 ## Removal, references, and repair
 
 The explicit bit distinguishes requested roots from automatically selected
@@ -418,11 +436,12 @@ The service host test links the real service against a bounded in-memory VFS and
 heap. It covers no-journal verification, pre-authority rollback,
 post-authority completion, exact file digest tamper, an unowned extra file,
 authority repair ordering, recursive cleanup, no-complete-generation refusal,
-prepare and commit refusal, every prepare/commit durability boundary, persisted
-authority-switch prefixes, journal-last cleanup ordering, durability failure
-with recoverable state, and zero live handle/allocation census on every exit.
+bootstrap/prepare/commit refusal, every bootstrap/prepare/commit durability
+boundary, persisted bootstrap and authority-switch prefixes, journal-last
+cleanup ordering, durability failure with recoverable state, and zero live
+handle/allocation census on every exit.
 
 The transaction service starts from authenticated package bytes and an existing
-valid store. Download, trust-provider provisioning, fresh-store bootstrap,
+valid authenticated builder result. Download, trust-provider provisioning,
 repair, client presentation, and writable-ext4 backend evidence are separate
 integration layers.

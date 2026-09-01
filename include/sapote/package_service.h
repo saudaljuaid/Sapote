@@ -91,6 +91,17 @@ enum package_service_status package_service_prepare(
 );
 
 /*
+ * Creates generation one only when no authority or transaction exists.  The
+ * authenticated builder must describe a fresh install and every file must come
+ * from an admitted signed payload.  A durable auth.new receipt makes every
+ * bootstrap power-cut prefix recoverable without inventing a generation zero.
+ */
+enum package_service_status package_service_bootstrap(
+    const struct package_service_prepare_request *request,
+    struct package_service_report *report
+);
+
+/*
  * Commits an already prepared transaction.  The service revalidates the
  * journal, both complete generations, and the current base authority before
  * durably selecting the target.  Once report.committed is true, recovery will

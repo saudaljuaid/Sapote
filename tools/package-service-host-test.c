@@ -160,6 +160,22 @@ static void add_new_generation(const uint8_t new_database[NEW_DATABASE_BYTES])
         (const uint8_t *)"lib", 3U, UINT16_C(0444));
 }
 
+static void add_bootstrap_generation(
+    const uint8_t database[NEW_DATABASE_BYTES]
+)
+{
+    add_directory("pkgstate/gen/00000000/00000001");
+    add_directory("pkgstate/gen/00000000/00000001/root");
+    add_directory("pkgstate/gen/00000000/00000001/root/bin");
+    add_directory("pkgstate/gen/00000000/00000001/root/lib");
+    add_file("pkgstate/gen/00000000/00000001/state.db", database,
+        NEW_DATABASE_BYTES, UINT16_C(0444));
+    add_file("pkgstate/gen/00000000/00000001/root/bin/app",
+        (const uint8_t *)"app", 3U, UINT16_C(0555));
+    add_file("pkgstate/gen/00000000/00000001/root/lib/libx.so.1",
+        (const uint8_t *)"lib", 3U, UINT16_C(0444));
+}
+
 struct sapfs_drive_info sapfs_drive(enum sapfs_volume volume)
 {
     struct sapfs_drive_info info;
@@ -573,6 +589,31 @@ static bool prepare_workspace(
     return true;
 }
 
+static bool bootstrap_workspace(
+    const uint8_t old_database[OLD_DATABASE_BYTES],
+    const uint8_t new_database[NEW_DATABASE_BYTES],
+    struct package_builder_workspace *workspace
+)
+{
+    if (!prepare_workspace(old_database, new_database, workspace)) {
+        return false;
+    }
+    workspace->has_installed = false;
+    memset(&workspace->installed, 0, sizeof(workspace->installed));
+    workspace->spec.generation = 1U;
+    return true;
+}
+
+static void build_bootstrap_database(
+    uint8_t database[NEW_DATABASE_BYTES],
+    const uint8_t new_database[NEW_DATABASE_BYTES]
+)
+{
+    memcpy(database, new_database, NEW_DATABASE_BYTES);
+    put_u64(database + 24U, 1U);
+    finalize_database(database, NEW_DATABASE_BYTES);
+}
+
 static int test_prepare_is_recoverable_not_authoritative(
     const uint8_t old_database[OLD_DATABASE_BYTES],
     const uint8_t new_database[NEW_DATABASE_BYTES],
@@ -807,6 +848,141 @@ static int test_prepare_copies_unchanged_installed_file(
         report.choice == PACKAGE_STATE_RECOVERY_OLD && report.generation == 2U &&
         find_node("pkgstate/gen/00000000/00000003") == MOCK_MAX_NODES, 195);
     free(workspace);
+    return 0;
+}
+
+static int test_bootstrap_creates_generation_one(
+    const uint8_t old_database[OLD_DATABASE_BYTES],
+    const uint8_t new_database[NEW_DATABASE_BYTES],
+    const uint8_t bootstrap_database[NEW_DATABASE_BYTES]
+)
+{
+    struct package_builder_workspace *workspace = malloc(sizeof(*workspace));
+    struct package_service_prepare_request request;
+    struct package_service_report report;
+
+    CHECK(workspace != NULL && bootstrap_workspace(old_database, new_database,
+        workspace), 220);
+    request = (struct package_service_prepare_request){
+        workspace, bootstrap_database, NEW_DATABASE_BYTES
+    };
+    reset_filesystem();
+    nodes[find_node("pkgstate/gen/00000000")].active = false;
+    nodes[find_node("pkgstate/gen")].active = false;
+    nodes[find_node("pkgstate")].active = false;
+    CHECK(package_service_bootstrap(&request, &report) ==
+            PACKAGE_SERVICE_STATUS_OK && report.prepared && report.committed &&
+        report.authority_replaced && report.cleanup_complete &&
+        report.generation == 1U && report.files_staged == 2U &&
+        report.files_verified == 2U && report.rename_count == 1U &&
+        report.sync_count == 3U && selected_authority_generation(1U), 221);
+    CHECK(find_node(PACKAGE_SERVICE_AUTHORITY_NEW_PATH) == MOCK_MAX_NODES &&
+        find_node(PACKAGE_SERVICE_JOURNAL_PATH) == MOCK_MAX_NODES &&
+        find_node("pkgstate/gen/00000000/00000001/root/bin/app") !=
+            MOCK_MAX_NODES && report.live_file_handles == 0U &&
+        report.live_allocations == 0U && report.peak_file_handles == 1U &&
+        report.peak_allocations == 1U, 222);
+    CHECK(package_service_recover(&report) == PACKAGE_SERVICE_STATUS_OK &&
+        report.generation == 1U && report.cleanup_complete &&
+        selected_authority_generation(1U) && report_clean(&report), 223);
+    CHECK(package_service_bootstrap(&request, &report) ==
+            PACKAGE_SERVICE_STATUS_STATE && !report.committed &&
+        selected_authority_generation(1U), 224);
+
+    reset_filesystem();
+    workspace->file_sources[0].kind = PACKAGE_BUILDER_FILE_SOURCE_INSTALLED;
+    workspace->file_sources[0].payload = NULL;
+    workspace->file_sources[0].payload_bytes = 0U;
+    CHECK(package_service_bootstrap(&request, &report) ==
+            PACKAGE_SERVICE_STATUS_STATE && !report.committed &&
+        find_node(PACKAGE_SERVICE_AUTHORITY_PATH) == MOCK_MAX_NODES &&
+        find_node(PACKAGE_SERVICE_AUTHORITY_NEW_PATH) == MOCK_MAX_NODES &&
+        find_node("pkgstate/gen/00000000/00000001") == MOCK_MAX_NODES, 234);
+    free(workspace);
+    return 0;
+}
+
+static int test_bootstrap_every_durability_boundary_recovers(
+    const uint8_t old_database[OLD_DATABASE_BYTES],
+    const uint8_t new_database[NEW_DATABASE_BYTES],
+    const uint8_t bootstrap_database[NEW_DATABASE_BYTES]
+)
+{
+    struct package_builder_workspace *workspace = malloc(sizeof(*workspace));
+    struct package_service_prepare_request request;
+
+    CHECK(workspace != NULL && bootstrap_workspace(old_database, new_database,
+        workspace), 225);
+    request = (struct package_service_prepare_request){
+        workspace, bootstrap_database, NEW_DATABASE_BYTES
+    };
+    for (uint32_t boundary = 1U; boundary <= 3U; ++boundary) {
+        struct package_service_report report;
+
+        reset_filesystem();
+        fail_sync_ordinal = boundary;
+        CHECK(package_service_bootstrap(&request, &report) ==
+                PACKAGE_SERVICE_STATUS_DURABILITY && !report.committed &&
+            report.live_file_handles == 0U && report.live_allocations == 0U,
+            226);
+        if (boundary <= 2U) {
+            CHECK(find_node(PACKAGE_SERVICE_AUTHORITY_PATH) == MOCK_MAX_NODES &&
+                find_node(PACKAGE_SERVICE_AUTHORITY_NEW_PATH) ==
+                    MOCK_MAX_NODES &&
+                find_node("pkgstate/gen/00000000/00000001") == MOCK_MAX_NODES &&
+                package_service_recover(&report) ==
+                    PACKAGE_SERVICE_STATUS_ABSENT, 227);
+        } else {
+            CHECK(package_service_recover(&report) == PACKAGE_SERVICE_STATUS_OK &&
+                report.generation == 1U && report.cleanup_complete &&
+                selected_authority_generation(1U), 228);
+        }
+        CHECK(report.live_file_handles == 0U &&
+            report.live_allocations == 0U, 229);
+    }
+    free(workspace);
+    return 0;
+}
+
+static int test_recovery_accepts_persisted_bootstrap_prefixes(
+    const uint8_t bootstrap_database[NEW_DATABASE_BYTES],
+    const uint8_t bootstrap_authority[PACKAGE_STATE_AUTHORITY_BYTES]
+)
+{
+    struct package_service_report report;
+
+    reset_filesystem();
+    add_directory("pkgstate/gen/00000000/00000001");
+    add_directory("pkgstate/gen/00000000/00000001/root");
+    add_file(PACKAGE_SERVICE_AUTHORITY_NEW_PATH, bootstrap_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    CHECK(package_service_recover(&report) == PACKAGE_SERVICE_STATUS_ABSENT &&
+        report.cleanup_complete &&
+        find_node(PACKAGE_SERVICE_AUTHORITY_NEW_PATH) == MOCK_MAX_NODES &&
+        find_node("pkgstate/gen/00000000/00000001") == MOCK_MAX_NODES, 230);
+
+    reset_filesystem();
+    add_bootstrap_generation(bootstrap_database);
+    add_file(PACKAGE_SERVICE_AUTHORITY_NEW_PATH, bootstrap_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    CHECK(package_service_recover(&report) == PACKAGE_SERVICE_STATUS_OK &&
+        report.committed && report.authority_replaced &&
+        report.generation == 1U && selected_authority_generation(1U) &&
+        find_node(PACKAGE_SERVICE_AUTHORITY_NEW_PATH) == MOCK_MAX_NODES, 231);
+
+    reset_filesystem();
+    add_bootstrap_generation(bootstrap_database);
+    add_file(PACKAGE_SERVICE_AUTHORITY_PATH, bootstrap_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    CHECK(package_service_recover(&report) == PACKAGE_SERVICE_STATUS_OK &&
+        report.generation == 1U && selected_authority_generation(1U), 232);
+
+    reset_filesystem();
+    add_file(PACKAGE_SERVICE_AUTHORITY_NEW_PATH, (const uint8_t *)"bad", 3U,
+        UINT16_C(0444));
+    CHECK(package_service_recover(&report) == PACKAGE_SERVICE_STATUS_STATE &&
+        !report.cleanup_complete &&
+        find_node(PACKAGE_SERVICE_AUTHORITY_NEW_PATH) != MOCK_MAX_NODES, 233);
     return 0;
 }
 
@@ -1287,8 +1463,10 @@ int main(void)
 {
     static uint8_t old_database[OLD_DATABASE_BYTES];
     static uint8_t new_database[NEW_DATABASE_BYTES];
+    static uint8_t bootstrap_database[NEW_DATABASE_BYTES];
     uint8_t old_authority[PACKAGE_STATE_AUTHORITY_BYTES];
     uint8_t new_authority[PACKAGE_STATE_AUTHORITY_BYTES];
+    uint8_t bootstrap_authority[PACKAGE_STATE_AUTHORITY_BYTES];
     uint8_t journal[PACKAGE_STATE_JOURNAL_BYTES];
     int result = package_state_core_host_test_main();
 
@@ -1297,8 +1475,11 @@ int main(void)
     }
     build_old_database(old_database);
     build_new_database(new_database);
+    build_bootstrap_database(bootstrap_database, new_database);
     build_authority(old_authority, old_database, OLD_DATABASE_BYTES);
     build_authority(new_authority, new_database, NEW_DATABASE_BYTES);
+    build_authority(bootstrap_authority, bootstrap_database,
+        NEW_DATABASE_BYTES);
     build_journal(journal, old_database, new_database);
     result = test_absent_state_is_distinct();
     if (result == 0) {
@@ -1356,6 +1537,18 @@ int main(void)
     if (result == 0) {
         result = test_prepare_copies_unchanged_installed_file(new_database,
             new_authority);
+    }
+    if (result == 0) {
+        result = test_bootstrap_creates_generation_one(old_database,
+            new_database, bootstrap_database);
+    }
+    if (result == 0) {
+        result = test_bootstrap_every_durability_boundary_recovers(old_database,
+            new_database, bootstrap_database);
+    }
+    if (result == 0) {
+        result = test_recovery_accepts_persisted_bootstrap_prefixes(
+            bootstrap_database, bootstrap_authority);
     }
     if (result == 0) {
         result = test_commit_promotes_prepared_generation(old_database,

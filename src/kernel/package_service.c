@@ -1368,6 +1368,37 @@ static enum package_service_status cleanup_unpublished_prepare(
         PACKAGE_SERVICE_STATUS_CLEANUP;
 }
 
+static enum package_service_status cleanup_unpublished_bootstrap(
+    struct service_context *context
+)
+{
+    char path[SAPFS_MAX_PATH];
+    enum package_service_status status = ensure_entries(context);
+
+    if (status != PACKAGE_SERVICE_STATUS_OK ||
+        !generation_path(1U, "", path)) {
+        return PACKAGE_SERVICE_STATUS_CLEANUP;
+    }
+    context->walk_entries = 0U;
+    status = remove_tree(context, path, 0U);
+    context->report->tree_entries += context->walk_entries;
+    if (status != PACKAGE_SERVICE_STATUS_OK) {
+        return PACKAGE_SERVICE_STATUS_CLEANUP;
+    }
+    enum sapfs_status fs_status = sapfs_unlink(SAPFS_VOLUME_DATA,
+        PACKAGE_SERVICE_AUTHORITY_NEW_PATH);
+    if (fs_status != SAPFS_STATUS_OK && fs_status != SAPFS_STATUS_NOT_FOUND) {
+        context->report->filesystem_status = fs_status;
+        return PACKAGE_SERVICE_STATUS_CLEANUP;
+    }
+    status = sync_data(context);
+    if (status != PACKAGE_SERVICE_STATUS_OK) {
+        return PACKAGE_SERVICE_STATUS_CLEANUP;
+    }
+    context->report->cleanup_complete = true;
+    return PACKAGE_SERVICE_STATUS_OK;
+}
+
 static enum package_service_status prepare_internal(
     struct service_context *context,
     const struct package_service_prepare_request *request
@@ -1525,6 +1556,141 @@ static enum package_service_status prepare_internal(
     return status;
 }
 
+static enum package_service_status bootstrap_internal(
+    struct service_context *context,
+    const struct package_service_prepare_request *request
+)
+{
+    const struct package_builder_workspace *builder = request->builder;
+    struct package_state_database_view target;
+    uint8_t authority[PACKAGE_STATE_AUTHORITY_BYTES];
+    char database_path[SAPFS_MAX_PATH];
+    uint64_t required_space;
+    bool published = false;
+    enum package_service_status status = PACKAGE_SERVICE_STATUS_OK;
+
+    if (builder == NULL || request->database == NULL ||
+        builder->has_installed ||
+        builder->verified_plan.operation != PACKAGE_MANAGER_PLAN_INSTALL ||
+        request->database_bytes > PACKAGE_SERVICE_MAX_DATABASE_BYTES) {
+        return PACKAGE_SERVICE_STATUS_STATE;
+    }
+    context->report->state_status = package_generation_verify(&builder->spec,
+        request->database, request->database_bytes, &target);
+    if (context->report->state_status != PACKAGE_STATE_STATUS_OK ||
+        target.generation != 1U || !staging_namespace_bounded(&builder->spec)) {
+        return PACKAGE_SERVICE_STATUS_STATE;
+    }
+    for (uint32_t index = 0U; index < builder->spec.file_count; ++index) {
+        if (builder->file_sources[index].kind !=
+                PACKAGE_BUILDER_FILE_SOURCE_PAYLOAD ||
+            builder->file_sources[index].payload == NULL ||
+            builder->file_sources[index].payload_bytes !=
+                builder->files[index].length) {
+            return PACKAGE_SERVICE_STATUS_STATE;
+        }
+    }
+    if (!fixed_path_absent(context, PACKAGE_SERVICE_AUTHORITY_PATH, &status) ||
+        !fixed_path_absent(context, PACKAGE_SERVICE_AUTHORITY_NEW_PATH,
+            &status) ||
+        !fixed_path_absent(context, PACKAGE_SERVICE_AUTHORITY_OLD_PATH,
+            &status) ||
+        !fixed_path_absent(context, PACKAGE_SERVICE_JOURNAL_PATH, &status) ||
+        !fixed_path_absent(context, PACKAGE_SERVICE_JOURNAL_NEW_PATH,
+            &status)) {
+        return status;
+    }
+    {
+        char generation[SAPFS_MAX_PATH];
+
+        if (!generation_path(1U, "", generation) ||
+            !fixed_path_absent(context, generation, &status)) {
+            return status == PACKAGE_SERVICE_STATUS_OK ?
+                PACKAGE_SERVICE_STATUS_STATE : status;
+        }
+    }
+    required_space = request->database_bytes + PACKAGE_STATE_AUTHORITY_BYTES;
+    if (required_space < request->database_bytes) {
+        return PACKAGE_SERVICE_STATUS_RESOURCE;
+    }
+    for (uint32_t index = 0U; index < builder->spec.file_count; ++index) {
+        if (builder->files[index].length > UINT64_MAX - required_space) {
+            return PACKAGE_SERVICE_STATUS_RESOURCE;
+        }
+        required_space += builder->files[index].length;
+    }
+    if (required_space > sapfs_drive(SAPFS_VOLUME_DATA).free_bytes) {
+        return PACKAGE_SERVICE_STATUS_RESOURCE;
+    }
+    context->report->state_status = package_state_authority_encode(&target,
+        authority);
+    if (context->report->state_status != PACKAGE_STATE_STATUS_OK) {
+        return PACKAGE_SERVICE_STATUS_STATE;
+    }
+    status = ensure_directory(context, PACKAGE_SERVICE_STATE_DIRECTORY);
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        status = write_authority_file(context, authority);
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        status = ensure_generation_layout(context, target.generation);
+    }
+    for (uint32_t index = 0U;
+        status == PACKAGE_SERVICE_STATUS_OK && index < builder->spec.file_count;
+        ++index) {
+        status = write_generation_file(context, builder, &target, index);
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK &&
+        !generation_path(target.generation, GENERATION_DATABASE_SUFFIX,
+            database_path)) {
+        status = PACKAGE_SERVICE_STATUS_NAMESPACE;
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        status = write_new_file(context, database_path, request->database,
+            request->database_bytes);
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        status = ensure_entries(context);
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        status = verify_generation_files(context, &target);
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        status = sync_data(context);
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        context->report->prepared = true;
+        enum sapfs_status fs_status = sapfs_rename(SAPFS_VOLUME_DATA,
+            PACKAGE_SERVICE_AUTHORITY_NEW_PATH,
+            PACKAGE_SERVICE_AUTHORITY_PATH);
+
+        if (fs_status != SAPFS_STATUS_OK) {
+            status = filesystem_failure(context, fs_status);
+        } else {
+            ++context->report->rename_count;
+            published = true;
+            status = sync_data(context);
+        }
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        context->report->committed = true;
+        context->report->authority_replaced = true;
+        context->report->choice = PACKAGE_STATE_RECOVERY_OLD;
+        context->report->generation = target.generation;
+        context->report->cleanup_complete = true;
+        return PACKAGE_SERVICE_STATUS_OK;
+    }
+    if (!published) {
+        enum package_service_status cleanup = cleanup_unpublished_bootstrap(
+            context);
+
+        if (cleanup != PACKAGE_SERVICE_STATUS_OK) {
+            return cleanup;
+        }
+        context->report->prepared = false;
+    }
+    return status;
+}
+
 static enum package_service_status commit_internal(
     struct service_context *context
 )
@@ -1648,12 +1814,109 @@ release:
     return status;
 }
 
+static enum package_service_status recover_bootstrap(
+    struct service_context *context,
+    const uint8_t authority[PACKAGE_STATE_AUTHORITY_BYTES],
+    bool authority_valid
+)
+{
+    struct package_state_authority_view authority_view;
+    struct loaded_generation generation;
+    struct package_state_recovery_result recovery;
+    enum package_service_status status;
+
+    zero_bytes(&generation, sizeof(generation));
+    if (!authority_valid || package_state_authority_parse(authority,
+            PACKAGE_STATE_AUTHORITY_BYTES, &authority_view) !=
+                PACKAGE_STATE_STATUS_OK || authority_view.generation != 1U) {
+        context->report->state_status = PACKAGE_STATE_STATUS_AUTHORITY;
+        return PACKAGE_SERVICE_STATUS_STATE;
+    }
+    status = load_generation(context, authority_view.generation,
+        authority_view.database_bytes, &generation);
+    if (status != PACKAGE_SERVICE_STATUS_OK) {
+        goto release;
+    }
+    if (!generation.candidate.owned_files_complete ||
+        !authority_selects(authority, &generation.view)) {
+        status = cleanup_unpublished_bootstrap(context);
+        if (status == PACKAGE_SERVICE_STATUS_OK) {
+            status = PACKAGE_SERVICE_STATUS_ABSENT;
+        }
+        goto release;
+    }
+    context->report->state_status = package_state_recovery_decide(authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, NULL, 0U, &generation.candidate, NULL,
+        &recovery);
+    if (context->report->state_status != PACKAGE_STATE_STATUS_OK ||
+        recovery.generation != 1U) {
+        status = PACKAGE_SERVICE_STATUS_STATE;
+        goto release;
+    }
+    enum sapfs_status fs_status = sapfs_rename(SAPFS_VOLUME_DATA,
+        PACKAGE_SERVICE_AUTHORITY_NEW_PATH, PACKAGE_SERVICE_AUTHORITY_PATH);
+    if (fs_status != SAPFS_STATUS_OK) {
+        status = filesystem_failure(context, fs_status);
+        goto release;
+    }
+    ++context->report->rename_count;
+    status = sync_data(context);
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        context->report->choice = recovery.choice;
+        context->report->generation = recovery.generation;
+        context->report->committed = true;
+        context->report->authority_replaced = true;
+        context->report->cleanup_complete = true;
+    }
+
+release:
+    {
+        enum package_service_status release_status = release_generation(context,
+            &generation);
+
+        if (release_status != PACKAGE_SERVICE_STATUS_OK) {
+            status = release_status;
+        }
+    }
+    return status;
+}
+
+static enum package_service_status cleanup_authority_temporaries(
+    struct service_context *context
+)
+{
+    bool removed = false;
+    const char *const paths[] = {
+        PACKAGE_SERVICE_AUTHORITY_NEW_PATH,
+        PACKAGE_SERVICE_AUTHORITY_OLD_PATH
+    };
+
+    for (size_t index = 0U; index < sizeof(paths) / sizeof(paths[0]); ++index) {
+        enum sapfs_status fs_status = sapfs_unlink(SAPFS_VOLUME_DATA,
+            paths[index]);
+
+        if (fs_status == SAPFS_STATUS_OK) {
+            removed = true;
+        } else if (fs_status != SAPFS_STATUS_NOT_FOUND) {
+            context->report->filesystem_status = fs_status;
+            return PACKAGE_SERVICE_STATUS_CLEANUP;
+        }
+    }
+    if (!removed) {
+        return PACKAGE_SERVICE_STATUS_OK;
+    }
+    enum package_service_status status = sync_data(context);
+    return status == PACKAGE_SERVICE_STATUS_OK ? PACKAGE_SERVICE_STATUS_OK :
+        PACKAGE_SERVICE_STATUS_CLEANUP;
+}
+
 static enum package_service_status recover_internal(
     struct service_context *context
 )
 {
     uint8_t authority[PACKAGE_STATE_AUTHORITY_BYTES];
     uint8_t authority_old[PACKAGE_STATE_AUTHORITY_BYTES];
+    uint8_t authority_new[PACKAGE_STATE_AUTHORITY_BYTES];
     uint8_t journal[PACKAGE_STATE_JOURNAL_BYTES];
     struct package_state_authority_view authority_view;
     struct package_state_journal_view journal_view;
@@ -1662,6 +1925,8 @@ static enum package_service_status recover_internal(
     struct package_state_recovery_result recovery;
     bool authority_present = false;
     bool old_authority_present = false;
+    bool new_authority_present = false;
+    bool new_authority_valid = false;
     bool journal_present = false;
     bool journal_new_present = false;
     bool used_old_authority = false;
@@ -1669,6 +1934,7 @@ static enum package_service_status recover_internal(
 
     zero_bytes(authority, sizeof(authority));
     zero_bytes(authority_old, sizeof(authority_old));
+    zero_bytes(authority_new, sizeof(authority_new));
     zero_bytes(journal, sizeof(journal));
     zero_bytes(&old_generation, sizeof(old_generation));
     zero_bytes(&new_generation, sizeof(new_generation));
@@ -1711,6 +1977,17 @@ static enum package_service_status recover_internal(
             PACKAGE_SERVICE_STATUS_STATE : status;
     }
     context->report->journal_present = journal_present;
+    status = read_exact_path(context, PACKAGE_SERVICE_AUTHORITY_NEW_PATH,
+        authority_new, sizeof(authority_new), true, &new_authority_present);
+    if (status == PACKAGE_SERVICE_STATUS_STATE) {
+        new_authority_present = true;
+        status = PACKAGE_SERVICE_STATUS_OK;
+    } else if (status == PACKAGE_SERVICE_STATUS_OK && new_authority_present) {
+        new_authority_valid = true;
+    }
+    if (status != PACKAGE_SERVICE_STATUS_OK) {
+        goto release;
+    }
     {
         struct sapfs_stat stat;
         enum sapfs_status fs_status = sapfs_stat_path(SAPFS_VOLUME_DATA,
@@ -1745,6 +2022,13 @@ static enum package_service_status recover_internal(
         if (status != PACKAGE_SERVICE_STATUS_OK) {
             goto release;
         }
+    }
+
+    if (!journal_present && new_authority_present && !authority_present &&
+        !old_authority_present) {
+        status = recover_bootstrap(context, authority_new,
+            new_authority_valid);
+        goto release;
     }
 
     if (!journal_present) {
@@ -1800,6 +2084,10 @@ static enum package_service_status recover_internal(
                 status = PACKAGE_SERVICE_STATUS_CLEANUP;
                 goto release;
             }
+        }
+        status = cleanup_authority_temporaries(context);
+        if (status != PACKAGE_SERVICE_STATUS_OK) {
+            goto release;
         }
         context->report->cleanup_complete = true;
         status = PACKAGE_SERVICE_STATUS_OK;
@@ -1936,6 +2224,47 @@ enum package_service_status package_service_prepare(
     context.report = report;
     servicing = true;
     status = prepare_internal(&context, request);
+    enum package_service_status entries_release = release_bytes(&context,
+        (void **)&context.entries);
+    if (entries_release != PACKAGE_SERVICE_STATUS_OK) {
+        status = entries_release;
+    }
+    if (report->live_file_handles != 0U || report->live_allocations != 0U) {
+        status = PACKAGE_SERVICE_STATUS_RESOURCE;
+    }
+    servicing = false;
+    report->status = status;
+    return status;
+}
+
+enum package_service_status package_service_bootstrap(
+    const struct package_service_prepare_request *request,
+    struct package_service_report *report
+)
+{
+    struct service_context context;
+    enum package_service_status status;
+
+    if (request == NULL || report == NULL) {
+        return PACKAGE_SERVICE_STATUS_NULL_ARGUMENT;
+    }
+    zero_bytes(report, sizeof(*report));
+    report->filesystem_status = SAPFS_STATUS_OK;
+    report->state_status = PACKAGE_STATE_STATUS_OK;
+    if (servicing) {
+        report->status = PACKAGE_SERVICE_STATUS_BUSY;
+        return report->status;
+    }
+    struct sapfs_drive_info drive = sapfs_drive(SAPFS_VOLUME_DATA);
+    if (!drive.present || !drive.mounted || !drive.healthy || drive.read_only ||
+        !heap_is_active()) {
+        report->status = PACKAGE_SERVICE_STATUS_UNAVAILABLE;
+        return report->status;
+    }
+    zero_bytes(&context, sizeof(context));
+    context.report = report;
+    servicing = true;
+    status = bootstrap_internal(&context, request);
     enum package_service_status entries_release = release_bytes(&context,
         (void **)&context.entries);
     if (entries_release != PACKAGE_SERVICE_STATUS_OK) {
