@@ -17,6 +17,9 @@ int package_state_core_host_test_main(void);
 #define MOCK_MAX_FILE_BYTES 4096U
 #define MOCK_MAX_HANDLES 16U
 #define MOCK_MAX_EVENTS 128U
+#define REMOVE_DATABASE_BYTES (PACKAGE_STATE_DATABASE_HEADER_BYTES + \
+    PACKAGE_STATE_DATABASE_PACKAGE_RECORD_BYTES + \
+    PACKAGE_STATE_DATABASE_FILE_RECORD_BYTES)
 
 enum mock_event {
     MOCK_EVENT_WRITE_AUTHORITY = 1,
@@ -48,6 +51,8 @@ static enum mock_event events[MOCK_MAX_EVENTS];
 static size_t event_count;
 static uint64_t next_object_id;
 static bool fail_next_sync;
+static uint32_t fail_sync_ordinal;
+static uint32_t sync_attempts;
 
 static void event(enum mock_event value)
 {
@@ -126,6 +131,8 @@ static void reset_filesystem(void)
     event_count = 0U;
     next_object_id = 1U;
     fail_next_sync = false;
+    fail_sync_ordinal = 0U;
+    sync_attempts = 0U;
     add_directory("pkgstate");
     add_directory("pkgstate/gen");
     add_directory("pkgstate/gen/00000000");
@@ -170,7 +177,8 @@ enum sapfs_status sapfs_sync(enum sapfs_volume volume)
 {
     (void)volume;
     event(MOCK_EVENT_SYNC);
-    if (fail_next_sync) {
+    ++sync_attempts;
+    if (fail_next_sync || sync_attempts == fail_sync_ordinal) {
         fail_next_sync = false;
         return SAPFS_STATUS_WRITEBACK;
     }
@@ -358,8 +366,18 @@ enum sapfs_status sapfs_create(enum sapfs_volume volume, const char *path)
     if (find_node(path) != MOCK_MAX_NODES) {
         return SAPFS_STATUS_EXISTS;
     }
-    return add_node(path, false, NULL, 0U, UINT16_C(0644)) ==
+    return add_node(path, false, NULL, 0U, 0U) ==
         MOCK_MAX_NODES ? SAPFS_STATUS_FULL : SAPFS_STATUS_OK;
+}
+
+enum sapfs_status sapfs_mkdir(enum sapfs_volume volume, const char *path)
+{
+    (void)volume;
+    if (find_node(path) != MOCK_MAX_NODES) {
+        return SAPFS_STATUS_EXISTS;
+    }
+    return add_node(path, true, NULL, 0U, 0U) == MOCK_MAX_NODES ?
+        SAPFS_STATUS_FULL : SAPFS_STATUS_OK;
 }
 
 enum sapfs_status sapfs_rename(
@@ -465,6 +483,288 @@ static size_t first_event(enum mock_event wanted)
     return MOCK_MAX_EVENTS;
 }
 
+static bool prepare_workspace(
+    const uint8_t old_database[OLD_DATABASE_BYTES],
+    const uint8_t new_database[NEW_DATABASE_BYTES],
+    struct package_builder_workspace *workspace
+)
+{
+    static const uint8_t target[] = "org.sapote.app";
+
+    memset(workspace, 0, sizeof(*workspace));
+    if (package_state_database_parse(old_database, OLD_DATABASE_BYTES,
+            &workspace->installed) != PACKAGE_STATE_STATUS_OK) {
+        return false;
+    }
+    workspace->has_installed = true;
+    workspace->verified_plan.operation = PACKAGE_MANAGER_PLAN_INSTALL;
+    workspace->verified_plan.target = (struct package_manager_text){
+        target, sizeof(target) - 1U
+    };
+    workspace->verified_plan.root = workspace->verified_plan.target;
+    struct package_state_database_view target_view;
+    if (package_state_database_parse(new_database, NEW_DATABASE_BYTES,
+            &target_view) != PACKAGE_STATE_STATUS_OK) {
+        return false;
+    }
+    workspace->spec.generation = target_view.generation;
+    workspace->spec.abi = target_view.abi;
+    workspace->spec.package_count = target_view.package_count;
+    workspace->spec.dependency_count = target_view.edge_count;
+    workspace->spec.file_count = target_view.file_count;
+    workspace->spec.packages = workspace->packages;
+    workspace->spec.dependencies = workspace->dependencies;
+    workspace->spec.files = workspace->files;
+    for (uint32_t index = 0U; index < target_view.package_count; ++index) {
+        struct package_state_package_view package;
+
+        if (package_state_database_package(&target_view, index, &package) !=
+                PACKAGE_STATE_STATUS_OK) {
+            return false;
+        }
+        workspace->packages[index] = (struct package_generation_package){
+            package.identifier, package.version, package.package_sha256,
+            package.publisher_key_id, package.explicit_root,
+            package.dependency_start, package.dependency_count,
+            package.file_count
+        };
+    }
+    for (uint32_t index = 0U; index < target_view.edge_count; ++index) {
+        struct package_state_dependency_view dependency;
+
+        if (package_state_database_dependency(&target_view, index,
+                &dependency) != PACKAGE_STATE_STATUS_OK) {
+            return false;
+        }
+        workspace->dependencies[index] =
+            (struct package_generation_dependency){
+                dependency.requested, dependency.constraint,
+                dependency.provider
+            };
+    }
+    for (uint32_t index = 0U; index < target_view.file_count; ++index) {
+        struct package_state_file_view file;
+
+        if (package_state_database_file(&target_view, index, &file) !=
+                PACKAGE_STATE_STATUS_OK) {
+            return false;
+        }
+        workspace->files[index] = (struct package_generation_file){
+            file.path, file.owner_index, file.kind, file.mode, file.length,
+            file.sha256, file.soname
+        };
+        workspace->file_sources[index] =
+            (struct package_builder_file_source){
+                PACKAGE_BUILDER_FILE_SOURCE_PAYLOAD, file.owner_index, index,
+                (const uint8_t *)(index == 0U ? "app" : "lib"), 3U
+            };
+    }
+    return true;
+}
+
+static int test_prepare_is_recoverable_not_authoritative(
+    const uint8_t old_database[OLD_DATABASE_BYTES],
+    const uint8_t new_database[NEW_DATABASE_BYTES],
+    const uint8_t old_authority[PACKAGE_STATE_AUTHORITY_BYTES]
+)
+{
+    struct package_builder_workspace *workspace = malloc(sizeof(*workspace));
+    struct package_service_prepare_request request;
+    struct package_service_report report;
+    struct package_state_authority_view authority;
+
+    CHECK(workspace != NULL && prepare_workspace(old_database, new_database,
+        workspace), 170);
+    request = (struct package_service_prepare_request){
+        workspace, new_database, NEW_DATABASE_BYTES
+    };
+    reset_filesystem();
+    add_old_generation(old_database);
+    add_file(PACKAGE_SERVICE_AUTHORITY_PATH, old_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    CHECK(package_service_prepare(&request, &report) ==
+            PACKAGE_SERVICE_STATUS_OK && report.prepared &&
+        report.journal_present && report.generation == 2U &&
+        report.files_staged == 2U && report.files_verified == 2U &&
+        report.sync_count == 3U && report.rename_count == 1U &&
+        report.live_file_handles == 0U && report.live_allocations == 0U,
+        171);
+    CHECK(find_node(PACKAGE_SERVICE_JOURNAL_NEW_PATH) == MOCK_MAX_NODES &&
+        find_node(PACKAGE_SERVICE_JOURNAL_PATH) != MOCK_MAX_NODES &&
+        find_node("pkgstate/gen/00000000/00000002/root/bin/app") !=
+            MOCK_MAX_NODES &&
+        package_state_authority_parse(nodes[find_node(
+            PACKAGE_SERVICE_AUTHORITY_PATH)].bytes,
+            PACKAGE_STATE_AUTHORITY_BYTES, &authority) ==
+                PACKAGE_STATE_STATUS_OK && authority.generation == 1U, 172);
+    CHECK(package_service_recover(&report) == PACKAGE_SERVICE_STATUS_OK &&
+        report.choice == PACKAGE_STATE_RECOVERY_OLD && report.generation == 1U &&
+        report.cleanup_complete &&
+        find_node(PACKAGE_SERVICE_JOURNAL_PATH) == MOCK_MAX_NODES &&
+        find_node("pkgstate/gen/00000000/00000002") == MOCK_MAX_NODES, 173);
+    free(workspace);
+    return 0;
+}
+
+static int test_prepare_sync_failure_cleans_unpublished_state(
+    const uint8_t old_database[OLD_DATABASE_BYTES],
+    const uint8_t new_database[NEW_DATABASE_BYTES],
+    const uint8_t old_authority[PACKAGE_STATE_AUTHORITY_BYTES]
+)
+{
+    struct package_builder_workspace *workspace = malloc(sizeof(*workspace));
+    struct package_service_prepare_request request;
+    struct package_service_report report;
+
+    CHECK(workspace != NULL && prepare_workspace(old_database, new_database,
+        workspace), 180);
+    request = (struct package_service_prepare_request){
+        workspace, new_database, NEW_DATABASE_BYTES
+    };
+    reset_filesystem();
+    add_old_generation(old_database);
+    add_file(PACKAGE_SERVICE_AUTHORITY_PATH, old_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    fail_next_sync = true;
+    CHECK(package_service_prepare(&request, &report) ==
+            PACKAGE_SERVICE_STATUS_DURABILITY && !report.prepared &&
+        !report.journal_present && report.live_file_handles == 0U &&
+        report.live_allocations == 0U &&
+        find_node(PACKAGE_SERVICE_JOURNAL_NEW_PATH) == MOCK_MAX_NODES &&
+        find_node(PACKAGE_SERVICE_JOURNAL_PATH) == MOCK_MAX_NODES &&
+        find_node("pkgstate/gen/00000000/00000002") == MOCK_MAX_NODES, 181);
+    free(workspace);
+    return 0;
+}
+
+static int test_prepare_every_durability_boundary(
+    const uint8_t old_database[OLD_DATABASE_BYTES],
+    const uint8_t new_database[NEW_DATABASE_BYTES],
+    const uint8_t old_authority[PACKAGE_STATE_AUTHORITY_BYTES]
+)
+{
+    struct package_builder_workspace *workspace = malloc(sizeof(*workspace));
+    struct package_service_prepare_request request;
+
+    CHECK(workspace != NULL && prepare_workspace(old_database, new_database,
+        workspace), 185);
+    request = (struct package_service_prepare_request){
+        workspace, new_database, NEW_DATABASE_BYTES
+    };
+    for (uint32_t boundary = 1U; boundary <= 3U; ++boundary) {
+        struct package_service_report report;
+
+        reset_filesystem();
+        add_old_generation(old_database);
+        add_file(PACKAGE_SERVICE_AUTHORITY_PATH, old_authority,
+            PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+        fail_sync_ordinal = boundary;
+        CHECK(package_service_prepare(&request, &report) ==
+                PACKAGE_SERVICE_STATUS_DURABILITY && !report.prepared &&
+            report.live_file_handles == 0U && report.live_allocations == 0U,
+            186);
+        if (boundary < 3U) {
+            CHECK(find_node(PACKAGE_SERVICE_JOURNAL_NEW_PATH) ==
+                    MOCK_MAX_NODES &&
+                find_node(PACKAGE_SERVICE_JOURNAL_PATH) == MOCK_MAX_NODES &&
+                find_node("pkgstate/gen/00000000/00000002") == MOCK_MAX_NODES,
+                187);
+        } else {
+            CHECK(find_node(PACKAGE_SERVICE_JOURNAL_NEW_PATH) ==
+                    MOCK_MAX_NODES &&
+                find_node(PACKAGE_SERVICE_JOURNAL_PATH) != MOCK_MAX_NODES &&
+                find_node("pkgstate/gen/00000000/00000002") != MOCK_MAX_NODES,
+                188);
+            CHECK(package_service_recover(&report) ==
+                    PACKAGE_SERVICE_STATUS_OK &&
+                report.choice == PACKAGE_STATE_RECOVERY_OLD &&
+                report.generation == 1U && report.cleanup_complete, 189);
+        }
+    }
+    free(workspace);
+    return 0;
+}
+
+static int test_prepare_copies_unchanged_installed_file(
+    const uint8_t new_database[NEW_DATABASE_BYTES],
+    const uint8_t new_authority[PACKAGE_STATE_AUTHORITY_BYTES]
+)
+{
+    static const uint8_t target[] = "org.sapote.app";
+    struct package_builder_workspace *workspace = malloc(sizeof(*workspace));
+    struct package_state_database_view target_view;
+    struct package_state_package_view library;
+    struct package_state_file_view library_file;
+    struct package_service_prepare_request request;
+    struct package_service_report report;
+    uint8_t database[REMOVE_DATABASE_BYTES];
+
+    CHECK(workspace != NULL, 190);
+    memset(workspace, 0, sizeof(*workspace));
+    CHECK(package_state_database_parse(new_database, NEW_DATABASE_BYTES,
+            &workspace->installed) == PACKAGE_STATE_STATUS_OK &&
+        package_state_database_package(&workspace->installed, 1U, &library) ==
+            PACKAGE_STATE_STATUS_OK &&
+        package_state_database_file(&workspace->installed, 1U, &library_file) ==
+            PACKAGE_STATE_STATUS_OK, 191);
+    workspace->has_installed = true;
+    workspace->verified_plan.operation = PACKAGE_MANAGER_PLAN_REMOVE;
+    workspace->verified_plan.target = (struct package_manager_text){
+        target, sizeof(target) - 1U
+    };
+    workspace->verified_plan.root = workspace->verified_plan.target;
+    workspace->spec = (struct package_generation_spec){
+        3U, 1U, workspace->packages, 1U, workspace->dependencies, 0U,
+        workspace->files, 1U
+    };
+    workspace->packages[0] = (struct package_generation_package){
+        library.identifier, library.version, library.package_sha256,
+        library.publisher_key_id, true, 0U, 0U, 1U
+    };
+    workspace->files[0] = (struct package_generation_file){
+        library_file.path, 0U, library_file.kind, library_file.mode,
+        library_file.length, library_file.sha256, library_file.soname
+    };
+    workspace->file_sources[0] = (struct package_builder_file_source){
+        PACKAGE_BUILDER_FILE_SOURCE_INSTALLED, 1U, 1U, NULL, 0U
+    };
+    CHECK(package_generation_encode(&workspace->spec, database,
+            sizeof(database), &target_view) == PACKAGE_STATE_STATUS_OK, 192);
+    request = (struct package_service_prepare_request){
+        workspace, database, sizeof(database)
+    };
+    reset_filesystem();
+    add_new_generation(new_database);
+    add_file(PACKAGE_SERVICE_AUTHORITY_PATH, new_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    size_t damaged = find_node(
+        "pkgstate/gen/00000000/00000002/root/lib/libx.so.1");
+    nodes[damaged].bytes[0] ^= UINT8_C(1);
+    CHECK(package_service_prepare(&request, &report) ==
+            PACKAGE_SERVICE_STATUS_IMMUTABLE_FILE && !report.prepared &&
+        find_node(PACKAGE_SERVICE_JOURNAL_NEW_PATH) == MOCK_MAX_NODES &&
+        find_node("pkgstate/gen/00000000/00000003") == MOCK_MAX_NODES, 196);
+
+    reset_filesystem();
+    add_new_generation(new_database);
+    add_file(PACKAGE_SERVICE_AUTHORITY_PATH, new_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    CHECK(package_service_prepare(&request, &report) ==
+            PACKAGE_SERVICE_STATUS_OK && report.prepared &&
+        report.files_staged == 1U && report.files_verified == 3U &&
+        find_node("pkgstate/gen/00000000/00000003/root/lib/libx.so.1") !=
+            MOCK_MAX_NODES, 193);
+    size_t copied = find_node(
+        "pkgstate/gen/00000000/00000003/root/lib/libx.so.1");
+    CHECK(nodes[copied].byte_count == 3U &&
+        memcmp(nodes[copied].bytes, "lib", 3U) == 0, 194);
+    CHECK(package_service_recover(&report) == PACKAGE_SERVICE_STATUS_OK &&
+        report.choice == PACKAGE_STATE_RECOVERY_OLD && report.generation == 2U &&
+        find_node("pkgstate/gen/00000000/00000003") == MOCK_MAX_NODES, 195);
+    free(workspace);
+    return 0;
+}
+
 static int test_absent_state_is_distinct(void)
 {
     struct package_service_report report;
@@ -537,6 +837,45 @@ static int test_precommit_rolls_back(
     CHECK(find_node("pkgstate/gen/00000000/00000002") == MOCK_MAX_NODES &&
         find_node(PACKAGE_SERVICE_JOURNAL_PATH) == MOCK_MAX_NODES, 112);
     CHECK(report_clean(&report), 113);
+    return 0;
+}
+
+static int test_unpublished_prepare_powercut_cleanup(
+    const uint8_t old_database[OLD_DATABASE_BYTES],
+    const uint8_t new_database[NEW_DATABASE_BYTES],
+    const uint8_t old_authority[PACKAGE_STATE_AUTHORITY_BYTES],
+    const uint8_t journal[PACKAGE_STATE_JOURNAL_BYTES]
+)
+{
+    static const uint8_t partial[] = "partial";
+    struct package_service_report report;
+
+    reset_filesystem();
+    add_old_generation(old_database);
+    add_new_generation(new_database);
+    add_file(PACKAGE_SERVICE_AUTHORITY_PATH, old_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    add_file(PACKAGE_SERVICE_JOURNAL_NEW_PATH, partial,
+        sizeof(partial) - 1U, UINT16_C(0444));
+    CHECK(package_service_recover(&report) == PACKAGE_SERVICE_STATUS_OK &&
+        report.choice == PACKAGE_STATE_RECOVERY_OLD && report.generation == 1U &&
+        report.cleanup_complete &&
+        find_node(PACKAGE_SERVICE_JOURNAL_NEW_PATH) == MOCK_MAX_NODES &&
+        find_node("pkgstate/gen/00000000/00000002") == MOCK_MAX_NODES, 114);
+
+    reset_filesystem();
+    add_old_generation(old_database);
+    add_new_generation(new_database);
+    add_file(PACKAGE_SERVICE_AUTHORITY_PATH, old_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    add_file(PACKAGE_SERVICE_JOURNAL_PATH, journal,
+        PACKAGE_STATE_JOURNAL_BYTES, UINT16_C(0444));
+    add_file(PACKAGE_SERVICE_JOURNAL_NEW_PATH, journal,
+        PACKAGE_STATE_JOURNAL_BYTES, UINT16_C(0444));
+    CHECK(package_service_recover(&report) == PACKAGE_SERVICE_STATUS_STATE &&
+        !report.cleanup_complete &&
+        find_node(PACKAGE_SERVICE_JOURNAL_PATH) != MOCK_MAX_NODES &&
+        find_node(PACKAGE_SERVICE_JOURNAL_NEW_PATH) != MOCK_MAX_NODES, 115);
     return 0;
 }
 
@@ -715,6 +1054,10 @@ int main(void)
             old_authority, journal);
     }
     if (result == 0) {
+        result = test_unpublished_prepare_powercut_cleanup(old_database,
+            new_database, old_authority, journal);
+    }
+    if (result == 0) {
         result = test_postcommit_completes(old_database, new_database,
             new_authority, journal);
     }
@@ -733,6 +1076,22 @@ int main(void)
     if (result == 0) {
         result = test_sync_failure_keeps_journal(old_database, new_database,
             new_authority, journal);
+    }
+    if (result == 0) {
+        result = test_prepare_is_recoverable_not_authoritative(old_database,
+            new_database, old_authority);
+    }
+    if (result == 0) {
+        result = test_prepare_sync_failure_cleans_unpublished_state(
+            old_database, new_database, old_authority);
+    }
+    if (result == 0) {
+        result = test_prepare_every_durability_boundary(old_database,
+            new_database, old_authority);
+    }
+    if (result == 0) {
+        result = test_prepare_copies_unchanged_installed_file(new_database,
+            new_authority);
     }
     if (result != 0) {
         (void)fprintf(stderr, "package service host test failed: %d\n", result);

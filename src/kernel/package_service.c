@@ -134,6 +134,38 @@ static bool generation_path(
         append_text(path, SAPFS_MAX_PATH, suffix);
 }
 
+static bool append_span(
+    char *path,
+    size_t capacity,
+    const uint8_t *bytes,
+    size_t count
+)
+{
+    size_t used = string_length(path, capacity);
+
+    if ((bytes == NULL && count != 0U) || used >= capacity ||
+        count >= capacity - used) {
+        return false;
+    }
+    for (size_t index = 0U; index < count; ++index) {
+        path[used + index] = (char)bytes[index];
+    }
+    path[used + count] = '\0';
+    return true;
+}
+
+static bool generation_file_path(
+    uint64_t generation,
+    const struct package_state_text *relative,
+    char path[SAPFS_MAX_PATH]
+)
+{
+    return relative != NULL &&
+        generation_path(generation, GENERATION_ROOT_SUFFIX, path) &&
+        append_text(path, SAPFS_MAX_PATH, "/") &&
+        append_span(path, SAPFS_MAX_PATH, relative->bytes, relative->length);
+}
+
 static enum package_service_status filesystem_failure(
     struct service_context *context,
     enum sapfs_status status
@@ -609,6 +641,421 @@ static enum package_service_status sync_data(struct service_context *context)
     return PACKAGE_SERVICE_STATUS_OK;
 }
 
+static bool same_text(
+    const struct package_state_text *left,
+    const struct package_state_text *right
+)
+{
+    return left->length == right->length &&
+        (left->length == 0U || equal_bytes(left->bytes, right->bytes,
+            left->length));
+}
+
+static enum package_service_status ensure_directory(
+    struct service_context *context,
+    const char *path
+)
+{
+    struct sapfs_stat stat;
+    enum sapfs_status fs_status = sapfs_stat_path(SAPFS_VOLUME_DATA, path,
+        &stat);
+
+    if (fs_status == SAPFS_STATUS_OK) {
+        return stat.directory ? PACKAGE_SERVICE_STATUS_OK :
+            PACKAGE_SERVICE_STATUS_NAMESPACE;
+    }
+    if (fs_status != SAPFS_STATUS_NOT_FOUND) {
+        return filesystem_failure(context, fs_status);
+    }
+    fs_status = sapfs_mkdir(SAPFS_VOLUME_DATA, path);
+    return fs_status == SAPFS_STATUS_OK ? PACKAGE_SERVICE_STATUS_OK :
+        filesystem_failure(context, fs_status);
+}
+
+static enum package_service_status ensure_generation_layout(
+    struct service_context *context,
+    uint64_t generation
+)
+{
+    char high[SAPFS_MAX_PATH];
+    char generation_directory[SAPFS_MAX_PATH];
+    char root[SAPFS_MAX_PATH];
+    struct sapfs_stat stat;
+
+    zero_bytes(high, sizeof(high));
+    if (!append_text(high, sizeof(high), GENERATION_PREFIX)) {
+        return PACKAGE_SERVICE_STATUS_NAMESPACE;
+    }
+    append_hex32(high, sizeof(high), (uint32_t)(generation >> 32U));
+    if (string_length(high, sizeof(high)) >= sizeof(high) ||
+        !generation_path(generation, "", generation_directory) ||
+        !generation_path(generation, GENERATION_ROOT_SUFFIX, root)) {
+        return PACKAGE_SERVICE_STATUS_NAMESPACE;
+    }
+    enum sapfs_status fs_status = sapfs_stat_path(SAPFS_VOLUME_DATA,
+        generation_directory, &stat);
+    if (fs_status == SAPFS_STATUS_OK) {
+        return PACKAGE_SERVICE_STATUS_STATE;
+    }
+    if (fs_status != SAPFS_STATUS_NOT_FOUND) {
+        return filesystem_failure(context, fs_status);
+    }
+    enum package_service_status status = ensure_directory(context,
+        PACKAGE_SERVICE_STATE_DIRECTORY);
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        status = ensure_directory(context, "pkgstate/gen");
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        status = ensure_directory(context, high);
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        status = ensure_directory(context, generation_directory);
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        status = ensure_directory(context, root);
+    }
+    return status;
+}
+
+static enum package_service_status ensure_file_parents(
+    struct service_context *context,
+    uint64_t generation,
+    const struct package_state_text *relative
+)
+{
+    char root[SAPFS_MAX_PATH];
+
+    if (relative == NULL ||
+        !generation_path(generation, GENERATION_ROOT_SUFFIX, root)) {
+        return PACKAGE_SERVICE_STATUS_NAMESPACE;
+    }
+    for (size_t index = 0U; index < relative->length; ++index) {
+        if (relative->bytes[index] == (uint8_t)'/') {
+            char parent[SAPFS_MAX_PATH];
+
+            zero_bytes(parent, sizeof(parent));
+            if (!append_text(parent, sizeof(parent), root) ||
+                !append_text(parent, sizeof(parent), "/") ||
+                !append_span(parent, sizeof(parent), relative->bytes, index)) {
+                return PACKAGE_SERVICE_STATUS_NAMESPACE;
+            }
+            enum package_service_status status = ensure_directory(context,
+                parent);
+            if (status != PACKAGE_SERVICE_STATUS_OK) {
+                return status;
+            }
+        }
+    }
+    return PACKAGE_SERVICE_STATUS_OK;
+}
+
+static enum package_service_status write_handle_bytes(
+    struct service_context *context,
+    sapfs_handle handle,
+    const uint8_t *bytes,
+    size_t count
+)
+{
+    size_t total = 0U;
+
+    while (total < count) {
+        size_t chunk = count - total < PACKAGE_SERVICE_IO_BYTES ?
+            count - total : PACKAGE_SERVICE_IO_BYTES;
+        size_t written = 0U;
+        enum sapfs_status fs_status = sapfs_write(handle, bytes + total,
+            chunk, &written);
+
+        if (fs_status != SAPFS_STATUS_OK) {
+            return filesystem_failure(context, fs_status);
+        }
+        if (written == 0U || written > chunk) {
+            return PACKAGE_SERVICE_STATUS_FILESYSTEM;
+        }
+        total += written;
+        context->report->bytes_written += written;
+    }
+    return PACKAGE_SERVICE_STATUS_OK;
+}
+
+static enum package_service_status write_new_file(
+    struct service_context *context,
+    const char *path,
+    const uint8_t *bytes,
+    size_t count
+)
+{
+    sapfs_handle handle;
+    enum sapfs_status fs_status;
+
+    if (bytes == NULL && count != 0U) {
+        return PACKAGE_SERVICE_STATUS_NULL_ARGUMENT;
+    }
+    fs_status = sapfs_create(SAPFS_VOLUME_DATA, path);
+    if (fs_status != SAPFS_STATUS_OK) {
+        return filesystem_failure(context, fs_status);
+    }
+    fs_status = sapfs_open(SAPFS_VOLUME_DATA, path, SAPFS_ACCESS_WRITE,
+        &handle);
+    if (fs_status != SAPFS_STATUS_OK) {
+        (void)sapfs_unlink(SAPFS_VOLUME_DATA, path);
+        return filesystem_failure(context, fs_status);
+    }
+    handle_acquired(context);
+    enum package_service_status status = write_handle_bytes(context, handle,
+        bytes, count);
+    enum package_service_status close_status = close_file(context, handle);
+
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        status = close_status;
+    }
+    if (status != PACKAGE_SERVICE_STATUS_OK) {
+        (void)sapfs_unlink(SAPFS_VOLUME_DATA, path);
+    }
+    return status;
+}
+
+static bool same_file_metadata(
+    const struct package_state_file_view *source,
+    const struct package_generation_file *target
+)
+{
+    return same_text(&source->path, &target->path) &&
+        source->kind == target->kind && source->mode == target->mode &&
+        source->length == target->length &&
+        equal_bytes(source->sha256, target->sha256,
+            PACKAGE_STATE_SHA256_BYTES) &&
+        same_text(&source->soname, &target->soname);
+}
+
+static bool path_components(
+    const struct package_state_text *path,
+    uint8_t starts[SAPFS_MAX_DEPTH],
+    uint8_t lengths[SAPFS_MAX_DEPTH],
+    uint32_t *count
+)
+{
+    size_t start = 0U;
+
+    *count = 0U;
+    for (size_t index = 0U; index <= path->length; ++index) {
+        if (index != path->length && path->bytes[index] != (uint8_t)'/') {
+            continue;
+        }
+        if (index == start || index - start > UINT8_MAX ||
+            *count == SAPFS_MAX_DEPTH) {
+            return false;
+        }
+        starts[*count] = (uint8_t)start;
+        lengths[*count] = (uint8_t)(index - start);
+        ++*count;
+        start = index + 1U;
+    }
+    return *count != 0U;
+}
+
+static bool staging_namespace_bounded(
+    const struct package_generation_spec *spec
+)
+{
+    uint16_t child_counts[SAPFS_MAX_DEPTH] = { 0U };
+    uint8_t previous_starts[SAPFS_MAX_DEPTH];
+    uint8_t previous_lengths[SAPFS_MAX_DEPTH];
+    uint32_t previous_count = 0U;
+
+    for (uint32_t index = 0U; index < spec->file_count; ++index) {
+        uint8_t starts[SAPFS_MAX_DEPTH];
+        uint8_t lengths[SAPFS_MAX_DEPTH];
+        char full_path[SAPFS_MAX_PATH];
+        uint32_t count;
+        uint32_t common = 0U;
+
+        if (!path_components(&spec->files[index].path, starts, lengths,
+                &count) || count > SAPFS_MAX_DEPTH - 5U ||
+            !generation_file_path(spec->generation, &spec->files[index].path,
+                full_path)) {
+            return false;
+        }
+        if (index != 0U) {
+            const struct package_state_text *previous =
+                &spec->files[index - 1U].path;
+
+            while (common < previous_count && common < count &&
+                previous_lengths[common] == lengths[common] &&
+                equal_bytes(previous->bytes + previous_starts[common],
+                    spec->files[index].path.bytes + starts[common],
+                    lengths[common])) {
+                ++common;
+            }
+            if (common == previous_count || common == count) {
+                return false;
+            }
+        }
+        if (index == 0U) {
+            for (uint32_t depth = 0U; depth < count; ++depth) {
+                child_counts[depth] = 1U;
+            }
+        } else {
+            if (++child_counts[common] > SAPFS_MAX_LIST_ENTRIES) {
+                return false;
+            }
+            for (uint32_t depth = common + 1U; depth < count; ++depth) {
+                child_counts[depth] = 1U;
+            }
+        }
+        for (uint32_t depth = 0U; depth < count; ++depth) {
+            previous_starts[depth] = starts[depth];
+            previous_lengths[depth] = lengths[depth];
+        }
+        previous_count = count;
+    }
+    return true;
+}
+
+static enum package_service_status write_generation_file(
+    struct service_context *context,
+    const struct package_builder_workspace *builder,
+    const struct package_state_database_view *base,
+    uint32_t index
+)
+{
+    const struct package_generation_file *file = &builder->files[index];
+    const struct package_builder_file_source *source =
+        &builder->file_sources[index];
+    struct package_state_sha256_context sha;
+    uint8_t digest[PACKAGE_STATE_SHA256_BYTES];
+    char destination[SAPFS_MAX_PATH];
+    sapfs_handle output;
+    sapfs_handle input = 0U;
+    uint64_t remaining = file->length;
+    enum package_service_status status;
+    enum sapfs_status fs_status;
+
+    status = ensure_file_parents(context, builder->spec.generation,
+        &file->path);
+    if (status != PACKAGE_SERVICE_STATUS_OK || !generation_file_path(
+            builder->spec.generation, &file->path, destination)) {
+        return status != PACKAGE_SERVICE_STATUS_OK ? status :
+            PACKAGE_SERVICE_STATUS_NAMESPACE;
+    }
+    if (source->kind == PACKAGE_BUILDER_FILE_SOURCE_PAYLOAD) {
+        if (source->payload == NULL || source->payload_bytes != file->length) {
+            return PACKAGE_SERVICE_STATUS_STATE;
+        }
+    } else if (source->kind == PACKAGE_BUILDER_FILE_SOURCE_INSTALLED) {
+        struct package_state_file_view old_file;
+        char old_path[SAPFS_MAX_PATH];
+
+        if (base == NULL || package_state_database_file(base,
+                source->file_index, &old_file) != PACKAGE_STATE_STATUS_OK ||
+            old_file.owner_index != source->package_index ||
+            !same_file_metadata(&old_file, file) ||
+            !generation_file_path(base->generation,
+                &old_file.path, old_path)) {
+            return PACKAGE_SERVICE_STATUS_STATE;
+        }
+        fs_status = sapfs_open(SAPFS_VOLUME_DATA, old_path, SAPFS_ACCESS_READ,
+            &input);
+        if (fs_status != SAPFS_STATUS_OK) {
+            return filesystem_failure(context, fs_status);
+        }
+        handle_acquired(context);
+    } else {
+        return PACKAGE_SERVICE_STATUS_STATE;
+    }
+    fs_status = sapfs_create(SAPFS_VOLUME_DATA, destination);
+    if (fs_status != SAPFS_STATUS_OK) {
+        status = filesystem_failure(context, fs_status);
+        goto close_input;
+    }
+    fs_status = sapfs_open(SAPFS_VOLUME_DATA, destination,
+        SAPFS_ACCESS_WRITE, &output);
+    if (fs_status != SAPFS_STATUS_OK) {
+        (void)sapfs_unlink(SAPFS_VOLUME_DATA, destination);
+        status = filesystem_failure(context, fs_status);
+        goto close_input;
+    }
+    handle_acquired(context);
+    if (package_state_sha256_initialize(&sha) != PACKAGE_STATE_STATUS_OK) {
+        status = PACKAGE_SERVICE_STATUS_STATE;
+        goto close_output;
+    }
+    status = PACKAGE_SERVICE_STATUS_OK;
+    while (remaining != 0U) {
+        uint8_t buffer[PACKAGE_SERVICE_IO_BYTES];
+        size_t chunk = remaining < sizeof(buffer) ? (size_t)remaining :
+            sizeof(buffer);
+        const uint8_t *bytes = source->payload == NULL ? buffer :
+            source->payload + (file->length - remaining);
+
+        if (source->payload == NULL) {
+            size_t read_bytes = 0U;
+
+            fs_status = sapfs_read(input, buffer, chunk, &read_bytes);
+            if (fs_status != SAPFS_STATUS_OK) {
+                status = filesystem_failure(context, fs_status);
+                break;
+            }
+            if (read_bytes != chunk) {
+                status = PACKAGE_SERVICE_STATUS_IMMUTABLE_FILE;
+                break;
+            }
+            context->report->bytes_read += read_bytes;
+        }
+        if (package_state_sha256_update(&sha, bytes, chunk) !=
+                PACKAGE_STATE_STATUS_OK) {
+            status = PACKAGE_SERVICE_STATUS_STATE;
+            break;
+        }
+        status = write_handle_bytes(context, output, bytes, chunk);
+        if (status != PACKAGE_SERVICE_STATUS_OK) {
+            break;
+        }
+        remaining -= chunk;
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK && source->payload == NULL) {
+        uint8_t extra;
+        size_t extra_bytes = 0U;
+
+        fs_status = sapfs_read(input, &extra, 1U, &extra_bytes);
+        if (fs_status != SAPFS_STATUS_OK) {
+            status = filesystem_failure(context, fs_status);
+        } else if (extra_bytes != 0U) {
+            status = PACKAGE_SERVICE_STATUS_IMMUTABLE_FILE;
+        }
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK &&
+        package_state_sha256_finish(&sha, digest) != PACKAGE_STATE_STATUS_OK) {
+        status = PACKAGE_SERVICE_STATUS_STATE;
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK &&
+        !equal_bytes(digest, file->sha256, sizeof(digest))) {
+        status = PACKAGE_SERVICE_STATUS_IMMUTABLE_FILE;
+    }
+close_output:
+    {
+        enum package_service_status close_status = close_file(context, output);
+
+        if (status == PACKAGE_SERVICE_STATUS_OK) {
+            status = close_status;
+        }
+    }
+    if (status != PACKAGE_SERVICE_STATUS_OK) {
+        (void)sapfs_unlink(SAPFS_VOLUME_DATA, destination);
+    }
+close_input:
+    if (input != 0U) {
+        enum package_service_status close_status = close_file(context, input);
+
+        if (status == PACKAGE_SERVICE_STATUS_OK) {
+            status = close_status;
+        }
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        ++context->report->files_staged;
+    }
+    return status;
+}
+
 static enum package_service_status write_authority_file(
     struct service_context *context,
     const uint8_t authority[PACKAGE_STATE_AUTHORITY_BYTES]
@@ -854,6 +1301,226 @@ static bool authority_selects(
         equal_bytes(view.database_sha256, digest, sizeof(digest));
 }
 
+static bool fixed_path_absent(
+    struct service_context *context,
+    const char *path,
+    enum package_service_status *status
+)
+{
+    struct sapfs_stat stat;
+    enum sapfs_status fs_status = sapfs_stat_path(SAPFS_VOLUME_DATA, path,
+        &stat);
+
+    if (fs_status == SAPFS_STATUS_NOT_FOUND) {
+        return true;
+    }
+    *status = fs_status == SAPFS_STATUS_OK ? PACKAGE_SERVICE_STATUS_STATE :
+        filesystem_failure(context, fs_status);
+    return false;
+}
+
+static enum package_state_operation plan_operation(
+    enum package_manager_plan_operation operation
+)
+{
+    switch (operation) {
+    case PACKAGE_MANAGER_PLAN_INSTALL:
+        return PACKAGE_STATE_OPERATION_INSTALL;
+    case PACKAGE_MANAGER_PLAN_UPDATE:
+        return PACKAGE_STATE_OPERATION_UPDATE;
+    case PACKAGE_MANAGER_PLAN_REMOVE:
+        return PACKAGE_STATE_OPERATION_REMOVE;
+    default:
+        return PACKAGE_STATE_OPERATION_INVALID;
+    }
+}
+
+static enum package_service_status cleanup_unpublished_prepare(
+    struct service_context *context,
+    uint64_t generation
+)
+{
+    char path[SAPFS_MAX_PATH];
+    enum package_service_status status = ensure_entries(context);
+
+    if (status != PACKAGE_SERVICE_STATUS_OK ||
+        !generation_path(generation, "", path)) {
+        return PACKAGE_SERVICE_STATUS_CLEANUP;
+    }
+    context->walk_entries = 0U;
+    status = remove_tree(context, path, 0U);
+    context->report->tree_entries += context->walk_entries;
+    if (status != PACKAGE_SERVICE_STATUS_OK) {
+        return PACKAGE_SERVICE_STATUS_CLEANUP;
+    }
+    enum sapfs_status fs_status = sapfs_unlink(SAPFS_VOLUME_DATA,
+        PACKAGE_SERVICE_JOURNAL_NEW_PATH);
+    if (fs_status != SAPFS_STATUS_OK && fs_status != SAPFS_STATUS_NOT_FOUND) {
+        context->report->filesystem_status = fs_status;
+        return PACKAGE_SERVICE_STATUS_CLEANUP;
+    }
+    status = sync_data(context);
+    return status == PACKAGE_SERVICE_STATUS_OK ? PACKAGE_SERVICE_STATUS_OK :
+        PACKAGE_SERVICE_STATUS_CLEANUP;
+}
+
+static enum package_service_status prepare_internal(
+    struct service_context *context,
+    const struct package_service_prepare_request *request
+)
+{
+    const struct package_builder_workspace *builder = request->builder;
+    struct package_state_database_view base;
+    struct package_state_database_view target;
+    struct package_state_journal_spec journal_spec;
+    uint8_t authority[PACKAGE_STATE_AUTHORITY_BYTES];
+    uint8_t journal[PACKAGE_STATE_JOURNAL_BYTES];
+    uint8_t journal_check[PACKAGE_STATE_JOURNAL_BYTES];
+    char database_path[SAPFS_MAX_PATH];
+    uint64_t required_space;
+    bool authority_present = false;
+    bool published = false;
+    enum package_service_status status;
+
+    if (builder == NULL || request->database == NULL ||
+        !builder->has_installed || builder->installed.bytes == NULL ||
+        request->database_bytes > PACKAGE_SERVICE_MAX_DATABASE_BYTES ||
+        plan_operation(builder->verified_plan.operation) ==
+            PACKAGE_STATE_OPERATION_INVALID) {
+        return PACKAGE_SERVICE_STATUS_STATE;
+    }
+    context->report->state_status = package_state_database_parse(
+        builder->installed.bytes, builder->installed.byte_count, &base);
+    if (context->report->state_status != PACKAGE_STATE_STATUS_OK) {
+        return PACKAGE_SERVICE_STATUS_STATE;
+    }
+    context->report->state_status = package_generation_verify(&builder->spec,
+        request->database, request->database_bytes, &target);
+    if (context->report->state_status != PACKAGE_STATE_STATUS_OK ||
+        target.generation != base.generation + 1U ||
+        !staging_namespace_bounded(&builder->spec)) {
+        return PACKAGE_SERVICE_STATUS_STATE;
+    }
+    status = read_exact_path(context, PACKAGE_SERVICE_AUTHORITY_PATH,
+        authority, sizeof(authority), false, &authority_present);
+    if (status != PACKAGE_SERVICE_STATUS_OK || !authority_present ||
+        !authority_selects(authority, &base)) {
+        return status != PACKAGE_SERVICE_STATUS_OK ? status :
+            PACKAGE_SERVICE_STATUS_STATE;
+    }
+    if (!fixed_path_absent(context, PACKAGE_SERVICE_JOURNAL_PATH, &status) ||
+        !fixed_path_absent(context, PACKAGE_SERVICE_JOURNAL_NEW_PATH, &status) ||
+        !fixed_path_absent(context, PACKAGE_SERVICE_AUTHORITY_NEW_PATH, &status) ||
+        !fixed_path_absent(context, PACKAGE_SERVICE_AUTHORITY_OLD_PATH, &status)) {
+        return status;
+    }
+    status = ensure_entries(context);
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        status = verify_generation_files(context, &base);
+    }
+    if (status != PACKAGE_SERVICE_STATUS_OK) {
+        return status;
+    }
+    required_space = request->database_bytes +
+        PACKAGE_STATE_JOURNAL_BYTES + PACKAGE_STATE_AUTHORITY_BYTES;
+    if (required_space < request->database_bytes) {
+        return PACKAGE_SERVICE_STATUS_RESOURCE;
+    }
+    for (uint32_t index = 0U; index < builder->spec.file_count; ++index) {
+        if (builder->files[index].length > UINT64_MAX - required_space) {
+            return PACKAGE_SERVICE_STATUS_RESOURCE;
+        }
+        required_space += builder->files[index].length;
+    }
+    if (required_space > sapfs_drive(SAPFS_VOLUME_DATA).free_bytes) {
+        return PACKAGE_SERVICE_STATUS_RESOURCE;
+    }
+    journal_spec = (struct package_state_journal_spec){
+        plan_operation(builder->verified_plan.operation),
+        &base,
+        &target,
+        required_space,
+        builder->verified_plan.target.bytes,
+        builder->verified_plan.target.length
+    };
+    context->report->state_status = package_state_journal_encode(&journal_spec,
+        journal);
+    if (context->report->state_status != PACKAGE_STATE_STATUS_OK) {
+        return PACKAGE_SERVICE_STATUS_STATE;
+    }
+
+    status = write_new_file(context, PACKAGE_SERVICE_JOURNAL_NEW_PATH,
+        journal, sizeof(journal));
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        status = sync_data(context);
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        bool present = false;
+
+        status = read_exact_path(context, PACKAGE_SERVICE_JOURNAL_NEW_PATH,
+            journal_check, sizeof(journal_check), false, &present);
+        if (status == PACKAGE_SERVICE_STATUS_OK &&
+            (!present || !equal_bytes(journal, journal_check,
+                sizeof(journal)))) {
+            status = PACKAGE_SERVICE_STATUS_STATE;
+        }
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        status = ensure_generation_layout(context, target.generation);
+    }
+    for (uint32_t index = 0U;
+        status == PACKAGE_SERVICE_STATUS_OK && index < builder->spec.file_count;
+        ++index) {
+        status = write_generation_file(context, builder, &base, index);
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK &&
+        !generation_path(target.generation, GENERATION_DATABASE_SUFFIX,
+            database_path)) {
+        status = PACKAGE_SERVICE_STATUS_NAMESPACE;
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        status = write_new_file(context, database_path, request->database,
+            request->database_bytes);
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        status = ensure_entries(context);
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        status = verify_generation_files(context, &target);
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        status = sync_data(context);
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        enum sapfs_status fs_status = sapfs_rename(SAPFS_VOLUME_DATA,
+            PACKAGE_SERVICE_JOURNAL_NEW_PATH,
+            PACKAGE_SERVICE_JOURNAL_PATH);
+
+        if (fs_status != SAPFS_STATUS_OK) {
+            status = filesystem_failure(context, fs_status);
+        } else {
+            ++context->report->rename_count;
+            context->report->journal_present = true;
+            published = true;
+            status = sync_data(context);
+        }
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        context->report->generation = target.generation;
+        context->report->prepared = true;
+        return PACKAGE_SERVICE_STATUS_OK;
+    }
+    if (!published) {
+        enum package_service_status cleanup = cleanup_unpublished_prepare(
+            context, target.generation);
+
+        if (cleanup != PACKAGE_SERVICE_STATUS_OK) {
+            return cleanup;
+        }
+    }
+    return status;
+}
+
 static enum package_service_status recover_internal(
     struct service_context *context
 )
@@ -869,6 +1536,7 @@ static enum package_service_status recover_internal(
     bool authority_present = false;
     bool old_authority_present = false;
     bool journal_present = false;
+    bool journal_new_present = false;
     bool used_old_authority = false;
     enum package_service_status status;
 
@@ -916,6 +1584,41 @@ static enum package_service_status recover_internal(
             PACKAGE_SERVICE_STATUS_STATE : status;
     }
     context->report->journal_present = journal_present;
+    {
+        struct sapfs_stat stat;
+        enum sapfs_status fs_status = sapfs_stat_path(SAPFS_VOLUME_DATA,
+            PACKAGE_SERVICE_JOURNAL_NEW_PATH, &stat);
+
+        if (fs_status == SAPFS_STATUS_OK) {
+            journal_new_present = true;
+            if (stat.directory) {
+                status = PACKAGE_SERVICE_STATUS_STATE;
+                goto release;
+            }
+        } else if (fs_status != SAPFS_STATUS_NOT_FOUND) {
+            status = filesystem_failure(context, fs_status);
+            goto release;
+        }
+    }
+    if (journal_present && journal_new_present) {
+        status = PACKAGE_SERVICE_STATUS_STATE;
+        goto release;
+    }
+    if (!journal_present && journal_new_present) {
+        context->report->state_status = package_state_authority_parse(authority,
+            sizeof(authority), &authority_view);
+        if (!authority_present || context->report->state_status !=
+                PACKAGE_STATE_STATUS_OK ||
+            authority_view.generation == UINT64_MAX) {
+            status = PACKAGE_SERVICE_STATUS_STATE;
+            goto release;
+        }
+        status = cleanup_unpublished_prepare(context,
+            authority_view.generation + 1U);
+        if (status != PACKAGE_SERVICE_STATUS_OK) {
+            goto release;
+        }
+    }
 
     if (!journal_present) {
         if (!authority_present && !old_authority_present) {
@@ -1071,6 +1774,47 @@ enum package_service_status package_service_recover(
     }
     if (report->live_file_handles != 0U ||
         report->live_allocations != 0U) {
+        status = PACKAGE_SERVICE_STATUS_RESOURCE;
+    }
+    servicing = false;
+    report->status = status;
+    return status;
+}
+
+enum package_service_status package_service_prepare(
+    const struct package_service_prepare_request *request,
+    struct package_service_report *report
+)
+{
+    struct service_context context;
+    enum package_service_status status;
+
+    if (request == NULL || report == NULL) {
+        return PACKAGE_SERVICE_STATUS_NULL_ARGUMENT;
+    }
+    zero_bytes(report, sizeof(*report));
+    report->filesystem_status = SAPFS_STATUS_OK;
+    report->state_status = PACKAGE_STATE_STATUS_OK;
+    if (servicing) {
+        report->status = PACKAGE_SERVICE_STATUS_BUSY;
+        return report->status;
+    }
+    struct sapfs_drive_info drive = sapfs_drive(SAPFS_VOLUME_DATA);
+    if (!drive.present || !drive.mounted || !drive.healthy || drive.read_only ||
+        !heap_is_active()) {
+        report->status = PACKAGE_SERVICE_STATUS_UNAVAILABLE;
+        return report->status;
+    }
+    zero_bytes(&context, sizeof(context));
+    context.report = report;
+    servicing = true;
+    status = prepare_internal(&context, request);
+    enum package_service_status entries_release = release_bytes(&context,
+        (void **)&context.entries);
+    if (entries_release != PACKAGE_SERVICE_STATUS_OK) {
+        status = entries_release;
+    }
+    if (report->live_file_handles != 0U || report->live_allocations != 0U) {
         status = PACKAGE_SERVICE_STATUS_RESOURCE;
     }
     servicing = false;

@@ -276,6 +276,7 @@ pkgstate/auth.bin
 pkgstate/auth.new
 pkgstate/auth.old
 pkgstate/txn.bin
+pkgstate/txn.new
 pkgstate/gen/00000000/00000001/state.db
 pkgstate/gen/00000000/00000001/root/<database-owned path>
 ```
@@ -314,13 +315,37 @@ to success. If a crash leaves `auth.bin` absent, a canonical `auth.old` is an
 eligible conservative fallback and is rewritten through the same protocol.
 Malformed journals are never discarded automatically.
 
-Cleanup is confined to the computed discarded generation directory and the
-three fixed transaction envelope paths. Mutable user data remains outside
-`pkgstate/gen/.../root` and is never traversed. The recovery service does not
-create package files, accept package payload bytes, or modify dependency state.
-On the short-name FAT backend, metadata paths work, but a database path whose
-components cannot be represented by that backend is incomplete and refused.
-General package-v3 paths require a backend with long-name support.
+Cleanup is confined to the computed discarded generation directory and fixed
+transaction envelope paths. Mutable user data remains outside
+`pkgstate/gen/.../root` and is never traversed. The recovery entry point does
+not create package files, accept package payload bytes, or modify dependency
+state.
+
+The separate privileged prepare entry point accepts an exact builder/database
+pair only after the canonical equivalence verifier binds them. It refuses
+fresh-store bootstrap and repair, requires current authority to select the
+builder's base, accounts for all target content against free space, and
+preflights path length, depth, file/descendant conflicts, and the 64-entry
+recovery-list bound before writing.
+
+Prepare writes and syncs `txn.new` before creating the target and reads the
+marker back byte-for-byte. It then writes each signed payload or verified
+old-generation copy, writes `state.db`, verifies the complete immutable tree
+through the normal recovery verifier, and syncs it. Only then does it rename
+`txn.new` to `txn.bin` and sync again. It deliberately leaves `auth.bin`
+unchanged, so success is not installation success and immediate recovery
+chooses the old generation and removes the prepared target. A failure before
+journal publication removes the target and temporary marker and syncs that
+cleanup; a failure after publication leaves the journal for recovery. On the
+short-name FAT backend, metadata paths work, but a database path whose
+components cannot be represented by that backend is refused. General package-v3
+paths and canonical installed modes still require the writable ext4/VFS path.
+
+At boot, an unpublished `txn.new` with no `txn.bin` is a power-cut receipt. A
+valid current authority makes its adjacent generation unselected, so recovery
+removes that bounded tree and the temporary marker, syncs the cleanup, and then
+validates the old generation normally. Coexisting temporary and published
+journals are contradictory and refused without deletion.
 
 ## Removal, references, and repair
 

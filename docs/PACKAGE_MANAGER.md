@@ -111,6 +111,7 @@ signature rejection, digest changes, freshness, rollback, ABI mismatch,
 unsatisfied dependencies, conflicts, ambiguous providers, cycles, backtracking,
 and the dependency-depth bound.
 
-`package_service.c` recovers already-staged FAT32 generations. Fetching,
-signature-provider setup, filesystem staging and commit, client commands, and
-Store presentation remain outside this parser and planner.
+`package_service.c` recovers generations and can durably prepare a complete
+builder result without advancing package authority. Fetching, signature-provider
+setup, the authority commit phase, client commands, and Store presentation
+remain outside this parser and planner.

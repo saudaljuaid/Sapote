@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include <sapote/fat32_fs.h>
+#include <sapote/package_builder.h>
 #include <sapote/package_state.h>
 
 /* Deliberately 8.3-safe so recovery has one layout on FAT32 and ext4. */
@@ -15,6 +16,7 @@
 #define PACKAGE_SERVICE_AUTHORITY_NEW_PATH "pkgstate/auth.new"
 #define PACKAGE_SERVICE_AUTHORITY_OLD_PATH "pkgstate/auth.old"
 #define PACKAGE_SERVICE_JOURNAL_PATH "pkgstate/txn.bin"
+#define PACKAGE_SERVICE_JOURNAL_NEW_PATH "pkgstate/txn.new"
 
 /* Two candidates and scratch state must fit Sapote's bounded 16 MiB heap. */
 #define PACKAGE_SERVICE_MAX_DATABASE_BYTES (4U * 1024U * 1024U)
@@ -45,7 +47,9 @@ struct package_service_report {
     enum package_state_recovery_choice choice;
     uint64_t generation;
     uint64_t bytes_read;
+    uint64_t bytes_written;
     uint32_t files_verified;
+    uint32_t files_staged;
     uint32_t tree_entries;
     uint32_t sync_count;
     uint32_t rename_count;
@@ -54,6 +58,7 @@ struct package_service_report {
     uint32_t live_file_handles;
     uint32_t live_allocations;
     bool journal_present;
+    bool prepared;
     bool authority_replaced;
     bool cleanup_complete;
 };
@@ -63,6 +68,24 @@ struct package_service_report {
  * data volume and heap are online, before package-owned executables are used.
  */
 enum package_service_status package_service_recover(
+    struct package_service_report *report
+);
+
+struct package_service_prepare_request {
+    const struct package_builder_workspace *builder;
+    const uint8_t *database;
+    size_t database_bytes;
+};
+
+/*
+ * Writes and verifies a complete target generation, then durably publishes a
+ * prepared journal while leaving the current authority unchanged.  Therefore
+ * success is not installation success: reboot recovery rolls this generation
+ * back until a separate authority-commit phase exists.  Fresh-store bootstrap
+ * and repair are not admitted by this entry point.
+ */
+enum package_service_status package_service_prepare(
+    const struct package_service_prepare_request *request,
     struct package_service_report *report
 );
 

@@ -1119,7 +1119,8 @@ package-state-tests: $(PACKAGE_STATE_HOST_TEST)
 $(PACKAGE_SERVICE_HOST_TEST): tools/package-service-host-test.c \
 		tools/package-state-host-test.c src/kernel/package_service.c \
 		src/kernel/package_generation.c src/kernel/package_state.c \
-		include/sapote/package_generation.h include/sapote/package_service.h \
+		include/sapote/package_builder.h include/sapote/package_generation.h \
+		include/sapote/package_manager.h include/sapote/package_service.h \
 		include/sapote/package_state.h include/sapote/fat32_fs.h include/sapote/heap.h
 	mkdir -p $(dir $@)
 	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -Wshadow \
