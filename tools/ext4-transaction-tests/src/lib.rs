@@ -767,6 +767,7 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
     ring.checkpoint_durable(prepared.ticket()).unwrap();
     assert_eq!(ring.filesystem_is_clean(), Ok(false));
     let clean_plan = ring.prepare_filesystem_clean_plan().unwrap();
+    assert_eq!(ring.prepare_filesystem_clean_plan().unwrap(), clean_plan);
     assert!(matches!(
         &clean_plan[0],
         JournalCommitOperation::WriteFilesystemSuperblock { start_byte, image }

@@ -206,8 +206,9 @@ The ring planner validates the journal map and produces recovery-marker, live,
 checkpoint, recovery-cleanup, and tail-state operations. A shared executor maps
 every operation to checked absolute byte writes and preserves every flush. The
 kernel mount adapter binds those writes to `nvme_volume_write()` and each
-barrier to `nvme_volume_flush()` for recovery only. Writable namespace methods
-are still not redirected into the planner. A bounded `JournalMutationStage`
+barrier to `nvme_volume_flush()` for recovery and final clean-plan execution.
+Writable namespace methods are still not redirected into the planner. A
+bounded `JournalMutationStage`
 now gives synchronous ext4plus mutations an immutable backing reader and a
 copy-on-write overlay: the first partial write reads a complete 4 KiB home
 block, later writes coalesce into it, reads see the overlay, and at most 64
@@ -216,12 +217,15 @@ overlay and requires discarding the mutated ext4plus object as well.
 
 The staging layer is not yet connected to VFS mutations or classified into
 ordered file data versus journaled metadata. Allocation rollback and
-revocations, clean-plan execution during unmount/fsync, write-failure
-injection, and the deliberate power-cut matrix at every commit and recovery
-durability boundary are not complete. The admitted `JournalRing` is retained
-for the full Rust mount lifetime, and unmount refuses to drop it unless its
-ext4 recovery marker, JBD2 start block, reservations, and used-slot census are
-all clean, with matching in-memory/durable sequence and head/tail state. The
-QEMU proof above still covers only the
-marker-durable/journal-clean recovery point. All VFS mutation operations
-therefore continue to return `EROFS`.
+revocations, fsync binding, write-failure injection, and the deliberate
+power-cut matrix at every commit and recovery durability boundary are not
+complete. The admitted `JournalRing` is retained for the full Rust mount
+lifetime. C opens a writable NVMe lease before unmount preparation; Rust
+re-emits the same pending clean plan after a failed write or flush, acknowledges
+the checksummed marker clear only after `Flush(FilesystemState)`, and refuses to
+drop the mount unless the marker, JBD2 start block, reservations, and used-slot
+census are all clean with matching sequence and head/tail state. The lease is
+closed before the separate Rust release, and either failure leaves the mount
+live. Because VFS mutations cannot arm the marker yet, the QEMU recovery proof
+exercises the already-clean unmount branch rather than a dirty-to-clean
+unmount. All VFS mutation operations therefore continue to return `EROFS`.

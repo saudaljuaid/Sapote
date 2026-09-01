@@ -11,9 +11,9 @@ use ext4plus::error::Ext4Error;
 use ext4plus::path::Path;
 use ext4plus::{
     Ext4, Ext4Read, FileType, FollowSymlinks, JOURNAL_BLOCK_BYTES,
-    JournalExecutionError, JournalFlush, JournalInodeMap, JournalInodeMapError,
-    JournalRing, JournalStorage, execute_commit_operations, load_journal_inode_map,
-    recover_committed_ring,
+    JournalCommitOperation, JournalExecutionError, JournalFlush, JournalInodeMap,
+    JournalInodeMapError, JournalRing, JournalStorage, execute_commit_operations,
+    load_journal_inode_map, recover_committed_ring,
 };
 
 const SUPERBLOCK_BYTES: usize = 1024;
@@ -78,6 +78,7 @@ impl Default for DirectoryEntry {
 pub(crate) struct Mounted {
     filesystem: Ext4,
     journal: JournalRing,
+    context: usize,
 }
 
 #[derive(Debug)]
@@ -142,6 +143,18 @@ impl JournalStorage for SapoteJournalStorage {
             Err(BlockStorageError)
         }
     }
+}
+
+fn execute_storage_plan(
+    context: usize,
+    operations: &[JournalCommitOperation],
+) -> Result<(), Status> {
+    execute_commit_operations(&mut SapoteJournalStorage { context }, operations).map_err(
+        |error| match error {
+            JournalExecutionError::AddressOverflow => Status::Range,
+            JournalExecutionError::Storage(_) => Status::Io,
+        },
+    )
 }
 
 fn read_u16(bytes: &[u8], offset: usize) -> Option<u16> {
@@ -323,14 +336,7 @@ fn recover_dirty_journal(
     let operations = recovery
         .checkpoint_plan(journal_superblock_block, journal.filesystem_superblock())
         .map_err(|_| Status::Invalid)?;
-    execute_commit_operations(
-        &mut SapoteJournalStorage { context },
-        &operations,
-    )
-    .map_err(|error| match error {
-        JournalExecutionError::AddressOverflow => Status::Range,
-        JournalExecutionError::Storage(_) => Status::Io,
-    })?;
+    execute_storage_plan(context, &operations)?;
     Ok(report)
 }
 
@@ -431,7 +437,33 @@ pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, I
         recovery_performed,
         reserved: [0; 3],
     };
-    Ok((Box::new(Mounted { filesystem, journal: clean_ring }), identity))
+    Ok((
+        Box::new(Mounted {
+            filesystem,
+            journal: clean_ring,
+            context,
+        }),
+        identity,
+    ))
+}
+
+/// Retry and durably execute the final clean plan while C holds a write lease.
+pub(crate) fn prepare_unmount(mounted: &mut Mounted) -> Result<(), Status> {
+    match mounted.journal.filesystem_is_clean() {
+        Ok(true) => return Ok(()),
+        Ok(false) => {}
+        Err(_) => return Err(Status::Invalid),
+    }
+    let operations = mounted
+        .journal
+        .prepare_filesystem_clean_plan()
+        .map_err(|_| Status::Invalid)?;
+    execute_storage_plan(mounted.context, &operations)?;
+    mounted
+        .journal
+        .mark_filesystem_clean_durable()
+        .map_err(|_| Status::Invalid)?;
+    unmount(mounted)
 }
 
 /// Refuse to release a mount unless its retained journal state is idle and clean.

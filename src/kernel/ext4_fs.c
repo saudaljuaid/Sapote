@@ -47,6 +47,7 @@ static uint64_t next_handle_generation = UINT64_C(1);
 
 extern int32_t sapote_ext4_mount(uintptr_t context, uint64_t media_bytes,
     struct sapote_ext4_identity *identity, uintptr_t *mounted_out);
+extern int32_t sapote_ext4_prepare_unmount(uintptr_t mounted);
 extern int32_t sapote_ext4_unmount(uintptr_t mounted);
 extern int32_t sapote_ext4_stat(uintptr_t mounted, const uint8_t *path,
     size_t path_length, struct sapote_ext4_metadata *metadata);
@@ -523,6 +524,9 @@ bool ext4_backend_mount_diagnostic(enum sapfs_volume volume,
 enum sapfs_status ext4_backend_unmount(enum sapfs_volume volume)
 {
     struct ext4_mount_state *mount;
+    enum sapfs_status status;
+    enum sapfs_status close_status;
+    int32_t rust_status;
 
     if (!valid_volume(volume)) {
         return SAPFS_STATUS_INVALID_ARGUMENT;
@@ -536,6 +540,16 @@ enum sapfs_status ext4_backend_unmount(enum sapfs_volume volume)
             ext4_handles[index].volume == volume) {
             return SAPFS_STATUS_BUSY;
         }
+    }
+    status = begin_operation(mount, true);
+    if (status != SAPFS_STATUS_OK) {
+        return status;
+    }
+    rust_status = sapote_ext4_prepare_unmount(mount->rust_mount);
+    close_status = end_operation(mount, NULL);
+    status = map_status(rust_status);
+    if (status != SAPFS_STATUS_OK || close_status != SAPFS_STATUS_OK) {
+        return status != SAPFS_STATUS_OK ? status : close_status;
     }
     if (sapote_ext4_unmount(mount->rust_mount) != SAPOTE_EXT4_STATUS_OK) {
         return SAPFS_STATUS_CORRUPT;

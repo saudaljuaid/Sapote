@@ -1457,11 +1457,14 @@ impl JournalRing {
     /// the corresponding reservation has been reclaimed. While this plan is
     /// pending, the ring refuses new reservations so a transaction cannot be
     /// prepared behind a filesystem-superblock image that claims no recovery
-    /// is required.
+    /// is required. Re-preparing a pending plan returns the same operations so
+    /// a failed write or flush can be retried without advancing in-memory state.
     pub fn prepare_filesystem_clean_plan(
         &mut self,
     ) -> Result<Vec<JournalCommitOperation>, JournalTransactionError> {
-        if self.filesystem_recovery_state != Some(FilesystemRecoveryState::Durable) {
+        if self.filesystem_recovery_state != Some(FilesystemRecoveryState::Durable)
+            && self.filesystem_recovery_state != Some(FilesystemRecoveryState::CleanPlanPrepared)
+        {
             return Err(JournalTransactionError::ReservationState);
         }
         if !self.active.is_empty() || self.used != 0 {
@@ -2276,6 +2279,7 @@ mod tests {
 
         let clean = ring.prepare_filesystem_clean_plan().unwrap();
         assert_eq!(ring.filesystem_is_clean(), Ok(false));
+        assert_eq!(ring.prepare_filesystem_clean_plan().unwrap(), clean);
         assert!(matches!(
             &clean[0],
             JournalCommitOperation::WriteFilesystemSuperblock { start_byte, image }
