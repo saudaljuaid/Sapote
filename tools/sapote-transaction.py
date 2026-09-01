@@ -203,6 +203,9 @@ def _normalize_package_metadata(value: Any, field: str) -> dict[str, Any]:
     normalized_files.sort(key=lambda item: item["path"].encode("ascii"))
     if len({item["path"] for item in normalized_files}) != len(normalized_files):
         raise TransactionError(f"{field}.files contains a duplicate path")
+    if any(current["path"].startswith(previous["path"] + "/")
+           for previous, current in zip(normalized_files, normalized_files[1:])):
+        raise TransactionError(f"{field}.files contains an ancestor file path")
     return {
         "identifier": _identifier(value["identifier"], f"{field}.identifier"),
         "version": _version(value["version"], f"{field}.version"),
@@ -247,6 +250,10 @@ def _normalize_packages(value: Any) -> list[dict[str, Any]]:
         raise TransactionError("dependency edge count exceeds its bound")
     if len(owners) > DATABASE_MAX_FILES:
         raise TransactionError("owned file count exceeds its bound")
+    sorted_paths = sorted(owners)
+    if any(current.startswith(previous + "/")
+           for previous, current in zip(sorted_paths, sorted_paths[1:])):
+        raise TransactionError("an owned file cannot be another file's ancestor")
 
     package_map = {item["identifier"]: item for item in packages}
     state: dict[str, int] = {}
@@ -447,7 +454,8 @@ def parse_database(data: bytes) -> dict[str, Any]:
         if _path(path, "owned file path") != path:
             raise TransactionError("owned file path is not canonical")
         path_bytes = path.encode("ascii")
-        if previous_path is not None and path_bytes <= previous_path:
+        if previous_path is not None and (path_bytes <= previous_path or
+                path_bytes.startswith(previous_path + b"/")):
             raise TransactionError("owned files are not uniquely sorted")
         previous_path = path_bytes
         owner, kind_value, file_flags, mode, file_reserved, length = struct.unpack_from(

@@ -146,6 +146,17 @@ static bool text_equal(
     return compare_text(left, right) == 0;
 }
 
+static bool path_ancestor(
+    const struct package_manager_text *ancestor,
+    const struct package_manager_text *descendant
+)
+{
+    return ancestor->length < descendant->length &&
+        descendant->bytes[ancestor->length] == (uint8_t)'/' &&
+        compare_bytes(ancestor->bytes, ancestor->length, descendant->bytes,
+            ancestor->length) == 0;
+}
+
 static enum package_manager_status fixed_text(
     const uint8_t *bytes,
     size_t width,
@@ -1229,7 +1240,8 @@ enum package_manager_status package_manager_package_open(
         if (status != PACKAGE_MANAGER_STATUS_OK) {
             return status;
         }
-        if ((index != 0U && compare_text(&previous_path, &file.path) >= 0) ||
+        if ((index != 0U && (compare_text(&previous_path, &file.path) >= 0 ||
+                path_ancestor(&previous_path, &file.path))) ||
             (size_t)(file.payload - bytes) != expected_file_payload) {
             return PACKAGE_MANAGER_STATUS_PACKAGE;
         }

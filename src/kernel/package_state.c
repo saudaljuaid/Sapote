@@ -366,6 +366,16 @@ static int compare_fields(const struct byte_field *left, const struct byte_field
     return left->length < right->length ? -1 : 1;
 }
 
+static bool path_ancestor(
+    const struct byte_field *ancestor,
+    const struct byte_field *descendant
+)
+{
+    return ancestor->length < descendant->length &&
+        descendant->bytes[ancestor->length] == (uint8_t)'/' &&
+        equal_bytes(ancestor->bytes, descendant->bytes, ancestor->length);
+}
+
 static bool ascii_alphanumeric(uint8_t value)
 {
     return (value >= (uint8_t)'0' && value <= (uint8_t)'9') ||
@@ -807,7 +817,8 @@ static enum package_state_status validate_files(
 
         status = fixed_text(record, 128U, false, &path);
         if (status != PACKAGE_STATE_STATUS_OK || !package_path(&path) ||
-            (index != 0U && compare_fields(&previous, &path) >= 0)) {
+            (index != 0U && (compare_fields(&previous, &path) >= 0 ||
+                path_ancestor(&previous, &path)))) {
             return PACKAGE_STATE_STATUS_FILE;
         }
         previous = path;

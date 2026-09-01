@@ -627,6 +627,11 @@ static int test_generation_encoder(
     CHECK(package_generation_encode(&spec, encoded, sizeof(encoded), &view) ==
             PACKAGE_STATE_STATUS_FILE && all_zero(encoded, sizeof(encoded)) &&
         view.bytes == NULL, 53);
+    files[1].path = state_text("bin/app/child");
+    encoded[0] = 1U;
+    CHECK(package_generation_encode(&spec, encoded, sizeof(encoded), &view) ==
+            PACKAGE_STATE_STATUS_FILE && all_zero(encoded, sizeof(encoded)) &&
+        view.bytes == NULL, 60);
     files[1].path = state_text("lib/libx.so.1");
     packages[0].package_sha256 = NULL;
     encoded[0] = 1U;

@@ -552,6 +552,9 @@ def _v3_file_records(files: tuple[dict[str, Any], ...],
     normalized.sort(key=lambda item: item[0].encode("ascii"))
     if len({item[0] for item in normalized}) != len(normalized):
         raise PackageError("files contains a duplicate path")
+    if any(current[0].startswith(previous[0] + "/")
+           for previous, current in zip(normalized, normalized[1:])):
+        raise PackageError("a packaged file cannot be another file's ancestor")
 
     records = bytearray()
     payloads = bytearray()
@@ -836,7 +839,9 @@ def _parse_package_v3(package: bytes, trusted_keys: dict[str, bytes] | None) -> 
         if package_path(path, f"files[{index}].path") != path:
             raise PackageError(f"files[{index}].path is not canonical")
         path_bytes = path.encode("ascii")
-        if previous_path is not None and path_bytes <= previous_path or path in paths:
+        if (previous_path is not None and
+                (path_bytes <= previous_path or
+                 path_bytes.startswith(previous_path + b"/"))) or path in paths:
             raise PackageError("format-v3 file records are not uniquely sorted")
         previous_path = path_bytes
         paths.add(path)
