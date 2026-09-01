@@ -781,6 +781,7 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
     let mut ring = journal.into_clean_ring().unwrap();
     assert_eq!(ring.filesystem_is_clean(), Ok(true));
     let marker_plan = ring.prepare_recovery_marker_plan().unwrap();
+    assert_eq!(ring.prepare_recovery_marker_plan().unwrap(), marker_plan);
     assert_eq!(ring.filesystem_is_clean(), Ok(false));
     assert!(matches!(
         &marker_plan[0],

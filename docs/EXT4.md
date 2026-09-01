@@ -248,7 +248,10 @@ writable NVMe lease before unmount preparation; Rust
 re-emits the same pending clean plan after a failed write or flush, acknowledges
 the checksummed marker clear only after `Flush(FilesystemState)`, and refuses to
 drop the mount unless the marker, JBD2 start block, reservations, and used-slot
-census are all clean with matching sequence and head/tail state. The lease is
+census are all clean with matching sequence and head/tail state.
+The recovery-marker activation plan is equally retry-stable: its exact
+checksummed write and filesystem-state flush are re-emitted after an I/O refusal
+and acknowledged only after the flush completes. The lease is
 closed before the separate Rust release, and either failure leaves the mount
 live. Because VFS mutations cannot arm the marker yet, the QEMU recovery proof
 exercises the already-clean unmount branch rather than a dirty-to-clean

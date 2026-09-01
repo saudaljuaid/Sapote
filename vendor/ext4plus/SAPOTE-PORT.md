@@ -80,6 +80,9 @@ For future writable mounts, the ring exposes a separate final-clean plan only
 after all reservations are checkpointed and the durable JBD2 start is zero. It
 blocks new reservations until the checksummed ext4 marker clear is flushed, and
 the next commit cycle must make the recovery marker durable again.
+Pending recovery-marker activation and final marker clearing plans are both
+retry-stable after a write or flush refusal; acknowledgement alone advances
+their in-memory durability state.
 
 `JournalMutationStage` is the synchronous interception boundary for future
 ext4plus mutations. It accepts only an immutable backing reader, coalesces

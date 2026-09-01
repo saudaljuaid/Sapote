@@ -1415,13 +1415,17 @@ impl JournalRing {
     /// A ring discovered from a real clean ext4 image must execute this plan
     /// once before its first mapped commit plan. Synthetic journal-only rings
     /// have no filesystem-superblock state and do not use this transition.
+    /// Re-preparing a pending plan returns the same operations so a failed
+    /// marker write or flush can be retried without advancing in-memory state.
     pub fn prepare_recovery_marker_plan(
         &mut self,
     ) -> Result<Vec<JournalCommitOperation>, JournalTransactionError> {
         let state = self
             .filesystem_recovery_state
             .ok_or(JournalTransactionError::FilesystemStateUnavailable)?;
-        if state != FilesystemRecoveryState::Clean {
+        if state != FilesystemRecoveryState::Clean
+            && state != FilesystemRecoveryState::PlanPrepared
+        {
             return Err(JournalTransactionError::ReservationState);
         }
         let marker = self
