@@ -4774,6 +4774,7 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
     const struct boot_stage_receipt *nvme_proof;
     const struct boot_stage_receipt *fat16_proof;
     struct sapote_ext4_mount_diagnostic mount_diagnostic = {0};
+    struct sapote_ext4_recovery_report clean_remount = {0};
     struct sapote_ext4_recovery_report recovery = {0};
     const struct sapfs_drive_info drive = sapfs_drive(SAPFS_VOLUME_SYSTEM);
     struct sapfs_stat stat = {0};
@@ -4862,8 +4863,60 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
         sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_READ_ONLY) {
         kernel_test_fail("ext4 recovery escaped the read-only VFS gate");
     }
+    if (sapfs_unmount(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
+        sapfs_drive(SAPFS_VOLUME_SYSTEM).mounted ||
+        !nvme_filesystem_session_resources_released() ||
+        heap_verify() != HEAP_STATUS_OK) {
+        kernel_test_fail("ext4 recovered mount did not release cleanly");
+    }
+    const struct heap_state heap_before_remount = heap_get_state();
+    const struct frame_allocator_stats frames_before_remount =
+        frame_allocator_get_stats();
+    if (sapfs_mount(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
+        !ext4_backend_recovery_report(SAPFS_VOLUME_SYSTEM, &clean_remount) ||
+        clean_remount.performed || clean_remount.transactions != 0U ||
+        clean_remount.replayed_blocks != 0U ||
+        clean_remount.consumed_slots != 0U ||
+        sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "system/README.TXT", &stat) !=
+            SAPFS_STATUS_OK || stat.directory || stat.size !=
+            sizeof(expected) - 1U ||
+        sapfs_unmount(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
+        sapfs_drive(SAPFS_VOLUME_SYSTEM).mounted ||
+        !nvme_filesystem_session_resources_released() ||
+        heap_verify() != HEAP_STATUS_OK ||
+        paging_verify() != PAGING_STATUS_OK) {
+        kernel_test_fail("clean ext4 remount or release failed");
+    }
+    const struct heap_state heap_after_remount = heap_get_state();
+    const struct frame_allocator_stats frames_after_remount =
+        frame_allocator_get_stats();
+    if (heap_after_remount.base_address != heap_before_remount.base_address ||
+        heap_after_remount.size != heap_before_remount.size ||
+        heap_after_remount.committed_bytes !=
+            heap_before_remount.committed_bytes ||
+        heap_after_remount.allocated_bytes !=
+            heap_before_remount.allocated_bytes ||
+        heap_after_remount.block_count != heap_before_remount.block_count ||
+        heap_after_remount.live_allocations !=
+            heap_before_remount.live_allocations ||
+        heap_after_remount.mapped_pages != heap_before_remount.mapped_pages ||
+        heap_after_remount.active != heap_before_remount.active ||
+        frames_after_remount.addressable_frames !=
+            frames_before_remount.addressable_frames ||
+        frames_after_remount.allocatable_frames !=
+            frames_before_remount.allocatable_frames ||
+        frames_after_remount.free_frames != frames_before_remount.free_frames ||
+        frames_after_remount.allocated_frames !=
+            frames_before_remount.allocated_frames ||
+        frames_after_remount.reserved_frames !=
+            frames_before_remount.reserved_frames ||
+        frames_after_remount.highest_allocatable_address !=
+            frames_before_remount.highest_allocatable_address) {
+        kernel_test_fail("clean ext4 remount changed the resource census");
+    }
     console_write("ST EXT4 RECOVERY marker cleared journal clean transactions 0 ");
-    console_write("replay 0 slots 0 namespace verified read-only resources clean\n");
+    console_write("replay 0 slots 0 namespace verified read-only remount clean ");
+    console_write("resources exact\n");
     kernel_test_pass();
 }
 
