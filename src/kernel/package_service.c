@@ -1270,6 +1270,10 @@ static enum package_service_status cleanup_transaction(
         context->report->filesystem_status = fs_status;
         return PACKAGE_SERVICE_STATUS_CLEANUP;
     }
+    status = sync_data(context);
+    if (status != PACKAGE_SERVICE_STATUS_OK) {
+        return PACKAGE_SERVICE_STATUS_CLEANUP;
+    }
     fs_status = sapfs_unlink(SAPFS_VOLUME_DATA,
         PACKAGE_SERVICE_JOURNAL_PATH);
     if (fs_status != SAPFS_STATUS_OK && fs_status != SAPFS_STATUS_NOT_FOUND) {
@@ -1516,6 +1520,129 @@ static enum package_service_status prepare_internal(
 
         if (cleanup != PACKAGE_SERVICE_STATUS_OK) {
             return cleanup;
+        }
+    }
+    return status;
+}
+
+static enum package_service_status commit_internal(
+    struct service_context *context
+)
+{
+    uint8_t authority[PACKAGE_STATE_AUTHORITY_BYTES];
+    uint8_t journal[PACKAGE_STATE_JOURNAL_BYTES];
+    uint8_t replacement[PACKAGE_STATE_AUTHORITY_BYTES];
+    struct package_state_journal_view journal_view;
+    struct loaded_generation old_generation;
+    struct loaded_generation new_generation;
+    struct package_state_recovery_result recovery;
+    bool authority_present = false;
+    bool journal_present = false;
+    enum package_service_status status = PACKAGE_SERVICE_STATUS_OK;
+
+    zero_bytes(authority, sizeof(authority));
+    zero_bytes(journal, sizeof(journal));
+    zero_bytes(replacement, sizeof(replacement));
+    zero_bytes(&old_generation, sizeof(old_generation));
+    zero_bytes(&new_generation, sizeof(new_generation));
+    if (!fixed_path_absent(context, PACKAGE_SERVICE_JOURNAL_NEW_PATH,
+            &status) ||
+        !fixed_path_absent(context, PACKAGE_SERVICE_AUTHORITY_NEW_PATH,
+            &status) ||
+        !fixed_path_absent(context, PACKAGE_SERVICE_AUTHORITY_OLD_PATH,
+            &status)) {
+        return status;
+    }
+    status = ensure_entries(context);
+    if (status != PACKAGE_SERVICE_STATUS_OK) {
+        return status;
+    }
+    status = read_exact_path(context, PACKAGE_SERVICE_AUTHORITY_PATH,
+        authority, sizeof(authority), true, &authority_present);
+    if (status != PACKAGE_SERVICE_STATUS_OK || !authority_present) {
+        return status != PACKAGE_SERVICE_STATUS_OK ? status :
+            PACKAGE_SERVICE_STATUS_STATE;
+    }
+    status = read_exact_path(context, PACKAGE_SERVICE_JOURNAL_PATH, journal,
+        sizeof(journal), true, &journal_present);
+    if (status != PACKAGE_SERVICE_STATUS_OK || !journal_present) {
+        return status != PACKAGE_SERVICE_STATUS_OK ? status :
+            PACKAGE_SERVICE_STATUS_STATE;
+    }
+    context->report->journal_present = true;
+    context->report->state_status = package_state_journal_parse(journal,
+        sizeof(journal), &journal_view);
+    if (context->report->state_status != PACKAGE_STATE_STATUS_OK) {
+        return PACKAGE_SERVICE_STATUS_STATE;
+    }
+    status = load_generation(context, journal_view.base_generation,
+        journal_view.base_database_bytes, &old_generation);
+    if (status != PACKAGE_SERVICE_STATUS_OK) {
+        goto release;
+    }
+    status = load_generation(context, journal_view.target_generation,
+        journal_view.target_database_bytes, &new_generation);
+    if (status != PACKAGE_SERVICE_STATUS_OK) {
+        goto release;
+    }
+    if (!old_generation.candidate.owned_files_complete ||
+        !new_generation.candidate.owned_files_complete) {
+        context->report->state_status = PACKAGE_STATE_STATUS_INCOMPLETE;
+        status = PACKAGE_SERVICE_STATUS_INCOMPLETE;
+        goto release;
+    }
+    if (!authority_selects(authority, &old_generation.view)) {
+        context->report->state_status = PACKAGE_STATE_STATUS_MISMATCH;
+        status = PACKAGE_SERVICE_STATUS_STATE;
+        goto release;
+    }
+    context->report->state_status = package_state_recovery_decide(authority,
+        sizeof(authority), journal, sizeof(journal),
+        &old_generation.candidate, &new_generation.candidate, &recovery);
+    if (context->report->state_status != PACKAGE_STATE_STATUS_OK ||
+        recovery.choice != PACKAGE_STATE_RECOVERY_OLD ||
+        recovery.generation != journal_view.base_generation) {
+        status = context->report->state_status ==
+            PACKAGE_STATE_STATUS_INCOMPLETE ?
+            PACKAGE_SERVICE_STATUS_INCOMPLETE : PACKAGE_SERVICE_STATUS_STATE;
+        goto release;
+    }
+    context->report->state_status = package_state_authority_encode(
+        &new_generation.view, replacement);
+    if (context->report->state_status != PACKAGE_STATE_STATUS_OK) {
+        status = PACKAGE_SERVICE_STATUS_STATE;
+        goto release;
+    }
+    context->report->state_status = package_state_recovery_decide(replacement,
+        sizeof(replacement), journal, sizeof(journal),
+        &old_generation.candidate, &new_generation.candidate, &recovery);
+    if (context->report->state_status != PACKAGE_STATE_STATUS_OK ||
+        recovery.choice != PACKAGE_STATE_RECOVERY_NEW ||
+        recovery.generation != journal_view.target_generation) {
+        status = PACKAGE_SERVICE_STATUS_STATE;
+        goto release;
+    }
+    status = replace_authority(context, replacement);
+    if (status != PACKAGE_SERVICE_STATUS_OK) {
+        goto release;
+    }
+    context->report->committed = true;
+    context->report->choice = PACKAGE_STATE_RECOVERY_NEW;
+    context->report->generation = journal_view.target_generation;
+    status = cleanup_transaction(context, journal_view.base_generation);
+
+release:
+    {
+        enum package_service_status old_release = release_generation(context,
+            &old_generation);
+        enum package_service_status new_release = release_generation(context,
+            &new_generation);
+
+        if (old_release != PACKAGE_SERVICE_STATUS_OK) {
+            status = old_release;
+        }
+        if (new_release != PACKAGE_SERVICE_STATUS_OK) {
+            status = new_release;
         }
     }
     return status;
@@ -1809,6 +1936,46 @@ enum package_service_status package_service_prepare(
     context.report = report;
     servicing = true;
     status = prepare_internal(&context, request);
+    enum package_service_status entries_release = release_bytes(&context,
+        (void **)&context.entries);
+    if (entries_release != PACKAGE_SERVICE_STATUS_OK) {
+        status = entries_release;
+    }
+    if (report->live_file_handles != 0U || report->live_allocations != 0U) {
+        status = PACKAGE_SERVICE_STATUS_RESOURCE;
+    }
+    servicing = false;
+    report->status = status;
+    return status;
+}
+
+enum package_service_status package_service_commit(
+    struct package_service_report *report
+)
+{
+    struct service_context context;
+    enum package_service_status status;
+
+    if (report == NULL) {
+        return PACKAGE_SERVICE_STATUS_NULL_ARGUMENT;
+    }
+    zero_bytes(report, sizeof(*report));
+    report->filesystem_status = SAPFS_STATUS_OK;
+    report->state_status = PACKAGE_STATE_STATUS_OK;
+    if (servicing) {
+        report->status = PACKAGE_SERVICE_STATUS_BUSY;
+        return report->status;
+    }
+    struct sapfs_drive_info drive = sapfs_drive(SAPFS_VOLUME_DATA);
+    if (!drive.present || !drive.mounted || !drive.healthy || drive.read_only ||
+        !heap_is_active()) {
+        report->status = PACKAGE_SERVICE_STATUS_UNAVAILABLE;
+        return report->status;
+    }
+    zero_bytes(&context, sizeof(context));
+    context.report = report;
+    servicing = true;
+    status = commit_internal(&context);
     enum package_service_status entries_release = release_bytes(&context,
         (void **)&context.entries);
     if (entries_release != PACKAGE_SERVICE_STATUS_OK) {

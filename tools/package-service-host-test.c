@@ -473,6 +473,17 @@ static bool report_clean(const struct package_service_report *report)
         report->peak_allocations >= 2U;
 }
 
+static bool selected_authority_generation(uint64_t generation)
+{
+    struct package_state_authority_view authority;
+    size_t selected = find_node(PACKAGE_SERVICE_AUTHORITY_PATH);
+
+    return selected != MOCK_MAX_NODES &&
+        package_state_authority_parse(nodes[selected].bytes,
+            nodes[selected].byte_count, &authority) == PACKAGE_STATE_STATUS_OK &&
+        authority.generation == generation;
+}
+
 static size_t first_event(enum mock_event wanted)
 {
     for (size_t index = 0U; index < event_count; ++index) {
@@ -637,6 +648,40 @@ static int test_prepare_sync_failure_cleans_unpublished_state(
     return 0;
 }
 
+static int test_prepare_then_commit_selects_target(
+    const uint8_t old_database[OLD_DATABASE_BYTES],
+    const uint8_t new_database[NEW_DATABASE_BYTES],
+    const uint8_t old_authority[PACKAGE_STATE_AUTHORITY_BYTES]
+)
+{
+    struct package_builder_workspace *workspace = malloc(sizeof(*workspace));
+    struct package_service_prepare_request request;
+    struct package_service_report report;
+
+    CHECK(workspace != NULL && prepare_workspace(old_database, new_database,
+        workspace), 182);
+    request = (struct package_service_prepare_request){
+        workspace, new_database, NEW_DATABASE_BYTES
+    };
+    reset_filesystem();
+    add_old_generation(old_database);
+    add_file(PACKAGE_SERVICE_AUTHORITY_PATH, old_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    CHECK(package_service_prepare(&request, &report) ==
+            PACKAGE_SERVICE_STATUS_OK && report.prepared && !report.committed,
+        183);
+    CHECK(package_service_commit(&report) == PACKAGE_SERVICE_STATUS_OK &&
+        report.committed && report.choice == PACKAGE_STATE_RECOVERY_NEW &&
+        report.generation == 2U && report.cleanup_complete &&
+        selected_authority_generation(2U), 184);
+    CHECK(package_service_recover(&report) == PACKAGE_SERVICE_STATUS_OK &&
+        report.generation == 2U && report.cleanup_complete &&
+        selected_authority_generation(2U), 197);
+    CHECK(report_clean(&report), 198);
+    free(workspace);
+    return 0;
+}
+
 static int test_prepare_every_durability_boundary(
     const uint8_t old_database[OLD_DATABASE_BYTES],
     const uint8_t new_database[NEW_DATABASE_BYTES],
@@ -762,6 +807,221 @@ static int test_prepare_copies_unchanged_installed_file(
         report.choice == PACKAGE_STATE_RECOVERY_OLD && report.generation == 2U &&
         find_node("pkgstate/gen/00000000/00000003") == MOCK_MAX_NODES, 195);
     free(workspace);
+    return 0;
+}
+
+static int test_commit_promotes_prepared_generation(
+    const uint8_t old_database[OLD_DATABASE_BYTES],
+    const uint8_t new_database[NEW_DATABASE_BYTES],
+    const uint8_t old_authority[PACKAGE_STATE_AUTHORITY_BYTES],
+    const uint8_t journal[PACKAGE_STATE_JOURNAL_BYTES]
+)
+{
+    struct package_service_report report;
+
+    reset_filesystem();
+    add_old_generation(old_database);
+    add_new_generation(new_database);
+    add_file(PACKAGE_SERVICE_AUTHORITY_PATH, old_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    add_file(PACKAGE_SERVICE_JOURNAL_PATH, journal,
+        PACKAGE_STATE_JOURNAL_BYTES, UINT16_C(0444));
+    CHECK(package_service_commit(&report) == PACKAGE_SERVICE_STATUS_OK &&
+        report.committed && report.authority_replaced &&
+        report.cleanup_complete && report.choice == PACKAGE_STATE_RECOVERY_NEW &&
+        report.generation == 2U && report.files_verified == 2U &&
+        report.rename_count == 2U && report.sync_count == 5U, 200);
+    CHECK(selected_authority_generation(2U) &&
+        find_node("pkgstate/gen/00000000/00000001") == MOCK_MAX_NODES &&
+        find_node(PACKAGE_SERVICE_AUTHORITY_NEW_PATH) == MOCK_MAX_NODES &&
+        find_node(PACKAGE_SERVICE_AUTHORITY_OLD_PATH) == MOCK_MAX_NODES &&
+        find_node(PACKAGE_SERVICE_JOURNAL_PATH) == MOCK_MAX_NODES, 201);
+    size_t write = first_event(MOCK_EVENT_WRITE_AUTHORITY);
+    size_t old = first_event(MOCK_EVENT_RENAME_OLD);
+    size_t current = first_event(MOCK_EVENT_RENAME_AUTHORITY);
+    size_t journal_unlink = first_event(MOCK_EVENT_UNLINK_JOURNAL);
+    CHECK(write < old && old < current && current < journal_unlink &&
+        events[write + 1U] == MOCK_EVENT_SYNC &&
+        events[old + 1U] == MOCK_EVENT_SYNC &&
+        events[current + 1U] == MOCK_EVENT_SYNC &&
+        events[journal_unlink - 1U] == MOCK_EVENT_SYNC &&
+        events[journal_unlink + 1U] == MOCK_EVENT_SYNC, 202);
+    CHECK(report_clean(&report), 203);
+    return 0;
+}
+
+static int test_commit_refuses_unprepared_or_changed_state(
+    const uint8_t old_database[OLD_DATABASE_BYTES],
+    const uint8_t new_database[NEW_DATABASE_BYTES],
+    const uint8_t old_authority[PACKAGE_STATE_AUTHORITY_BYTES],
+    const uint8_t new_authority[PACKAGE_STATE_AUTHORITY_BYTES],
+    const uint8_t journal[PACKAGE_STATE_JOURNAL_BYTES]
+)
+{
+    struct package_service_report report;
+
+    reset_filesystem();
+    add_old_generation(old_database);
+    add_file(PACKAGE_SERVICE_AUTHORITY_PATH, old_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    CHECK(package_service_commit(&report) == PACKAGE_SERVICE_STATUS_STATE &&
+        !report.committed && selected_authority_generation(1U), 204);
+
+    reset_filesystem();
+    add_old_generation(old_database);
+    add_new_generation(new_database);
+    add_file(PACKAGE_SERVICE_AUTHORITY_PATH, old_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    add_file(PACKAGE_SERVICE_JOURNAL_PATH, journal,
+        PACKAGE_STATE_JOURNAL_BYTES, UINT16_C(0444));
+    add_file(PACKAGE_SERVICE_JOURNAL_NEW_PATH, journal,
+        PACKAGE_STATE_JOURNAL_BYTES, UINT16_C(0444));
+    CHECK(package_service_commit(&report) == PACKAGE_SERVICE_STATUS_STATE &&
+        !report.committed && selected_authority_generation(1U), 205);
+
+    reset_filesystem();
+    add_old_generation(old_database);
+    add_new_generation(new_database);
+    add_file(PACKAGE_SERVICE_AUTHORITY_PATH, old_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    add_file(PACKAGE_SERVICE_AUTHORITY_NEW_PATH, new_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    add_file(PACKAGE_SERVICE_JOURNAL_PATH, journal,
+        PACKAGE_STATE_JOURNAL_BYTES, UINT16_C(0444));
+    CHECK(package_service_commit(&report) == PACKAGE_SERVICE_STATUS_STATE &&
+        !report.committed && selected_authority_generation(1U), 213);
+
+    reset_filesystem();
+    add_old_generation(old_database);
+    add_new_generation(new_database);
+    add_file(PACKAGE_SERVICE_AUTHORITY_PATH, old_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    add_file(PACKAGE_SERVICE_AUTHORITY_OLD_PATH, old_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    add_file(PACKAGE_SERVICE_JOURNAL_PATH, journal,
+        PACKAGE_STATE_JOURNAL_BYTES, UINT16_C(0444));
+    CHECK(package_service_commit(&report) == PACKAGE_SERVICE_STATUS_STATE &&
+        !report.committed && selected_authority_generation(1U), 214);
+
+    reset_filesystem();
+    add_old_generation(old_database);
+    add_new_generation(new_database);
+    add_file(PACKAGE_SERVICE_AUTHORITY_PATH, old_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    add_file(PACKAGE_SERVICE_JOURNAL_PATH, journal,
+        PACKAGE_STATE_JOURNAL_BYTES, UINT16_C(0444));
+    size_t application = find_node(
+        "pkgstate/gen/00000000/00000002/root/bin/app");
+    nodes[application].bytes[0] ^= UINT8_C(1);
+    CHECK(package_service_commit(&report) == PACKAGE_SERVICE_STATUS_INCOMPLETE &&
+        !report.committed && selected_authority_generation(1U) &&
+        find_node(PACKAGE_SERVICE_JOURNAL_PATH) != MOCK_MAX_NODES, 206);
+
+    reset_filesystem();
+    add_old_generation(old_database);
+    add_new_generation(new_database);
+    add_file(PACKAGE_SERVICE_AUTHORITY_PATH, new_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    add_file(PACKAGE_SERVICE_JOURNAL_PATH, journal,
+        PACKAGE_STATE_JOURNAL_BYTES, UINT16_C(0444));
+    CHECK(package_service_commit(&report) == PACKAGE_SERVICE_STATUS_STATE &&
+        !report.committed && selected_authority_generation(2U) &&
+        find_node(PACKAGE_SERVICE_JOURNAL_PATH) != MOCK_MAX_NODES, 207);
+    return 0;
+}
+
+static int test_commit_every_durability_boundary_recovers(
+    const uint8_t old_database[OLD_DATABASE_BYTES],
+    const uint8_t new_database[NEW_DATABASE_BYTES],
+    const uint8_t old_authority[PACKAGE_STATE_AUTHORITY_BYTES],
+    const uint8_t journal[PACKAGE_STATE_JOURNAL_BYTES]
+)
+{
+    for (uint32_t boundary = 1U; boundary <= 5U; ++boundary) {
+        struct package_service_report report;
+
+        reset_filesystem();
+        add_old_generation(old_database);
+        add_new_generation(new_database);
+        add_file(PACKAGE_SERVICE_AUTHORITY_PATH, old_authority,
+            PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+        add_file(PACKAGE_SERVICE_JOURNAL_PATH, journal,
+            PACKAGE_STATE_JOURNAL_BYTES, UINT16_C(0444));
+        fail_sync_ordinal = boundary;
+        enum package_service_status expected = boundary <= 3U ?
+            PACKAGE_SERVICE_STATUS_DURABILITY : PACKAGE_SERVICE_STATUS_CLEANUP;
+        enum package_state_recovery_choice expected_choice = boundary <= 3U ||
+            boundary == 5U ? PACKAGE_STATE_RECOVERY_OLD :
+                PACKAGE_STATE_RECOVERY_NEW;
+
+        CHECK(package_service_commit(&report) == expected &&
+            report.committed == (boundary >= 4U) &&
+            report.live_file_handles == 0U && report.live_allocations == 0U,
+            208);
+        CHECK(package_service_recover(&report) == PACKAGE_SERVICE_STATUS_OK &&
+            report.choice == expected_choice &&
+            report.generation == (boundary <= 3U ? 1U : 2U) &&
+            report.cleanup_complete &&
+            selected_authority_generation(boundary <= 3U ? 1U : 2U) &&
+            find_node(PACKAGE_SERVICE_JOURNAL_PATH) == MOCK_MAX_NODES, 209);
+        CHECK(report_clean(&report), 210);
+    }
+    return 0;
+}
+
+static int test_recovery_accepts_persisted_commit_prefixes(
+    const uint8_t old_database[OLD_DATABASE_BYTES],
+    const uint8_t new_database[NEW_DATABASE_BYTES],
+    const uint8_t old_authority[PACKAGE_STATE_AUTHORITY_BYTES],
+    const uint8_t new_authority[PACKAGE_STATE_AUTHORITY_BYTES],
+    const uint8_t journal[PACKAGE_STATE_JOURNAL_BYTES]
+)
+{
+    struct package_service_report report;
+
+    for (uint32_t boundary = 1U; boundary <= 5U; ++boundary) {
+        enum package_state_recovery_choice expected_choice = boundary <= 2U ||
+            boundary == 5U ? PACKAGE_STATE_RECOVERY_OLD :
+                PACKAGE_STATE_RECOVERY_NEW;
+
+        reset_filesystem();
+        if (boundary <= 3U) {
+            add_old_generation(old_database);
+        }
+        add_new_generation(new_database);
+        if (boundary == 1U) {
+            add_file(PACKAGE_SERVICE_AUTHORITY_PATH, old_authority,
+                PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+            add_file(PACKAGE_SERVICE_AUTHORITY_NEW_PATH, new_authority,
+                PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+        } else if (boundary == 2U) {
+            add_file(PACKAGE_SERVICE_AUTHORITY_OLD_PATH, old_authority,
+                PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+            add_file(PACKAGE_SERVICE_AUTHORITY_NEW_PATH, new_authority,
+                PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+        } else {
+            add_file(PACKAGE_SERVICE_AUTHORITY_PATH, new_authority,
+                PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+            if (boundary == 3U) {
+                add_file(PACKAGE_SERVICE_AUTHORITY_OLD_PATH, old_authority,
+                    PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+            }
+        }
+        if (boundary <= 4U) {
+            add_file(PACKAGE_SERVICE_JOURNAL_PATH, journal,
+                PACKAGE_STATE_JOURNAL_BYTES, UINT16_C(0444));
+        }
+        CHECK(package_service_recover(&report) == PACKAGE_SERVICE_STATUS_OK &&
+            report.choice == expected_choice &&
+            report.generation == (boundary <= 2U ? 1U : 2U) &&
+            report.cleanup_complete &&
+            selected_authority_generation(boundary <= 2U ? 1U : 2U) &&
+            find_node(PACKAGE_SERVICE_JOURNAL_PATH) == MOCK_MAX_NODES &&
+            find_node(PACKAGE_SERVICE_AUTHORITY_NEW_PATH) == MOCK_MAX_NODES &&
+            find_node(PACKAGE_SERVICE_AUTHORITY_OLD_PATH) == MOCK_MAX_NODES,
+            211);
+        CHECK(report_clean(&report), 212);
+    }
     return 0;
 }
 
@@ -926,7 +1186,7 @@ static int test_tamper_repairs_authority_with_ordering(
     CHECK(package_service_recover(&report) == PACKAGE_SERVICE_STATUS_OK, 130);
     CHECK(report.choice == PACKAGE_STATE_RECOVERY_OLD &&
         report.authority_replaced && report.cleanup_complete &&
-        report.rename_count == 2U && report.sync_count == 4U, 131);
+        report.rename_count == 2U && report.sync_count == 5U, 131);
     size_t selected = find_node(PACKAGE_SERVICE_AUTHORITY_PATH);
     CHECK(selected != MOCK_MAX_NODES &&
         package_state_authority_parse(nodes[selected].bytes,
@@ -1086,12 +1346,32 @@ int main(void)
             old_database, new_database, old_authority);
     }
     if (result == 0) {
+        result = test_prepare_then_commit_selects_target(old_database,
+            new_database, old_authority);
+    }
+    if (result == 0) {
         result = test_prepare_every_durability_boundary(old_database,
             new_database, old_authority);
     }
     if (result == 0) {
         result = test_prepare_copies_unchanged_installed_file(new_database,
             new_authority);
+    }
+    if (result == 0) {
+        result = test_commit_promotes_prepared_generation(old_database,
+            new_database, old_authority, journal);
+    }
+    if (result == 0) {
+        result = test_commit_refuses_unprepared_or_changed_state(old_database,
+            new_database, old_authority, new_authority, journal);
+    }
+    if (result == 0) {
+        result = test_commit_every_durability_boundary_recovers(old_database,
+            new_database, old_authority, journal);
+    }
+    if (result == 0) {
+        result = test_recovery_accepts_persisted_commit_prefixes(old_database,
+            new_database, old_authority, new_authority, journal);
     }
     if (result != 0) {
         (void)fprintf(stderr, "package service host test failed: %d\n", result);

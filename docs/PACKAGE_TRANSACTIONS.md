@@ -9,10 +9,10 @@ exercises staging, commit recovery, rollback, removal, dependency retention,
 integrity verification, and repair.
 
 The host tool defines the format and reference state machine; it does not write
-a System image or install packages. The guest has a privileged,
-VFS-backed recovery service for already staged generations plus a bounded parser
-and dependency planner for signed repository/package bytes. These components
-meet at an authenticated staging boundary described in
+a System image or install packages. The guest has a privileged, VFS-backed
+prepare/commit/recovery service plus a bounded parser and dependency planner for
+signed repository/package bytes. These components meet at an authenticated
+staging boundary described in
 [`PACKAGE_MANAGER.md`](PACKAGE_MANAGER.md).
 
 ## Trust and namespace boundary
@@ -305,15 +305,17 @@ is limited by the VFS list bound of 64 entries, each tree walk by 8,192 entries,
 and path depth by the VFS depth bound. Candidate buffers, scratch storage, and
 file handles are counted in the returned report and released on every exit.
 
-When authority must be repaired, recovery writes and closes `auth.new`, syncs,
+When authority must be replaced, the service writes and closes `auth.new`, syncs,
 moves an existing `auth.bin` to `auth.old`, syncs that fallback, moves
 `auth.new` to `auth.bin`, and syncs the selection. Only then may it recursively
-remove the discarded fixed generation. The journal and authority fallback are
-removed last and another sync makes cleanup durable. A cleanup or sync failure
-leaves the journal present so a later recovery can retry; it is never converted
-to success. If a crash leaves `auth.bin` absent, a canonical `auth.old` is an
-eligible conservative fallback and is rewritten through the same protocol.
-Malformed journals are never discarded automatically.
+remove the discarded fixed generation and authority fallback. Those removals
+are synced before `txn.bin` is unlinked, and a final sync makes journal removal
+durable. The extra barrier guarantees that any durable no-journal state has
+already durably reclaimed the discarded generation. A cleanup or sync failure
+before journal removal leaves the journal present so a later recovery can retry;
+it is never converted to success. If a crash leaves `auth.bin` absent, a
+canonical `auth.old` is an eligible conservative fallback and is rewritten
+through the same protocol. Malformed journals are never discarded automatically.
 
 Cleanup is confined to the computed discarded generation directory and fixed
 transaction envelope paths. Mutable user data remains outside
@@ -346,6 +348,18 @@ valid current authority makes its adjacent generation unselected, so recovery
 removes that bounded tree and the temporary marker, syncs the cleanup, and then
 validates the old generation normally. Coexisting temporary and published
 journals are contradictory and refused without deletion.
+
+The separate privileged commit entry point accepts only that fully published
+prepared state: `txn.bin` must exist, while `txn.new`, `auth.new`, and `auth.old`
+must not. It re-parses the journal, loads and fully verifies both immutable
+generations, requires current authority to select the journal base, and asks the
+normal recovery core to prove both the pre-switch `OLD` and encoded post-switch
+`NEW` decisions before writing authority. It then uses the ordered replacement
+protocol above. Once the new authority sync completes, `report.committed` is
+true and reboot recovery must select the target even if later cleanup reports an
+error. There is still no shell or native ABI endpoint, signature-key provider,
+fresh-store bootstrap, repair path, or end-user lifecycle that can present this
+private service as a completed installation feature.
 
 ## Removal, references, and repair
 
@@ -404,9 +418,11 @@ The service host test links the real service against a bounded in-memory VFS and
 heap. It covers no-journal verification, pre-authority rollback,
 post-authority completion, exact file digest tamper, an unowned extra file,
 authority repair ordering, recursive cleanup, no-complete-generation refusal,
-durability failure with journal retention, and zero live handle/allocation
-census on every exit.
+prepare and commit refusal, every prepare/commit durability boundary, persisted
+authority-switch prefixes, journal-last cleanup ordering, durability failure
+with recoverable state, and zero live handle/allocation census on every exit.
 
-The recovery service starts from authenticated, staged generations. Download,
-cache population, staging, authorization, client presentation, and
-backend-specific commit evidence are separate integration layers.
+The transaction service starts from authenticated package bytes and an existing
+valid store. Download, trust-provider provisioning, fresh-store bootstrap,
+repair, client presentation, and writable-ext4 backend evidence are separate
+integration layers.

@@ -111,7 +111,9 @@ signature rejection, digest changes, freshness, rollback, ABI mismatch,
 unsatisfied dependencies, conflicts, ambiguous providers, cycles, backtracking,
 and the dependency-depth bound.
 
-`package_service.c` recovers generations and can durably prepare a complete
-builder result without advancing package authority. Fetching, signature-provider
-setup, the authority commit phase, client commands, and Store presentation
-remain outside this parser and planner.
+`package_service.c` recovers generations, durably prepares a complete builder
+result without advancing package authority, and separately commits only a
+revalidated prepared journal through an ordered authority switch. Fetching,
+signature-provider setup, fresh-store bootstrap, repair, client commands, Store
+presentation, and writable-ext4 integration remain outside this parser and
+planner.

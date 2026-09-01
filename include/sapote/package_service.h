@@ -59,6 +59,7 @@ struct package_service_report {
     uint32_t live_allocations;
     bool journal_present;
     bool prepared;
+    bool committed;
     bool authority_replaced;
     bool cleanup_complete;
 };
@@ -86,6 +87,16 @@ struct package_service_prepare_request {
  */
 enum package_service_status package_service_prepare(
     const struct package_service_prepare_request *request,
+    struct package_service_report *report
+);
+
+/*
+ * Commits an already prepared transaction.  The service revalidates the
+ * journal, both complete generations, and the current base authority before
+ * durably selecting the target.  Once report.committed is true, recovery will
+ * select the target even if best-effort cleanup returns an error.
+ */
+enum package_service_status package_service_commit(
     struct package_service_report *report
 );
 
