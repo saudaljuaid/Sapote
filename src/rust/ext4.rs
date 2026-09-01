@@ -847,10 +847,10 @@ pub(crate) fn transaction_probe(
 
 /// Retry and durably execute the final clean plan while C holds a write lease.
 pub(crate) fn prepare_unmount(mounted: &mut Mounted) -> Result<(), Status> {
-    if mounted.pending_mutation.is_some()
-        || !mounted.stage.is_empty()
-        || mounted.stage.is_sealed()
-    {
+    if mounted.pending_mutation.is_some() {
+        let _ = resume_pending_mutation_inner(mounted)?;
+    }
+    if !mounted.stage.is_empty() || mounted.stage.is_sealed() {
         return Err(Status::Invalid);
     }
     match mounted.journal.filesystem_is_clean() {

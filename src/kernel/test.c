@@ -4894,9 +4894,7 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
             !ext4_backend_test_storage_failure_observed(
                 SAPOTE_EXT4_TEST_STORAGE_WRITE) ||
             !ext4_backend_test_fail_storage_once(3U) ||
-            ext4_backend_transaction_probe(SAPFS_VOLUME_SYSTEM,
-                "system/README.TXT", UINT64_C(4096), &transaction_byte,
-                sizeof(transaction_byte), &written_bytes) != SAPFS_STATUS_IO ||
+            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_IO ||
             !ext4_backend_test_storage_failure_observed(
                 SAPOTE_EXT4_TEST_STORAGE_FLUSH)) {
             kernel_test_fail("ext4 pending allocation failure retry is invalid");

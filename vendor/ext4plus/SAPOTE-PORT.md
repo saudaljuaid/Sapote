@@ -155,11 +155,14 @@ touched offset range for ordered-data classification. The retry-safe
 final-clean plan is bound to both VFS sync and unmount through a writable NVMe
 lease. Sync retains the mount, acknowledges the marker clear only after its
 flush, and requires the next mutation to re-arm recovery; a clean sync needs no
-extra I/O because every transaction already checkpoints synchronously. The VFS
-cannot make a dirty mount yet. The private QEMU probe retains one
+extra I/O because every transaction already checkpoints synchronously. Sync and
+unmount preparation also finish an already-started retained transaction plan;
+another refusal keeps that exact plan retryable. The VFS cannot make a dirty
+mount yet. The private QEMU probe retains one
 allocation-bearing transaction across an injected live-superblock write
-failure and an injected ordered-data flush failure, then retries injected sync
-marker-write and flush failures. A separate Linux target
+failure and an injected ordered-data flush failure, including retry through VFS
+sync, then retries injected final-clean marker-write and flush failures. A
+separate Linux target
 cuts ten independent VMs immediately after every named durability barrier,
 reboots each disk, and requires namespace, data, resource, and read-only
 `e2fsck` acceptance. The real fixture separately pins pre-commit allocation

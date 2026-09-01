@@ -325,10 +325,14 @@ the checksummed marker clear only after `Flush(FilesystemState)`, and refuses to
 drop the mount unless the marker, JBD2 start block, reservations, and used-slot
 census are all clean with matching sequence and head/tail state.
 VFS sync now executes that same retry-stable plan without releasing the mount.
+If a transaction has already started, sync or unmount preparation first resumes
+its retained commit/checkpoint/reload phase; a further refusal leaves that exact
+plan owned for another retry instead of discarding staged state.
 The QEMU probe injects both its marker write and flush failures, retries the
-same plan, and only then accepts sync; the next mutation must durably re-arm the
-recovery marker. Because every current transaction checkpoints synchronously,
-a clean sync needs no extra device operation.
+same plan through both the original mutation request and VFS sync, and only then
+accepts sync; the next mutation must durably re-arm the recovery marker. Because
+every current transaction checkpoints synchronously, a clean sync needs no
+extra device operation.
 The recovery-marker activation plan is equally retry-stable: its exact
 checksummed write and filesystem-state flush are re-emitted after an I/O refusal
 and acknowledged only after the flush completes. Started commit plans and
