@@ -11,6 +11,8 @@ mod block_map;
 mod commit_block;
 mod descriptor_block;
 mod revocation_block;
+#[cfg(feature = "sync")]
+pub(crate) mod staging;
 mod superblock;
 pub(crate) mod transaction;
 

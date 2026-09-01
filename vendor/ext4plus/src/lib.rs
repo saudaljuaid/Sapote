@@ -193,6 +193,8 @@ pub use journal::transaction::{
     execute_commit_operations, load_journal_inode_map, recover_committed_ring,
     replay_committed_transaction,
 };
+#[cfg(feature = "sync")]
+pub use journal::staging::{JournalMutationStage, JournalMutationStageError};
 pub use label::Label;
 pub use mem_io_error::MemIoError;
 pub use metadata::Metadata;

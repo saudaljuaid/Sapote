@@ -89,6 +89,12 @@ pub struct JournalBlockImage {
 }
 
 impl JournalBlockImage {
+    #[cfg(feature = "sync")]
+    pub(super) fn from_staged(block_index: u64, bytes: Vec<u8>) -> Self {
+        debug_assert_eq!(bytes.len(), JOURNAL_BLOCK_BYTES);
+        Self { block_index, bytes }
+    }
+
     /// Return the absolute filesystem block targeted by this image.
     #[must_use]
     pub fn block_index(&self) -> u64 {

@@ -2,13 +2,15 @@
 #![cfg(test)]
 
 use ext4plus::{
-    Ext4, FILESYSTEM_SUPERBLOCK_START_BYTE, JOURNAL_BLOCK_BYTES, JournalCommitOperation,
-    JournalExecutionError, JournalFlush, JournalPreparedTransaction, JournalRecordKind,
-    JournalRing, JournalStorage, JournalSuperblockImage, JournalTransaction,
-    JournalTransactionError, execute_commit_operations, load_journal_inode_map,
-    recover_committed_ring, replay_committed_transaction,
+    Ext4, Ext4Read, Ext4Write, FILESYSTEM_SUPERBLOCK_START_BYTE, JOURNAL_BLOCK_BYTES,
+    JournalCommitOperation, JournalExecutionError, JournalFlush, JournalMutationStage,
+    JournalMutationStageError, JournalPreparedTransaction, JournalRecordKind, JournalRing,
+    JournalStorage, JournalSuperblockImage, JournalTransaction, JournalTransactionError,
+    execute_commit_operations, load_journal_inode_map, recover_committed_ring,
+    replay_committed_transaction,
 };
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 const UUID: [u8; 16] = [0x5a; 16];
 const MAXIMUM_BLOCK: u64 = 4095;
@@ -129,6 +131,54 @@ fn public_executor_maps_every_block_write_and_preserves_flushes() {
         Err(JournalExecutionError::AddressOverflow)
     );
     assert!(storage.events.is_empty());
+}
+
+#[test]
+fn mutation_stage_coalesces_partial_blocks_without_writing_through() {
+    let backing = Rc::new(
+        (0..JOURNAL_BLOCK_BYTES * 66)
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>(),
+    );
+    let stage = JournalMutationStage::new(
+        Box::new(backing.clone()),
+        u64::try_from(backing.len()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        Ext4Write::write(&stage, 1023, &[0xff]).unwrap_err().to_string(),
+        JournalMutationStageError::Range.to_string()
+    );
+    let original = backing[8186..8202].to_vec();
+    Ext4Write::write(&stage, 8190, &[0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6]).unwrap();
+    assert_eq!(stage.staged_block_count(), 2);
+    let images = stage.staged_images();
+    assert_eq!(images.len(), 2);
+    assert_eq!(images[0].block_index(), 1);
+    assert_eq!(images[1].block_index(), 2);
+    assert_eq!(&images[0].bytes()[4094..], &[0xa1, 0xa2]);
+    assert_eq!(&images[1].bytes()[..4], &[0xa3, 0xa4, 0xa5, 0xa6]);
+
+    let mut overlaid = [0u8; 16];
+    Ext4Read::read(&stage, 8186, &mut overlaid).unwrap();
+    assert_eq!(&overlaid[..4], &original[..4]);
+    assert_eq!(&overlaid[4..10], &[0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6]);
+    assert_eq!(&overlaid[10..], &original[10..]);
+    assert_eq!(&backing[8186..8202], original.as_slice());
+
+    stage.rollback();
+    assert_eq!(stage.staged_block_count(), 0);
+    Ext4Read::read(&stage, 8186, &mut overlaid).unwrap();
+    assert_eq!(overlaid.as_slice(), original.as_slice());
+
+    for block in 1..=64u64 {
+        Ext4Write::write(&stage, block * JOURNAL_BLOCK_BYTES as u64, &[0xff]).unwrap();
+    }
+    let error = Ext4Write::write(&stage, 65 * JOURNAL_BLOCK_BYTES as u64, &[0xff])
+        .unwrap_err();
+    assert_eq!(error.to_string(), JournalMutationStageError::TooManyBlocks.to_string());
+    assert_eq!(stage.staged_block_count(), 64);
+    assert_eq!(backing[65 * JOURNAL_BLOCK_BYTES], (65 * JOURNAL_BLOCK_BYTES % 251) as u8);
 }
 
 fn install_journal_writes(
@@ -568,7 +618,7 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
         eprintln!("SAPOTE_EXT4_RUST_FIXTURE is unset; journal-inode integration is CI-only");
         return;
     };
-    let Ok(bytes) = std::fs::read(path) else {
+    let Ok(bytes) = std::fs::read(&path) else {
         eprintln!("journal-inode fixture was not produced because e2fsprogs is unavailable");
         return;
     };
@@ -675,6 +725,37 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
     );
     ring.mark_recovery_marker_durable().unwrap();
     assert!(ring.prepare_commit_plan(&prepared).is_ok());
+
+    let backing = Rc::new(std::fs::read(&path).unwrap());
+    let stage = Rc::new(
+        JournalMutationStage::new(
+            Box::new(backing.clone()),
+            u64::try_from(backing.len()).unwrap(),
+        )
+        .unwrap(),
+    );
+    let staged_filesystem = Ext4::load_with_writer(
+        Box::new(stage.clone()),
+        Some(Box::new(stage.clone())),
+    )
+    .unwrap();
+    let mut file = staged_filesystem.open(b"/README.TXT").unwrap();
+    let mut original = [0u8; 1];
+    assert_eq!(file.read_bytes_at(&mut original, 0).unwrap(), 1);
+    assert_eq!(file.write_bytes_at(b"X", 0).unwrap(), 1);
+    let mut overlaid = [0u8; 1];
+    assert_eq!(file.read_bytes_at(&mut overlaid, 0).unwrap(), 1);
+    assert_eq!(overlaid, *b"X");
+    assert_ne!(original, overlaid);
+    assert!(stage.staged_block_count() >= 1);
+    assert_eq!(std::fs::read(&path).unwrap(), backing.as_slice());
+    drop(file);
+    drop(staged_filesystem);
+    stage.rollback();
+    let restored_filesystem = Ext4::load(Box::new(stage.clone())).unwrap();
+    let mut restored = restored_filesystem.open(b"/README.TXT").unwrap();
+    assert_eq!(restored.read_bytes_at(&mut overlaid, 0).unwrap(), 1);
+    assert_eq!(overlaid, original);
 }
 
 #[test]

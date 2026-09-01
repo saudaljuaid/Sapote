@@ -200,6 +200,15 @@ checkpoint, recovery-cleanup, and tail-state operations. A shared executor maps
 every operation to checked absolute byte writes and preserves every flush. The
 kernel mount adapter binds those writes to `nvme_volume_write()` and each
 barrier to `nvme_volume_flush()` for recovery only. Writable namespace methods
-are still not redirected into the planner, clean unmount/fsync and allocation
-rollback are not complete, deliberate recovery power-cut QEMU evidence is not
-yet present, and all VFS mutation operations continue to return `EROFS`.
+are still not redirected into the planner. A bounded `JournalMutationStage`
+now gives synchronous ext4plus mutations an immutable backing reader and a
+copy-on-write overlay: the first partial write reads a complete 4 KiB home
+block, later writes coalesce into it, reads see the overlay, and at most 64
+complete images can be exported without any home write. Rollback clears the
+overlay and requires discarding the mutated ext4plus object as well.
+
+The staging layer is not yet connected to VFS mutations or classified into
+ordered file data versus journaled metadata. Allocation rollback and
+revocations, clean unmount/fsync, write-failure injection, and deliberate
+recovery power-cut QEMU evidence are not complete. All VFS mutation operations
+therefore continue to return `EROFS`.
