@@ -304,6 +304,25 @@ pub(crate) unsafe extern "C" fn sapote_ext4_prepare_unmount(mounted: usize) -> i
     }
 }
 
+/// Execute or retry the final clean plan while retaining the mounted object.
+///
+/// # Safety
+/// `mounted` must be a live, uniquely owned value returned by one successful
+/// mount call, and C must keep its storage context valid with a write lease for
+/// this call. The mount remains live regardless of the result.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn sapote_ext4_sync(mounted: usize) -> i32 {
+    if mounted == 0 {
+        return ext4::Status::NullArgument as i32;
+    }
+    // SAFETY: unique access and provenance are the function contract.
+    let mounted = unsafe { &mut *(mounted as *mut ext4::Mounted) };
+    match ext4::sync(mounted) {
+        Ok(()) => ext4::Status::Ok as i32,
+        Err(status) => status as i32,
+    }
+}
+
 /// Drop one clean opaque ext4 mount after its storage lease is closed.
 ///
 /// # Safety

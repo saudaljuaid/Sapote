@@ -152,17 +152,21 @@ data block, return the allocation count to its original value, and pass
 
 The stage is not yet connected to VFS mutations, which do not yet collect their
 touched offset range for ordered-data classification. The retry-safe
-final-clean plan is bound to VFS unmount through a writable NVMe lease, but the
-VFS cannot make a dirty mount yet. The private QEMU probe retains one
+final-clean plan is bound to both VFS sync and unmount through a writable NVMe
+lease. Sync retains the mount, acknowledges the marker clear only after its
+flush, and requires the next mutation to re-arm recovery; a clean sync needs no
+extra I/O because every transaction already checkpoints synchronously. The VFS
+cannot make a dirty mount yet. The private QEMU probe retains one
 allocation-bearing transaction across an injected live-superblock write
-failure and an injected ordered-data flush failure. A separate Linux target
+failure and an injected ordered-data flush failure, then retries injected sync
+marker-write and flush failures. A separate Linux target
 cuts ten independent VMs immediately after every named durability barrier,
 reboots each disk, and requires namespace, data, resource, and read-only
 `e2fsck` acceptance. The real fixture separately pins pre-commit allocation
 rollback after a refused classification and derives revocations from a real
-truncate. Fsync/close semantics remain incomplete. Those gaps keep every user-
-facing Sapote ext4 operation read-only even though the private recovery and
-unmount leases are writable.
+truncate. General writable-handle close semantics remain incomplete. Those
+gaps keep every user-facing Sapote ext4 mutation read-only even though recovery,
+sync, and unmount use writable leases.
 
 Sapote also tightens upstream writer admission: an image carrying ext4's
 `RO_COMPAT_READONLY` feature discards the supplied writer, as does an image

@@ -316,20 +316,26 @@ real fixture pins that rollback across an allocation-bearing, deliberately
 refused pre-commit classification. Once a storage operation has started,
 rollback would be unsafe because an unknown prefix may already be durable; the
 retained plan is retried instead. VFS mutations do not yet collect the touched
-offset range needed for ordered-data classification. Fsync binding and close-
-failure semantics remain incomplete. The admitted
+offset range needed for ordered-data classification. General writable-handle
+close semantics remain incomplete. The admitted
 `JournalRing` is also retained for the full Rust mount lifetime. C opens a
-writable NVMe lease before unmount preparation; Rust
+writable NVMe lease before sync or unmount preparation; Rust
 re-emits the same pending clean plan after a failed write or flush, acknowledges
 the checksummed marker clear only after `Flush(FilesystemState)`, and refuses to
 drop the mount unless the marker, JBD2 start block, reservations, and used-slot
 census are all clean with matching sequence and head/tail state.
+VFS sync now executes that same retry-stable plan without releasing the mount.
+The QEMU probe injects both its marker write and flush failures, retries the
+same plan, and only then accepts sync; the next mutation must durably re-arm the
+recovery marker. Because every current transaction checkpoints synchronously,
+a clean sync needs no extra device operation.
 The recovery-marker activation plan is equally retry-stable: its exact
 checksummed write and filesystem-state flush are re-emitted after an I/O refusal
 and acknowledged only after the flush completes. Started commit plans and
 pending journal-tail writes likewise re-emit byte-identical operations until
 their final flushes are acknowledged; slots remain reserved throughout. The
 lease is closed before the separate Rust release, and either failure leaves the
-mount live. The private QEMU probe can now arm the marker and reach the
-dirty-to-clean unmount branch; that does not expose it to VFS callers. All VFS
-mutation operations therefore continue to return `EROFS`.
+mount live. The private QEMU probe can now arm the marker, sync it clean, and
+then unmount without another write; that does not expose mutation entry points
+to VFS callers. All VFS mutation operations therefore continue to return
+`EROFS`.

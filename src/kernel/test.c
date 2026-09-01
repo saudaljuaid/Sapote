@@ -4880,9 +4880,11 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
     if (sapfs_open(SAPFS_VOLUME_SYSTEM, "system/README.TXT",
             SAPFS_ACCESS_WRITE, &handle) != SAPFS_STATUS_READ_ONLY ||
         sapfs_create(SAPFS_VOLUME_SYSTEM, "system/ATTACK.TXT") !=
-            SAPFS_STATUS_READ_ONLY ||
-        sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_READ_ONLY) {
+            SAPFS_STATUS_READ_ONLY) {
         kernel_test_fail("ext4 recovery escaped the read-only VFS gate");
+    }
+    if (sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK) {
+        kernel_test_fail("clean ext4 sync failed");
     }
     if (!power_cut && !transaction_already_visible) {
         if (!ext4_backend_test_fail_storage_once(3U) ||
@@ -4900,11 +4902,26 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
             kernel_test_fail("ext4 pending allocation failure retry is invalid");
         }
     }
-    if ((!transaction_already_visible &&
-            (ext4_backend_transaction_probe(SAPFS_VOLUME_SYSTEM,
-                "system/README.TXT", UINT64_C(4096), &transaction_byte,
-                sizeof(transaction_byte), &written_bytes) != SAPFS_STATUS_OK ||
-             written_bytes != sizeof(transaction_byte))) ||
+    if (!transaction_already_visible &&
+        (ext4_backend_transaction_probe(SAPFS_VOLUME_SYSTEM,
+            "system/README.TXT", UINT64_C(4096), &transaction_byte,
+            sizeof(transaction_byte), &written_bytes) != SAPFS_STATUS_OK ||
+         written_bytes != sizeof(transaction_byte))) {
+        kernel_test_fail("ext4 private journal transaction probe failed");
+    }
+    if (!power_cut && !transaction_already_visible) {
+        if (!ext4_backend_test_fail_storage_once(1U) ||
+            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_IO ||
+            !ext4_backend_test_storage_failure_observed(
+                SAPOTE_EXT4_TEST_STORAGE_WRITE) ||
+            !ext4_backend_test_fail_storage_once(2U) ||
+            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_IO ||
+            !ext4_backend_test_storage_failure_observed(
+                SAPOTE_EXT4_TEST_STORAGE_FLUSH)) {
+            kernel_test_fail("ext4 sync retry is invalid");
+        }
+    }
+    if (sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
         sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "system/README.TXT", &stat) !=
             SAPFS_STATUS_OK || stat.size != UINT64_C(4097) ||
         sapfs_open(SAPFS_VOLUME_SYSTEM, "system/README.TXT",

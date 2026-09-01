@@ -63,6 +63,7 @@ static enum sapote_ext4_test_storage_kind ext4_test_storage_failure_kind =
 extern int32_t sapote_ext4_mount(uintptr_t context, uint64_t media_bytes,
     struct sapote_ext4_identity *identity, uintptr_t *mounted_out);
 extern int32_t sapote_ext4_prepare_unmount(uintptr_t mounted);
+extern int32_t sapote_ext4_sync(uintptr_t mounted);
 extern int32_t sapote_ext4_unmount(uintptr_t mounted);
 extern int32_t sapote_ext4_stat(uintptr_t mounted, const uint8_t *path,
     size_t path_length, struct sapote_ext4_metadata *metadata);
@@ -751,8 +752,24 @@ enum sapfs_status ext4_backend_unmount(enum sapfs_volume volume)
 
 enum sapfs_status ext4_backend_sync(enum sapfs_volume volume)
 {
-    return valid_volume(volume) && ext4_mounts[volume].active ?
-        SAPFS_STATUS_READ_ONLY : SAPFS_STATUS_NOT_MOUNTED;
+    struct ext4_mount_state *mount;
+    enum sapfs_status status;
+    enum sapfs_status close_status;
+
+    if (!valid_volume(volume)) {
+        return SAPFS_STATUS_INVALID_ARGUMENT;
+    }
+    mount = &ext4_mounts[volume];
+    if (!mount->active) {
+        return SAPFS_STATUS_NOT_MOUNTED;
+    }
+    status = begin_operation(mount, true);
+    if (status != SAPFS_STATUS_OK) {
+        return status;
+    }
+    status = map_status(sapote_ext4_sync(mount->rust_mount));
+    close_status = end_operation(mount, NULL);
+    return status != SAPFS_STATUS_OK ? status : close_status;
 }
 
 struct sapfs_drive_info ext4_backend_drive(enum sapfs_volume volume)

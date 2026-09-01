@@ -870,6 +870,15 @@ pub(crate) fn prepare_unmount(mounted: &mut Mounted) -> Result<(), Status> {
     unmount(mounted)
 }
 
+/// Force all retained journal state clean without releasing the live mount.
+///
+/// Every mutation commit is already synchronous through checkpoint. Sync adds
+/// the retry-stable final marker clear; a later mutation must durably re-arm
+/// recovery before it can start another journal transaction.
+pub(crate) fn sync(mounted: &mut Mounted) -> Result<(), Status> {
+    prepare_unmount(mounted)
+}
+
 /// Refuse to release a mount unless its retained journal state is idle and clean.
 pub(crate) fn unmount(mounted: &Mounted) -> Result<(), Status> {
     if mounted.pending_mutation.is_some()
