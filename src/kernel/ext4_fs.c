@@ -60,6 +60,13 @@ _Static_assert(offsetof(struct sapote_ext4_metadata, file_type) == 28U,
     "ext4 metadata C/Rust ABI offset drift");
 _Static_assert(sizeof(struct sapote_ext4_directory_entry) == 304U,
     "ext4 directory C/Rust ABI drift");
+_Static_assert(sizeof(struct sapote_ext4_identity) == 48U,
+    "ext4 identity C/Rust ABI drift");
+_Static_assert(offsetof(struct sapote_ext4_identity, recovered_transactions) ==
+        32U,
+    "ext4 identity C/Rust ABI offset drift");
+_Static_assert(offsetof(struct sapote_ext4_identity, recovery_performed) == 44U,
+    "ext4 recovery C/Rust ABI offset drift");
 
 static void zero_bytes(void *pointer, size_t length)
 {
@@ -512,6 +519,23 @@ struct sapfs_drive_info ext4_backend_drive(enum sapfs_volume volume)
 uint64_t ext4_backend_completion_count(enum sapfs_volume volume)
 {
     return valid_volume(volume) ? ext4_mounts[volume].completion_count : 0U;
+}
+
+bool ext4_backend_recovery_report(enum sapfs_volume volume,
+    struct sapote_ext4_recovery_report *report)
+{
+    const struct ext4_mount_state *mount;
+
+    if (!valid_volume(volume) || report == NULL ||
+        !ext4_mounts[volume].active) {
+        return false;
+    }
+    mount = &ext4_mounts[volume];
+    report->transactions = mount->identity.recovered_transactions;
+    report->replayed_blocks = mount->identity.replayed_blocks;
+    report->consumed_slots = mount->identity.consumed_slots;
+    report->performed = mount->identity.recovery_performed != 0U;
+    return true;
 }
 
 enum sapfs_status ext4_backend_open(enum sapfs_volume volume,

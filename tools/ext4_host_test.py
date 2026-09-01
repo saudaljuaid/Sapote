@@ -71,6 +71,7 @@ def fake_profile_image() -> bytearray:
     data[sb + 0x78 : sb + 0x78 + len(ext4.VOLUME_LABEL)] = ext4.VOLUME_LABEL.encode("ascii")
     data[sb + 0x88 : sb + 0x88 + len(ext4.LAST_MOUNTED)] = ext4.LAST_MOUNTED.encode("ascii")
     struct.pack_into("<I", data, sb + 0x108, ext4.FIXED_EPOCH)
+    struct.pack_into("<I", data, sb + 0x3FC, ext4._crc32c_raw(data[sb : sb + 0x3FC]))
     return data
 
 
@@ -80,6 +81,20 @@ class SuperblockTests(unittest.TestCase):
         self.assertEqual(report["block_size"], 4096)
         self.assertEqual(report["uuid"], ext4.FILESYSTEM_UUID)
         self.assertEqual(report["features"], sorted(ext4.FEATURES))
+        self.assertFalse(report["needs_recovery"])
+
+    def test_accepts_only_a_checksummed_recovery_marker(self) -> None:
+        data = fake_profile_image()
+        sb = 1024
+        struct.pack_into(
+            "<I", data, sb + 0x60, struct.unpack_from("<I", data, sb + 0x60)[0] | 0x0004
+        )
+        with self.assertRaisesRegex(ext4.Ext4ImageError, "superblock checksum"):
+            ext4.parse_superblock(data)
+        struct.pack_into("<I", data, sb + 0x3FC, ext4._crc32c_raw(data[sb : sb + 0x3FC]))
+        report = ext4.parse_superblock(data)
+        self.assertTrue(report["needs_recovery"])
+        self.assertIn("needs_recovery", report["features"])
 
     def test_refuses_truncation(self) -> None:
         with self.assertRaisesRegex(ext4.Ext4ImageError, "too small"):
@@ -235,6 +250,17 @@ class E2fsprogsIntegrationTests(unittest.TestCase):
             self.assertEqual(first_report["xattr"], {"name": ext4.XATTR_NAME, "value": ext4.XATTR_VALUE})
             self.assertEqual(first_report["journal"]["feature_masks"]["incompat"], "0x00000013")
             self.assertEqual(first_report["journal"]["checksum_type"], "crc32c")
+
+            recovery = root / "recovery-marker.img"
+            recovery_report = ext4.prepare_recovery_marker_image(first, recovery)
+            self.assertTrue(recovery_report["needs_recovery"])
+            self.assertEqual(recovery_report["journal"]["start_block"], 0)
+            self.assertEqual(
+                recovery_report["crash_point"],
+                "ext4-recovery-marker-durable-before-journal-start",
+            )
+            self.assertEqual(first.read_bytes()[:1024], recovery.read_bytes()[:1024])
+            self.assertEqual(first.read_bytes()[2048:], recovery.read_bytes()[2048:])
 
             rust_fixture = os.environ.get("SAPOTE_EXT4_RUST_FIXTURE")
             if rust_fixture:

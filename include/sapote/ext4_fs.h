@@ -47,6 +47,18 @@ struct sapote_ext4_directory_entry {
 struct sapote_ext4_identity {
     uint8_t label[16];
     uint8_t uuid[16];
+    uint32_t recovered_transactions;
+    uint32_t replayed_blocks;
+    uint32_t consumed_slots;
+    uint8_t recovery_performed;
+    uint8_t reserved[3];
+};
+
+struct sapote_ext4_recovery_report {
+    uint32_t transactions;
+    uint32_t replayed_blocks;
+    uint32_t consumed_slots;
+    bool performed;
 };
 
 /* Private Rust/C storage callbacks; valid only during a backend operation. */
@@ -70,6 +82,8 @@ enum sapfs_status ext4_backend_unmount(enum sapfs_volume volume);
 enum sapfs_status ext4_backend_sync(enum sapfs_volume volume);
 struct sapfs_drive_info ext4_backend_drive(enum sapfs_volume volume);
 uint64_t ext4_backend_completion_count(enum sapfs_volume volume);
+bool ext4_backend_recovery_report(enum sapfs_volume volume,
+    struct sapote_ext4_recovery_report *report);
 enum sapfs_status ext4_backend_open(enum sapfs_volume volume,
     const char *path, enum sapfs_access access, sapfs_handle *handle);
 enum sapfs_status ext4_backend_close(sapfs_handle handle);

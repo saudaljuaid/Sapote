@@ -35,7 +35,7 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	native-https
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 EXPECTED_TEST_SCENARIO_COUNT := 116
-EXPECTED_SHELL_ASSERTION_COUNT := 457
+EXPECTED_SHELL_ASSERTION_COUNT := 461
 
 CC := gcc
 LD := ld
@@ -85,6 +85,7 @@ HTTPS_HOST_TEST := $(TEST_BUILD_DIR)/https-client-host-test$(HOST_EXEEXT)
 HTTPS_HOST_OBJECT := $(TEST_BUILD_DIR)/https-client-host.o
 ZLIB_HOST_TEST := $(TEST_BUILD_DIR)/zlib-host-test
 EXT4_FIXTURE := $(TEST_BUILD_DIR)/ext4/sapote-ext4.raw
+EXT4_RECOVERY_FIXTURE := $(TEST_BUILD_DIR)/ext4-recovery/data.raw
 RUST_SOURCES := $(wildcard src/rust/*.rs)
 RUST_MANIFEST := src/rust/Cargo.toml
 RUST_LOCKFILE := src/rust/Cargo.lock
@@ -2164,6 +2165,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		native-audio) expected=5 ;; \
 		native-sdl) expected=7 ;; \
 		native-dynamic) expected=9 ;; \
+		ext4-recovery) expected=13 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -2268,6 +2270,12 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 				$(MAKE) '$(LINUX_UNAME_FIXTURE)' || exit 1; \
 				test -f '$(LINUX_UNAME_FIXTURE)' || exit 1; \
 				hardware='-boot order=d -blockdev driver=file,filename=$(LINUX_UNAME_FIXTURE),node-name=linux-uname-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=linux-uname-file,node-name=linux-uname-raw,read-only=on -device nvme,serial=sapote-linux-uname,drive=linux-uname-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
+			ext4-recovery) \
+				$(MAKE) '$(EXT4_FIXTURE)' || exit 1; \
+				$(PYTHON) tools/ext4_image.py prepare-recovery-marker \
+					'$(EXT4_FIXTURE)' '$(EXT4_RECOVERY_FIXTURE)' \
+					--report '$(EXT4_RECOVERY_FIXTURE).before.json' || exit 1; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(EXT4_RECOVERY_FIXTURE),node-name=ext4-recovery-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=ext4-recovery-file,node-name=ext4-recovery-raw,read-only=off -device nvme,serial=sapote-ext4-recovery,drive=ext4-recovery-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
 			redwood-proof-userland) \
 				$(MAKE) '$(REDWOOD_PROOF_USERLAND_IMAGE)' || exit 1; \
 				test -f '$(REDWOOD_PROOF_USERLAND_IMAGE)' || exit 1; \
@@ -2302,6 +2310,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 	timeout_seconds=15; reboot_control='-no-reboot'; \
 	case '$*' in \
 		fat32-*) timeout_seconds=45 ;; \
+		ext4-recovery) timeout_seconds=90 ;; \
 		native) timeout_seconds=180 ;; \
 		native-lua) timeout_seconds=150 ;; \
 		native-sqlite) timeout_seconds=240 ;; \
@@ -2680,6 +2689,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fqx 'SAPOTE' "$$log" || diagnostics_ok=false ;; \
 		fat32-handles) \
 			grep -Fxq 'ST FAT32 HANDLES generation stale double-close access bound clean' "$$log" || diagnostics_ok=false ;; \
+		ext4-recovery) \
+			grep -Fxq 'ST EXT4 RECOVERY marker cleared journal clean transactions 0 replay 0 slots 0 namespace verified read-only resources clean' "$$log" && \
+			$(PYTHON) tools/ext4_image.py inspect '$(EXT4_RECOVERY_FIXTURE)' \
+				--report '$(EXT4_RECOVERY_FIXTURE).after.json' || diagnostics_ok=false ;; \
 		thread-guard) \
 			grep -Fq 'ST THREAD guard 0x0000000800005000' "$$log" && \
 			grep -Fq '  vector=14 name=page fault' "$$log" && \

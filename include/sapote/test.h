@@ -128,6 +128,7 @@ enum kernel_test_scenario {
     KERNEL_TEST_NATIVE_SDL,
     KERNEL_TEST_NATIVE_DYNAMIC,
     KERNEL_TEST_NATIVE_HTTPS,
+    KERNEL_TEST_EXT4_RECOVERY,
     KERNEL_TEST_INVALID
 };
 
@@ -164,6 +165,7 @@ _Noreturn void kernel_test_complete_nvme(void);
 bool kernel_test_nvme_exit_self_test(void);
 _Noreturn void kernel_test_complete_filesystem(void);
 bool kernel_test_filesystem_exit_self_test(void);
+_Noreturn void kernel_test_complete_ext4_recovery(void);
 _Noreturn void kernel_test_complete_process(void);
 bool kernel_test_process_exit_self_test(void);
 _Noreturn void kernel_test_complete_linux_abi(void);

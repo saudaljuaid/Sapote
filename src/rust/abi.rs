@@ -135,7 +135,9 @@ pub(crate) fn ext4_block_flush(context: usize) -> bool {
 }
 
 const _: () = {
-    assert!(core::mem::size_of::<ext4::Identity>() == 32);
+    assert!(core::mem::size_of::<ext4::Identity>() == 48);
+    assert!(core::mem::offset_of!(ext4::Identity, recovered_transactions) == 32);
+    assert!(core::mem::offset_of!(ext4::Identity, recovery_performed) == 44);
     assert!(core::mem::size_of::<ext4::Metadata>() == 40);
     assert!(core::mem::align_of::<ext4::Metadata>() == 8);
     assert!(core::mem::offset_of!(ext4::Metadata, file_type) == 28);

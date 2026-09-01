@@ -106,6 +106,7 @@ jobs:
                   if-no-files-found: error
             - name: Prove faults and interrupts in QEMU
               run: |
+                  make qemu-test-ext4-recovery
                   make qemu-test-redwood-proof-userland-interactive
                   make qemu-test-fat32-data
                   make qemu-test-fat32-nested qemu-test-fat32-growth \

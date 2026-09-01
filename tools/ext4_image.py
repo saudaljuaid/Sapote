@@ -71,6 +71,7 @@ COMPAT_FEATURES = {
 }
 INCOMPAT_FEATURES = {
     0x0002: "filetype",
+    0x0004: "needs_recovery",
     0x0040: "extents",
     0x0080: "64bit",
     0x2000: "metadata_csum_seed",
@@ -220,6 +221,14 @@ def parse_superblock(image: bytes | bytearray) -> dict[str, object]:
     if label != VOLUME_LABEL:
         _refuse(f"volume label {label!r} does not match {VOLUME_LABEL!r}")
 
+    stored_checksum = _read_u32(sb, 0x3FC)
+    calculated_checksum = _crc32c_raw(sb[:0x3FC])
+    if stored_checksum != calculated_checksum:
+        _refuse(
+            "ext4 superblock checksum mismatch: "
+            f"stored=0x{stored_checksum:08x}, calculated=0x{calculated_checksum:08x}"
+        )
+
     return {
         "format": "ext4",
         "image_bytes": len(image),
@@ -235,6 +244,8 @@ def parse_superblock(image: bytes | bytearray) -> dict[str, object]:
         "label": label,
         "last_mounted": bytes(sb[0x88:0xC8]).split(b"\0", 1)[0].decode("ascii", "replace"),
         "features": sorted(enabled),
+        "needs_recovery": bool(incompat & 0x0004),
+        "superblock_checksum": f"0x{stored_checksum:08x}",
         "feature_masks": {
             "compat": f"0x{compat:08x}",
             "incompat": f"0x{incompat:08x}",
@@ -603,6 +614,53 @@ def build_image(output: Path) -> dict[str, object]:
     return report
 
 
+def prepare_recovery_marker_image(source: Path, output: Path) -> dict[str, object]:
+    """Clone a clean fixture at the crash point after ext4's marker flush.
+
+    The JBD2 superblock deliberately remains clean.  This is the precise state
+    reached when power is lost after the incompat-recovery marker becomes
+    durable but before the first journal transaction starts.
+    """
+    tools = require_tools()
+    source = source.resolve()
+    output = output.resolve()
+    source_report = inspect_image(source, tools=tools)
+    if source_report["needs_recovery"]:
+        _refuse("recovery-marker source is already dirty")
+    if source_report["journal"]["start_block"] != 0:
+        _refuse("recovery-marker source journal is not clean")
+    if source == output:
+        raise Ext4ImageError("recovery-marker output must not replace its source")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, output)
+    with output.open("r+b") as stream:
+        stream.seek(1024)
+        superblock = bytearray(stream.read(1024))
+        if len(superblock) != 1024:
+            _refuse("recovery-marker superblock is truncated")
+        incompat = _read_u32(superblock, 0x60)
+        if incompat & 0x0004:
+            _refuse("recovery-marker output is already dirty")
+        _write_u32(superblock, 0x60, incompat | 0x0004)
+        _write_u32(superblock, 0x3FC, _crc32c_raw(superblock[:0x3FC]))
+        stream.seek(1024)
+        stream.write(superblock)
+        stream.flush()
+        os.fsync(stream.fileno())
+    report = parse_superblock(output.read_bytes())
+    journal = _inspect_journal_superblock(output, tools)
+    if not report["needs_recovery"] or journal["start_block"] != 0:
+        _refuse("recovery-marker crash state was not constructed exactly")
+    report.update(
+        {
+            "crash_point": "ext4-recovery-marker-durable-before-journal-start",
+            "journal": journal,
+            "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
+        }
+    )
+    return report
+
+
 def _parse_stat(output: str, path: str) -> dict[str, object]:
     inode = re.search(r"Inode:\s*(\d+).*?Mode:\s*([0-7]+)", output)
     owner = re.search(r"User:\s*(\d+)\s+Group:\s*(\d+).*?Size:\s*(\d+)", output)
@@ -809,6 +867,13 @@ def _parser() -> argparse.ArgumentParser:
     inspect.add_argument("--report", type=Path)
     verify = subparsers.add_parser("verify", help="verify a fixture and print its SHA-256")
     verify.add_argument("image", type=Path)
+    recover = subparsers.add_parser(
+        "prepare-recovery-marker",
+        help="clone a clean fixture at the marker-durable, journal-clean crash point",
+    )
+    recover.add_argument("source", type=Path)
+    recover.add_argument("output", type=Path)
+    recover.add_argument("--report", type=Path)
     malform = subparsers.add_parser("malform", help="create one named refused image")
     malform.add_argument("kind", choices=MUTATIONS)
     malform.add_argument("source", type=Path)
@@ -826,6 +891,11 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "verify":
             report = inspect_image(args.image)
             print(f"verified ext4 {args.image}: sha256={report['sha256']}")
+        elif args.command == "prepare-recovery-marker":
+            _write_report(
+                prepare_recovery_marker_image(args.source, args.output),
+                args.report,
+            )
         elif args.command == "malform":
             malform_image(args.kind, args.source, args.output)
             print(f"wrote refused ext4 mutation {args.kind}: {args.output}")

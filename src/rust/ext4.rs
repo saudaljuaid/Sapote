@@ -32,6 +32,11 @@ const MAX_PENDING_DIRECTORIES: usize = 512;
 pub(crate) struct Identity {
     pub(crate) label: [u8; 16],
     pub(crate) uuid: [u8; 16],
+    pub(crate) recovered_transactions: u32,
+    pub(crate) replayed_blocks: u32,
+    pub(crate) consumed_slots: u32,
+    pub(crate) recovery_performed: u8,
+    pub(crate) reserved: [u8; 3],
 }
 
 /// Pointer-free metadata returned to C.
@@ -255,7 +260,17 @@ fn map_journal_error(error: JournalInodeMapError) -> Status {
     }
 }
 
-fn recover_dirty_journal(context: usize, journal: &JournalInodeMap) -> Result<(), Status> {
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct RecoveryReport {
+    transactions: u32,
+    replayed_blocks: u32,
+    consumed_slots: u32,
+}
+
+fn recover_dirty_journal(
+    context: usize,
+    journal: &JournalInodeMap,
+) -> Result<RecoveryReport, Status> {
     let physical_blocks = journal.physical_blocks();
     let slot_count = physical_blocks.len().checked_sub(1).ok_or(Status::Invalid)?;
     let ring_bytes = slot_count
@@ -295,6 +310,14 @@ fn recover_dirty_journal(context: usize, journal: &JournalInodeMap) -> Result<()
         &references,
     )
     .map_err(|_| Status::Invalid)?;
+    let report = RecoveryReport {
+        transactions: u32::try_from(recovery.committed_transactions())
+            .map_err(|_| Status::Range)?,
+        replayed_blocks: u32::try_from(recovery.replay_images().len())
+            .map_err(|_| Status::Range)?,
+        consumed_slots: u32::try_from(recovery.consumed_slots())
+            .map_err(|_| Status::Range)?,
+    };
     let journal_superblock_block = *physical_blocks.first().ok_or(Status::Invalid)?;
     let operations = recovery
         .checkpoint_plan(journal_superblock_block, journal.filesystem_superblock())
@@ -306,7 +329,8 @@ fn recover_dirty_journal(context: usize, journal: &JournalInodeMap) -> Result<()
     .map_err(|error| match error {
         JournalExecutionError::AddressOverflow => Status::Range,
         JournalExecutionError::Storage(_) => Status::Io,
-    })
+    })?;
+    Ok(report)
 }
 
 fn validate_xattrs(filesystem: &Ext4, path: &[u8]) -> Result<(), Status> {
@@ -381,8 +405,11 @@ pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, I
     validate_profile(context, media_bytes)?;
     let mut filesystem = Ext4::load(Box::new(SapoteReader { context })).map_err(map_error)?;
     let mut journal = load_journal_inode_map(&filesystem).map_err(map_journal_error)?;
+    let mut recovery = RecoveryReport::default();
+    let mut recovery_performed = 0u8;
     if journal.filesystem_needs_recovery() {
-        recover_dirty_journal(context, &journal)?;
+        recovery = recover_dirty_journal(context, &journal)?;
+        recovery_performed = 1;
         drop(journal);
         drop(filesystem);
         validate_profile(context, media_bytes)?;
@@ -399,6 +426,11 @@ pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, I
     let identity = Identity {
         label: *filesystem.label().as_bytes(),
         uuid: *filesystem.uuid().as_bytes(),
+        recovered_transactions: recovery.transactions,
+        replayed_blocks: recovery.replayed_blocks,
+        consumed_slots: recovery.consumed_slots,
+        recovery_performed,
+        reserved: [0; 3],
     };
     Ok((Box::new(Mounted { filesystem }), identity))
 }

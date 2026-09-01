@@ -15,6 +15,7 @@
 #include <sapote/cpu.h>
 #include <sapote/device_substrate.h>
 #include <sapote/dma.h>
+#include <sapote/ext4_fs.h>
 #include <sapote/framebuffer.h>
 #include <sapote/filesystem.h>
 #include <sapote/fat32_fs.h>
@@ -578,6 +579,9 @@ static enum kernel_test_scenario scenario_from_value(
     if (token_equals(value, length, "native-https")) {
         return KERNEL_TEST_NATIVE_HTTPS;
     }
+    if (token_equals(value, length, "ext4-recovery")) {
+        return KERNEL_TEST_EXT4_RECOVERY;
+    }
 
     return KERNEL_TEST_INVALID;
 }
@@ -769,6 +773,7 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
     case KERNEL_TEST_NATIVE_SDL: return UINT8_C(0x83);
     case KERNEL_TEST_NATIVE_DYNAMIC: return UINT8_C(0x84);
     case KERNEL_TEST_NATIVE_HTTPS: return UINT8_C(0x85);
+    case KERNEL_TEST_EXT4_RECOVERY: return UINT8_C(0x86);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -4734,6 +4739,7 @@ void kernel_test_run(
     case KERNEL_TEST_NATIVE_SDL:
     case KERNEL_TEST_NATIVE_DYNAMIC:
     case KERNEL_TEST_NATIVE_HTTPS:
+    case KERNEL_TEST_EXT4_RECOVERY:
         /* Deferred until Sapote Redwood and the Boot Ledger are published. */
         return;
     case KERNEL_TEST_MULTIPROCESS_SLOTS:
@@ -4757,6 +4763,59 @@ _Noreturn void kernel_test_complete_normal(void)
         kernel_test_fail("normal completion used outside the normal scenario");
     }
 
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_ext4_recovery(void)
+{
+    static const uint8_t expected[] =
+        "Sapote deterministic ext4 fixture\n";
+    struct sapote_ext4_recovery_report recovery = {0};
+    const struct sapfs_drive_info drive = sapfs_drive(SAPFS_VOLUME_SYSTEM);
+    struct sapfs_stat stat = {0};
+    sapfs_handle handle = 0U;
+    uint8_t bytes[sizeof(expected)] = {0};
+    size_t read_bytes = 0U;
+    bool contents_match = true;
+    const uint64_t before = sapfs_completion_count(SAPFS_VOLUME_SYSTEM);
+
+    if (active_scenario != KERNEL_TEST_EXT4_RECOVERY) {
+        kernel_test_fail("ext4 recovery completion used outside its scenario");
+    }
+    if (!drive.present || !drive.mounted || !drive.read_only || !drive.healthy ||
+        !ext4_backend_recovery_report(SAPFS_VOLUME_SYSTEM, &recovery) ||
+        !recovery.performed || recovery.transactions != 0U ||
+        recovery.replayed_blocks != 0U || recovery.consumed_slots != 0U) {
+        kernel_test_fail("ext4 marker-only recovery report is invalid");
+    }
+    if (sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "system/README.TXT", &stat) !=
+            SAPFS_STATUS_OK || stat.directory || !stat.read_only ||
+        stat.size != sizeof(expected) - 1U ||
+        sapfs_open(SAPFS_VOLUME_SYSTEM, "system/README.TXT",
+            SAPFS_ACCESS_READ, &handle) != SAPFS_STATUS_OK ||
+        sapfs_read(handle, bytes, sizeof(bytes), &read_bytes) !=
+            SAPFS_STATUS_OK || read_bytes != sizeof(expected) - 1U) {
+        kernel_test_fail("ext4 recovered namespace could not be read");
+    }
+    for (size_t index = 0U; index < read_bytes; ++index) {
+        if (bytes[index] != expected[index]) {
+            contents_match = false;
+        }
+    }
+    if (!contents_match || sapfs_close(handle) != SAPFS_STATUS_OK ||
+        sapfs_close(handle) != SAPFS_STATUS_STALE_HANDLE ||
+        sapfs_completion_count(SAPFS_VOLUME_SYSTEM) <= before) {
+        kernel_test_fail("ext4 recovery read leaked or changed data");
+    }
+    if (sapfs_open(SAPFS_VOLUME_SYSTEM, "system/README.TXT",
+            SAPFS_ACCESS_WRITE, &handle) != SAPFS_STATUS_READ_ONLY ||
+        sapfs_create(SAPFS_VOLUME_SYSTEM, "system/ATTACK.TXT") !=
+            SAPFS_STATUS_READ_ONLY ||
+        sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_READ_ONLY) {
+        kernel_test_fail("ext4 recovery escaped the read-only VFS gate");
+    }
+    console_write("ST EXT4 RECOVERY marker cleared journal clean transactions 0 ");
+    console_write("replay 0 slots 0 namespace verified read-only resources clean\n");
     kernel_test_pass();
 }
 
@@ -8918,6 +8977,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "native-dynamic";
     case KERNEL_TEST_NATIVE_HTTPS:
         return "native-https";
+    case KERNEL_TEST_EXT4_RECOVERY:
+        return "ext4-recovery";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

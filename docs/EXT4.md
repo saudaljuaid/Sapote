@@ -149,6 +149,13 @@ the same ordered cleanup before the marker clears. Tests cover wrap, cross-
 transaction revocation, an uncommitted tail, a corrupt committed record, and
 ext4/JBD2 state disagreement.
 
+`qemu-test-ext4-recovery` builds that exact marker-only crash image from the
+deterministic fixture, boots it as a writable 4 KiB NVMe namespace, and requires
+the guest to report that the marker was cleared with a clean journal and zero
+replayed transactions. The guest verifies the known namespace and all mutation
+entry points remain read-only. After QEMU closes the disk, the host independently
+runs the strict fixture inspector and read-only e2fsck over the resulting bytes.
+
 The caller must supply a distinct physical journal block for the descriptor,
 each metadata image, and the commit. The resulting operation list has one legal
 order:
@@ -209,6 +216,8 @@ overlay and requires discarding the mutated ext4plus object as well.
 
 The staging layer is not yet connected to VFS mutations or classified into
 ordered file data versus journaled metadata. Allocation rollback and
-revocations, clean unmount/fsync, write-failure injection, and deliberate
-recovery power-cut QEMU evidence are not complete. All VFS mutation operations
-therefore continue to return `EROFS`.
+revocations, clean unmount/fsync, write-failure injection, and the deliberate
+power-cut matrix at every commit and recovery durability boundary are not
+complete; the QEMU proof above covers only the marker-durable/journal-clean
+recovery point. All VFS mutation operations therefore continue to return
+`EROFS`.
