@@ -7,9 +7,10 @@
 #include <stdint.h>
 
 #include <sapote/tls.h>
+#include "package_upload.h"
 
 #define SAPOTE_PACKAGE_FETCH_SHA256_BYTES 32U
-#define SAPOTE_PACKAGE_FETCH_MAX_BYTES (256U * 1024U * 1024U)
+#define SAPOTE_PACKAGE_FETCH_MAX_BYTES SAPOTE_PACKAGE_UPLOAD_MAX_BYTES
 
 enum sapote_package_fetch_status {
     SAPOTE_PACKAGE_FETCH_OK = 0,
@@ -22,7 +23,21 @@ enum sapote_package_fetch_status {
     SAPOTE_PACKAGE_FETCH_DIGEST,
     SAPOTE_PACKAGE_FETCH_SYNC,
     SAPOTE_PACKAGE_FETCH_PUBLISH,
+    SAPOTE_PACKAGE_FETCH_UPLOAD_OPEN,
+    SAPOTE_PACKAGE_FETCH_UPLOAD_SEAL,
     SAPOTE_PACKAGE_FETCH_COUNT
+};
+
+struct sapote_package_fetch_upload_request {
+    const char *hostname;
+    uint16_t port;
+    uint16_t reserved;
+    const char *path;
+    const br_x509_trust_anchor *trust_anchors;
+    size_t trust_anchor_count;
+    uint64_t deadline_ns;
+    size_t expected_bytes;
+    const uint8_t *expected_sha256;
 };
 
 struct sapote_package_fetch_request {
@@ -48,8 +63,10 @@ struct sapote_package_fetch_report {
     long transport_error;
     long storage_error;
     long cleanup_error;
+    sapote_handle_t upload;
     size_t bytes_received;
     uint8_t sha256[SAPOTE_PACKAGE_FETCH_SHA256_BYTES];
+    uint32_t upload_flags;
     bool published;
     bool durable;
 };
@@ -60,6 +77,18 @@ struct sapote_package_fetch_report {
  */
 enum sapote_package_fetch_status sapote_package_fetch_stage(
     const struct sapote_package_fetch_request *request,
+    struct sapote_package_fetch_report *report
+);
+
+/*
+ * Streams a package directly into a kernel-owned upload handle. Success leaves
+ * report.upload open, exactly sealed to the supplied expected metadata, and
+ * durable. Package control must independently bind that metadata to an
+ * admitted signed repository before use. The caller must transfer the handle
+ * to package control or close it.
+ */
+enum sapote_package_fetch_status sapote_package_fetch_upload(
+    const struct sapote_package_fetch_upload_request *request,
     struct sapote_package_fetch_report *report
 );
 

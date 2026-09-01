@@ -80,6 +80,7 @@ PACKAGE_SERVICE_HOST_TEST := $(TEST_BUILD_DIR)/package-service-host-test
 PACKAGE_MANAGER_HOST_TEST := $(TEST_BUILD_DIR)/package-manager-host-test
 PACKAGE_TRUST_HOST_TEST := $(TEST_BUILD_DIR)/package-trust-host-test
 PACKAGE_FETCH_HOST_TEST := $(TEST_BUILD_DIR)/package-fetch-host-test
+PACKAGE_UPLOAD_HOST_TEST := $(TEST_BUILD_DIR)/package-upload-host-test
 TLS_HOST_TEST := $(TEST_BUILD_DIR)/tls-client-host-test$(HOST_EXEEXT)
 TLS_HOST_OBJECT := $(TEST_BUILD_DIR)/tls-client.o
 TLS_HOST_WRAPPER_OBJECT := $(TEST_BUILD_DIR)/tls-wrapper.o
@@ -384,7 +385,7 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d) $(MONOCYPHER_OBJECTS:.o=.d) \
 # They never create a file of their own name, so they rerun regardless.
 .PHONY: all audio-wav-tests capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios dynamic-elf-tests ext4-images ext4-tests fat32-images force-package-trust hooks https-tests \
 	iso kernel lint native-apps native-audio-proof native-dynamic-proof native-https-proof native-sdl-proof port-tests qemu-port-tests reproducible-sdk run \
-	package-fetch-tests package-manager-tests package-repository-tests package-service-tests package-state-tests package-transaction-tests package-trust-asset-tests package-trust-tests qemu-test-ext4-powercuts screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests zlib-tests
+	package-fetch-tests package-manager-tests package-repository-tests package-service-tests package-state-tests package-transaction-tests package-trust-asset-tests package-trust-tests package-upload-tests qemu-test-ext4-powercuts screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests zlib-tests
 
 all: kernel
 
@@ -1153,6 +1154,19 @@ $(PACKAGE_SERVICE_HOST_TEST): tools/package-service-host-test.c \
 package-service-tests: $(PACKAGE_SERVICE_HOST_TEST)
 	$(PACKAGE_SERVICE_HOST_TEST)
 
+$(PACKAGE_UPLOAD_HOST_TEST): tools/package-upload-host-test.c \
+		src/kernel/package_upload.c src/kernel/package_state.c \
+		include/sapote/package_upload.h include/sapote/package_state.h \
+		include/sapote/fat32_fs.h
+	mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -Wshadow \
+		-Wundef -Wstrict-prototypes -Wmissing-prototypes -Iinclude \
+		tools/package-upload-host-test.c src/kernel/package_upload.c \
+		src/kernel/package_state.c -o $@
+
+package-upload-tests: $(PACKAGE_UPLOAD_HOST_TEST)
+	$(PACKAGE_UPLOAD_HOST_TEST)
+
 $(TEST_BUILD_DIR)/monocypher/monocypher.o: \
 		vendor/monocypher/src/monocypher.c vendor/monocypher/src/monocypher.h
 	mkdir -p $(dir $@)
@@ -1277,6 +1291,7 @@ https-tests: $(HTTPS_HOST_TEST) tools/https_host_test.py \
 
 $(PACKAGE_FETCH_HOST_TEST): tools/package-fetch-host-test.c \
 		sdk/src/package_fetch.c sdk/include/sapote/package_fetch.h \
+		sdk/include/sapote/package_upload.h \
 		sdk/include/sapote/tls.h include/sapote/abi.h \
 		$(TLS_HOST_BEARSSL_LIB)
 	mkdir -p $(dir $@)
@@ -1301,7 +1316,7 @@ verify: toolchain lint
 	$(MAKE) wall-clock-tests ext4-tests package-repository-tests \
 		package-transaction-tests package-state-tests package-service-tests \
 		package-trust-asset-tests package-trust-tests package-manager-tests \
-		package-fetch-tests \
+		package-fetch-tests package-upload-tests \
 		dynamic-elf-tests \
 		https-tests tls-tests zlib-tests
 	$(PYTHON) tools/verify-ui-assets.py

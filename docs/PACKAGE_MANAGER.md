@@ -135,6 +135,12 @@ sorted owned paths whose authenticated bytes match the installed length and
 digest. The SDK's `sapote_package_fetch_stage()` supplies bounded HTTPS
 streaming, incremental SHA-256, temporary-file cleanup, and two-barrier atomic
 publication for inert repository/package bytes. Platform trust provisioning is
-also wired at boot. A privileged native ABI endpoint, end-user client commands,
-Store presentation, and writable-ext4 integration remain outside this parser
-and planner.
+also wired at boot. The `packages` native capability and typed upload handle now
+provide a non-path-based HTTPS ingress: four kernel-owned slots accept 4 KiB
+writes up to the VFS's real 16 MiB file bound, seal only to an exact privileged
+caller-supplied length and digest, flush before use, and clean up on final close
+or process exit. Sealing proves stable bytes, not the authority of those
+expected values. Transaction-control calls must consume the handle while
+binding it to an admitted repository record; those calls, end-user client
+commands, Store presentation, and writable-ext4 integration remain outside
+this parser and planner.

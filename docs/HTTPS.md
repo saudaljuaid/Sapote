@@ -86,7 +86,13 @@ blocking lower-level TLS read from a second thread. The host adapter reports
 `HTTPS HANDLES clean` after every case.
 
 `apps/native-https/` is the freestanding Ring 3 proof client. It exercises the
-streaming SHA-256 staging path, both durability barriers, and atomic publication.
+streaming SHA-256 staging path, both durability barriers, atomic publication,
+and a second HTTPS transfer directly into a kernel-owned package-upload handle.
+The upload is accepted only after its privileged caller-supplied length and
+SHA-256 match and the data-volume flush completes; closing the typed handle
+durably removes the private staging file. This proof uses a fixed expected
+digest. The unfinished package controller must still bind these values to an
+admitted signed repository record before installation.
 `tools/https_network_fixture.py` is its offline raw-Ethernet peer for QEMU's
 dgram backend: it supplies DHCP/ARP/DNS, a TCP peer on 10.0.2.20:443, a Python
 `ssl.MemoryBIO` TLS 1.2 server using the committed certificate, strict request
@@ -105,7 +111,7 @@ and isolated System/Data images.
 `qemu-test-native-https` boots that package with the offline peer under QEMU's
 `max` CPU profile and pins the virtual RTC to 2026-08-31 inside the committed
 test certificate interval. The guest
-must emit its start, authenticated-download, durable-output, and final success
+must emit its start, authenticated-download, durable-output, kernel-upload, and final success
 markers exactly once, including the strong-hardware-entropy marker. The kernel
 reopens `HTTPSAPP/HTTPS.TXT`, checks the exact
 33-byte body, requires normal process exit, and requires zero native-process,
@@ -117,7 +123,8 @@ port 443, and refuses captures containing the request, HTTP status line, or
 body in plaintext.
 
 This is an in-guest TLS 1.2/HTTPS download over Sapote DNS and TCP. The client
-writes an exact-digest, durably staged inert body to its Data namespace without
+writes an exact-digest, durably staged inert body to its Data namespace and
+separately proves the non-path-based privileged upload boundary without
 installing or executing it. There is no general
 Internet, redirect, chunked/compressed response, HTTP/2, mutable system trust
 store, OCSP/CRL, certificate pin update, or persistent clock anti-rollback

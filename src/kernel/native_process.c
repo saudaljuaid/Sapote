@@ -21,6 +21,7 @@
 #include <sapote/network.h>
 #include <sapote/keyboard.h>
 #include <sapote/paging.h>
+#include <sapote/package_upload.h>
 #include <sapote/process.h>
 #include <sapote/random.h>
 #include <sapote/timer.h>
@@ -84,6 +85,10 @@ _Static_assert(SAPOTE_AUDIO_MAX_STREAMS == AUDIO_NATIVE_STREAMS,
     "kernel and public audio stream bounds differ");
 _Static_assert(SAPOTE_AUDIO_VOLUME_UNITY == AUDIO_NATIVE_VOLUME_UNITY,
     "kernel and public audio gain scales differ");
+_Static_assert(SAPOTE_PACKAGE_UPLOAD_WRITE_MAX == PACKAGE_UPLOAD_WRITE_MAX,
+    "kernel and public package-upload write bounds differ");
+_Static_assert(SAPOTE_PACKAGE_UPLOAD_MAX_BYTES == PACKAGE_UPLOAD_MAX_BYTES,
+    "kernel and public package-upload size bounds differ");
 
 enum native_thread_state {
     NATIVE_THREAD_UNUSED = 0,
@@ -801,6 +806,38 @@ static int64_t filesystem_error(enum sapfs_status status)
     }
 }
 
+static int64_t package_upload_error(
+    enum package_upload_status status,
+    enum sapfs_status filesystem_status
+)
+{
+    switch (status) {
+    case PACKAGE_UPLOAD_STATUS_OK:
+        return 0;
+    case PACKAGE_UPLOAD_STATUS_NOT_INITIALIZED:
+        return -SAPOTE_ENOTSUP;
+    case PACKAGE_UPLOAD_STATUS_BUSY:
+        return -SAPOTE_EBUSY;
+    case PACKAGE_UPLOAD_STATUS_NO_SLOT:
+        return -SAPOTE_ENOMEM;
+    case PACKAGE_UPLOAD_STATUS_STALE:
+        return -SAPOTE_ESTALE;
+    case PACKAGE_UPLOAD_STATUS_DIGEST:
+        return -SAPOTE_EACCES;
+    case PACKAGE_UPLOAD_STATUS_FILESYSTEM:
+        return filesystem_error(filesystem_status);
+    case PACKAGE_UPLOAD_STATUS_DURABILITY:
+        return -SAPOTE_EIO;
+    case PACKAGE_UPLOAD_STATUS_NULL_ARGUMENT:
+    case PACKAGE_UPLOAD_STATUS_STATE:
+    case PACKAGE_UPLOAD_STATUS_RANGE:
+    case PACKAGE_UPLOAD_STATUS_LENGTH:
+    case PACKAGE_UPLOAD_STATUS_COUNT:
+    default:
+        return -SAPOTE_EINVAL;
+    }
+}
+
 static void window_finalize_if_unreferenced(struct native_process *process)
 {
     if (process != NULL && process->window.allocated &&
@@ -931,6 +968,12 @@ static bool close_resource(
             cpu_interrupt_enable();
         }
         return status == AUDIO_NATIVE_OK;
+    }
+    case SAPOTE_HANDLE_PACKAGE_UPLOAD: {
+        struct package_upload_report report;
+
+        return package_upload_close(process->generation, resource->words[0],
+            &report) == PACKAGE_UPLOAD_STATUS_OK;
     }
     default:
         return false;
@@ -4642,6 +4685,144 @@ static int64_t syscall_audio_drain(
     return 0;
 }
 
+static int64_t syscall_package_upload_open(struct native_process *process)
+{
+    struct package_upload_report report;
+    struct native_resource resource = {{0U, 0U, 0U, 0U}};
+    sapote_handle_t handle;
+
+    if ((process->manifest.capabilities & SAPOTE_CAP_PACKAGES) == 0U) {
+        return -SAPOTE_EACCES;
+    }
+    if (process->handles.active_handles >= process->handles.limit ||
+        process->handles.active_objects >= process->handles.limit) {
+        return -SAPOTE_ENOMEM;
+    }
+    cpu_interrupt_enable();
+    enum package_upload_status upload_status = package_upload_open(
+        process->generation, &report);
+    if (upload_status == PACKAGE_UPLOAD_STATUS_NOT_INITIALIZED &&
+        package_upload_initialize(&report) == PACKAGE_UPLOAD_STATUS_OK) {
+        upload_status = package_upload_open(process->generation, &report);
+    }
+    cpu_interrupt_disable();
+    if (upload_status != PACKAGE_UPLOAD_STATUS_OK) {
+        return package_upload_error(upload_status, report.filesystem_status);
+    }
+    resource.words[0] = report.token;
+    enum native_handle_status handle_status = native_handle_install(
+        &process->handles, SAPOTE_HANDLE_PACKAGE_UPLOAD, &resource, &handle);
+
+    if (handle_status != NATIVE_HANDLE_OK) {
+        cpu_interrupt_enable();
+        (void)package_upload_close(process->generation, report.token, &report);
+        cpu_interrupt_disable();
+        return handle_error(handle_status);
+    }
+    if (process->handles.active_handles > process->peak_handles) {
+        process->peak_handles = process->handles.active_handles;
+    }
+    return (int64_t)handle;
+}
+
+static int64_t syscall_package_upload_write(
+    struct native_process *process,
+    uint64_t request_address
+)
+{
+    struct sapote_package_upload_write_request request;
+    struct package_upload_report report;
+    struct native_resource *resource;
+    size_t written = 0U;
+
+    if ((process->manifest.capabilities & SAPOTE_CAP_PACKAGES) == 0U) {
+        return -SAPOTE_EACCES;
+    }
+    if (!copy_from_user(process, &request, request_address,
+            sizeof(request))) {
+        return -SAPOTE_EFAULT;
+    }
+    if (request.size != sizeof(request) ||
+        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
+        request.length > SAPOTE_PACKAGE_UPLOAD_WRITE_MAX) {
+        return -SAPOTE_EINVAL;
+    }
+    if (request.length != 0U && !copy_from_user(process, process->transfer,
+            request.buffer, request.length)) {
+        return -SAPOTE_EFAULT;
+    }
+    enum native_handle_status handle_status = native_handle_resolve(
+        &process->handles, request.handle, SAPOTE_HANDLE_PACKAGE_UPLOAD,
+        &resource);
+
+    if (handle_status != NATIVE_HANDLE_OK) {
+        return handle_error(handle_status);
+    }
+    cpu_interrupt_enable();
+    enum package_upload_status upload_status = package_upload_write(
+        process->generation, resource->words[0], process->transfer,
+        request.length, &written, &report);
+    cpu_interrupt_disable();
+    return upload_status == PACKAGE_UPLOAD_STATUS_OK ? (int64_t)written :
+        package_upload_error(upload_status, report.filesystem_status);
+}
+
+static int64_t syscall_package_upload_seal(
+    struct native_process *process,
+    uint64_t request_address
+)
+{
+    struct sapote_package_upload_seal_request request;
+    struct package_upload_report report;
+    struct native_resource *resource;
+
+    if ((process->manifest.capabilities & SAPOTE_CAP_PACKAGES) == 0U) {
+        return -SAPOTE_EACCES;
+    }
+    if (!validate_user_range(process, request_address, sizeof(request), true) ||
+        !copy_from_user(process, &request, request_address, sizeof(request))) {
+        return -SAPOTE_EFAULT;
+    }
+    if (request.size != sizeof(request) ||
+        request.version != SAPOTE_ABI_VERSION || request.expected_bytes == 0U ||
+        request.expected_bytes > SAPOTE_PACKAGE_UPLOAD_MAX_BYTES ||
+        request.actual_bytes != 0U || request.result_flags != 0U ||
+        request.reserved != 0U) {
+        return -SAPOTE_EINVAL;
+    }
+    for (size_t index = 0U; index < sizeof(request.actual_sha256); ++index) {
+        if (request.actual_sha256[index] != 0U) {
+            return -SAPOTE_EINVAL;
+        }
+    }
+    enum native_handle_status handle_status = native_handle_resolve(
+        &process->handles, request.handle, SAPOTE_HANDLE_PACKAGE_UPLOAD,
+        &resource);
+
+    if (handle_status != NATIVE_HANDLE_OK) {
+        return handle_error(handle_status);
+    }
+    cpu_interrupt_enable();
+    enum package_upload_status upload_status = package_upload_seal(
+        process->generation, resource->words[0], request.expected_bytes,
+        request.expected_sha256, &report);
+    cpu_interrupt_disable();
+    request.actual_bytes = report.byte_count;
+    for (size_t index = 0U; index < sizeof(request.actual_sha256); ++index) {
+        request.actual_sha256[index] = report.sha256[index];
+    }
+    if (report.sealed) {
+        request.result_flags |= SAPOTE_PACKAGE_UPLOAD_SEALED;
+    }
+    if (report.durable) {
+        request.result_flags |= SAPOTE_PACKAGE_UPLOAD_DURABLE;
+    }
+    if (!copy_to_user(process, request_address, &request, sizeof(request))) {
+        return -SAPOTE_EFAULT;
+    }
+    return package_upload_error(upload_status, report.filesystem_status);
+}
+
 static int64_t syscall_cancel(
     struct native_process *process,
     sapote_handle_t handle
@@ -5205,6 +5386,12 @@ static int64_t dispatch_syscall(
         return syscall_audio_volume(process, frame->rdi);
     case SAPOTE_SYS_AUDIO_DRAIN:
         return syscall_audio_drain(process, frame->rdi, frame->rsi);
+    case SAPOTE_SYS_PACKAGE_UPLOAD_OPEN:
+        return syscall_package_upload_open(process);
+    case SAPOTE_SYS_PACKAGE_UPLOAD_WRITE:
+        return syscall_package_upload_write(process, frame->rdi);
+    case SAPOTE_SYS_PACKAGE_UPLOAD_SEAL:
+        return syscall_package_upload_seal(process, frame->rdi);
     default:
         return -SAPOTE_ENOSYS;
     }
@@ -5936,6 +6123,7 @@ bool native_process_resources_released(void)
         shared_code_live_pages == 0U &&
         !native_syscall_is_active() && !process_user_boundary_active() &&
         audio_native_resources_released() &&
+        package_upload_resources_released() &&
         interrupt_process_gate_resources_released() &&
         (!paging.active ||
             (cpu_read_cr3() & ~(PAGING_PAGE_SIZE - 1U)) ==

@@ -55,6 +55,33 @@ int main(void)
     }
     puts("SAPOTE HTTPSAPP PHASE authenticated-download PASS");
     puts("SAPOTE HTTPSAPP PHASE durable-output PASS");
-    puts("SAPOTE HTTPSAPP PASS hostname time trust length close");
+    const struct sapote_package_fetch_upload_request upload_request = {
+        "repo.sapote.test", HTTPS_PORT, 0U, "/artifact.bin",
+        sapote_https_test_anchors,
+        sizeof(sapote_https_test_anchors) /
+            sizeof(sapote_https_test_anchors[0]),
+        deadline(), EXPECTED_BODY_BYTES, expected_sha256
+    };
+
+    status = sapote_package_fetch_upload(&upload_request, &report);
+    if (status != SAPOTE_PACKAGE_FETCH_OK || !report.durable ||
+        report.upload == SAPOTE_HANDLE_INVALID ||
+        report.upload_flags != (SAPOTE_PACKAGE_UPLOAD_SEALED |
+            SAPOTE_PACKAGE_UPLOAD_DURABLE)) {
+        printf("SAPOTE HTTPSAPP UPLOAD REFUSED %s https=%s storage=%ld "
+            "cleanup=%ld flags=%u\n",
+            sapote_package_fetch_status_string(status),
+            sapote_https_status_string(report.https_status),
+            report.storage_error, report.cleanup_error, report.upload_flags);
+        if (report.upload != SAPOTE_HANDLE_INVALID) {
+            (void)sapote_package_upload_close(report.upload);
+        }
+        return 22;
+    }
+    if (sapote_package_upload_close(report.upload) < 0) {
+        return 23;
+    }
+    puts("SAPOTE HTTPSAPP PHASE kernel-upload PASS");
+    puts("SAPOTE HTTPSAPP PASS hostname time trust length close upload");
     return 0;
 }

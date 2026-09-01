@@ -14,6 +14,7 @@
 #include <sapote/native_process.h>
 #include <sapote/package_platform_trust.h>
 #include <sapote/package_service.h>
+#include <sapote/package_upload.h>
 #include <sapote/shell.h>
 #include <sapote/test.h>
 #include <sapote/ui.h>
@@ -70,6 +71,20 @@ static void recover_package_state(void)
     console_write(" verified files ");
     console_write_u64(report.files_verified);
     console_write(" resources released\n");
+}
+
+static void initialize_package_uploads(void)
+{
+    struct package_upload_report report;
+    enum package_upload_status status = package_upload_initialize(&report);
+
+    if (status != PACKAGE_UPLOAD_STATUS_OK) {
+        console_write("Sapote: package upload service unavailable: ");
+        console_write(package_upload_status_string(status));
+        console_write("; filesystem ");
+        console_write(sapfs_status_string(report.filesystem_status));
+        console_putc('\n');
+    }
 }
 
 static void report_ledger_refusal(
@@ -156,6 +171,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     sapfs_initialize();
     if (installed_context.test_scenario == KERNEL_TEST_NORMAL) {
         recover_package_state();
+        initialize_package_uploads();
     }
     if (!native_process_self_test(&native_process_tests)) {
         console_panic("native userspace foundation self-test failed");

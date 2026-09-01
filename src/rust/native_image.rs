@@ -15,7 +15,7 @@ const MIN_ADDRESS: u64 = 0x0000_4000_0000_0000;
 const MAX_ADDRESS: u64 = 0x0000_4001_0000_0000;
 const PAGE: u64 = 4096;
 const MANIFEST_MAGIC: &[u8; 8] = b"SAPOTEA1";
-const CAPABILITIES_V1: u64 = (1u64 << 11) - 1;
+const CAPABILITIES_V1: u64 = (1u64 << 12) - 1;
 const MIN_MEMORY: u64 = 64 * 1024;
 const MAX_MEMORY: u64 = 256 * 1024 * 1024;
 const MAX_HANDLES: u16 = 128;
@@ -641,6 +641,13 @@ mod tests {
         let mut bytes = manifest();
         bytes[28..36].copy_from_slice(&(1u64 << 10).to_le_bytes());
         assert_eq!(parse_manifest(&bytes).unwrap().capabilities, 1u64 << 10);
+    }
+
+    #[test]
+    fn manifest_accepts_package_capability() {
+        let mut bytes = manifest();
+        bytes[28..36].copy_from_slice(&(1u64 << 11).to_le_bytes());
+        assert_eq!(parse_manifest(&bytes).unwrap().capabilities, 1u64 << 11);
     }
 
     #[test]

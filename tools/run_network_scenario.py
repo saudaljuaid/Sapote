@@ -303,7 +303,8 @@ def run(args: argparse.Namespace) -> int:
             "SAPOTE HTTPSAPP PHASE start\n",
             "SAPOTE HTTPSAPP PHASE authenticated-download PASS\n",
             "SAPOTE HTTPSAPP PHASE durable-output PASS\n",
-            "SAPOTE HTTPSAPP PASS hostname time trust length close\n",
+            "SAPOTE HTTPSAPP PHASE kernel-upload PASS\n",
+            "SAPOTE HTTPSAPP PASS hostname time trust length close upload\n",
             "Sapote: HTTPS strong hardware entropy passed\n",
             "Sapote: HTTPS TLS 1.2 hostname time trust framing close and "
             "teardown passed\n",

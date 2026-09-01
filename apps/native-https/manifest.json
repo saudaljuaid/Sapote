@@ -12,6 +12,7 @@
     "data-write",
     "time",
     "entropy",
-    "network"
+    "network",
+    "packages"
   ]
 }

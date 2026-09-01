@@ -9,7 +9,8 @@ file handle therefore cannot be used as a timer or stream, and a closed value
 cannot name a later object reusing the same slot.
 
 Version 1 types are file, directory, Redwood window, event queue, TCP stream,
-UDP endpoint, timer, thread, and bounded PCM output. Process handles are not
+UDP endpoint, timer, thread, bounded PCM output, and kernel-owned package
+upload. Process handles are not
 exposed. Duplicate creates a new generated slot referencing the same typed object. Close
 invalidates its slot immediately; the underlying object is released when its
 last reference closes. A repeated close and every stale resolution fail.
@@ -22,6 +23,8 @@ Process teardown closes the complete table. Object-specific cleanup closes FAT
 objects, releases directory cursors, destroys a surface after its window and
 queue references disappear, closes/cancels network state by process owner,
 releases thread and timer bookkeeping, and synchronously stops any HDA stream
-owned by the dying process. The result records peak handles and is not
+owned by the dying process. A final package-upload close removes and flushes
+its private staging file; cleanup failure keeps the handle live for retry. The
+result records peak handles and is not
 considered clean until the table, address space, syscall gate, interrupt gate,
 windows, network ownership, and audio controller ownership are gone.
