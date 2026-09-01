@@ -224,6 +224,15 @@ They validate the view's complete table shape and the selected record before
 returning slices; the parsed database buffer remains caller-owned and must stay
 live and unchanged.
 
+`package_generation.c` is the allocation-free canonical database encoder at the
+other side of those views. A privileged builder supplies bounded package,
+provider-edge, and owned-file arrays plus an exact caller-owned output span. The
+encoder writes no filesystem, signs nothing, and does not resolve dependencies;
+it clears failures and returns success only after the normal installed-state
+parser accepts the complete generated database. Its host proof requires exact
+byte equality with the independently assembled two-package fixture and refuses
+bad ordering, file collisions, missing digests, and output-length mismatch.
+
 The SHA-256 context API is public so the filesystem service can hash immutable
 files in bounded chunks; update-after-finish, finish-twice, and counter overflow
 are refused.

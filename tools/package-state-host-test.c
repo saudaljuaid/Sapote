@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <sapote/package_generation.h>
 #include <sapote/package_state.h>
 
 #define OLD_DATABASE_BYTES PACKAGE_STATE_DATABASE_HEADER_BYTES
@@ -112,6 +113,18 @@ static bool state_text_is(
     }
     return text->length == length &&
         same_bytes(text->bytes, (const uint8_t *)expected, length);
+}
+
+static struct package_state_text state_text(const char *text)
+{
+    struct package_state_text result = {
+        (const uint8_t *)text, 0U
+    };
+
+    while (text[result.length] != '\0') {
+        ++result.length;
+    }
+    return result;
 }
 
 static void digest_text(const char *text, uint8_t output[PACKAGE_STATE_SHA256_BYTES])
@@ -540,6 +553,83 @@ static int test_encoders(
     return 0;
 }
 
+static int test_generation_encoder(
+    const uint8_t expected[NEW_DATABASE_BYTES]
+)
+{
+    struct package_generation_package packages[NEW_PACKAGE_COUNT];
+    struct package_generation_dependency dependencies[NEW_EDGE_COUNT];
+    struct package_generation_file files[NEW_FILE_COUNT];
+    struct package_generation_spec spec;
+    struct package_state_database_view view;
+    uint8_t application_package[PACKAGE_STATE_SHA256_BYTES];
+    uint8_t library_package[PACKAGE_STATE_SHA256_BYTES];
+    uint8_t publisher[PACKAGE_STATE_SHA256_BYTES];
+    uint8_t application_file[PACKAGE_STATE_SHA256_BYTES];
+    uint8_t library_file[PACKAGE_STATE_SHA256_BYTES];
+    uint8_t encoded[NEW_DATABASE_BYTES];
+    size_t encoded_bytes = 0U;
+
+    digest_text("application package", application_package);
+    digest_text("library package", library_package);
+    digest_text("publisher public key", publisher);
+    digest_text("app", application_file);
+    digest_text("lib", library_file);
+    packages[0] = (struct package_generation_package){
+        state_text("org.sapote.app"), state_text("1.0.0"),
+        application_package, publisher, true, 0U, 1U, 1U
+    };
+    packages[1] = (struct package_generation_package){
+        state_text("org.sapote.lib"), state_text("1.0.0"),
+        library_package, publisher, false, 1U, 0U, 1U
+    };
+    dependencies[0] = (struct package_generation_dependency){
+        state_text("org.sapote.lib"), state_text("^1.0.0"),
+        state_text("org.sapote.lib")
+    };
+    files[0] = (struct package_generation_file){
+        state_text("bin/app"), 0U, 1U, 0555U, 3U, application_file,
+        state_text("")
+    };
+    files[1] = (struct package_generation_file){
+        state_text("lib/libx.so.1"), 1U, 2U, 0444U, 3U, library_file,
+        state_text("libx.so.1")
+    };
+    spec = (struct package_generation_spec){
+        2U, 1U, packages, NEW_PACKAGE_COUNT, dependencies, NEW_EDGE_COUNT,
+        files, NEW_FILE_COUNT
+    };
+    CHECK(package_generation_size(&spec, &encoded_bytes) ==
+            PACKAGE_STATE_STATUS_OK && encoded_bytes == NEW_DATABASE_BYTES, 50);
+    CHECK(package_generation_encode(&spec, encoded, sizeof(encoded), &view) ==
+            PACKAGE_STATE_STATUS_OK && view.generation == 2U &&
+        same_bytes(encoded, expected, sizeof(encoded)), 51);
+
+    packages[0].identifier = state_text("org.sapote.lib");
+    encoded[0] = 1U;
+    CHECK(package_generation_encode(&spec, encoded, sizeof(encoded), &view) ==
+            PACKAGE_STATE_STATUS_PACKAGE && all_zero(encoded, sizeof(encoded)) &&
+        view.bytes == NULL, 52);
+    packages[0].identifier = state_text("org.sapote.app");
+    files[1].path = files[0].path;
+    encoded[0] = 1U;
+    CHECK(package_generation_encode(&spec, encoded, sizeof(encoded), &view) ==
+            PACKAGE_STATE_STATUS_FILE && all_zero(encoded, sizeof(encoded)) &&
+        view.bytes == NULL, 53);
+    files[1].path = state_text("lib/libx.so.1");
+    packages[0].package_sha256 = NULL;
+    encoded[0] = 1U;
+    CHECK(package_generation_encode(&spec, encoded, sizeof(encoded), &view) ==
+            PACKAGE_STATE_STATUS_NULL_ARGUMENT &&
+        all_zero(encoded, sizeof(encoded)) && view.bytes == NULL, 54);
+    packages[0].package_sha256 = application_package;
+    encoded[0] = 1U;
+    CHECK(package_generation_encode(&spec, encoded, sizeof(encoded) - 1U,
+            &view) == PACKAGE_STATE_STATUS_LENGTH &&
+        all_zero(encoded, sizeof(encoded) - 1U) && view.bytes == NULL, 55);
+    return 0;
+}
+
 static int test_recovery(
     const uint8_t old_database[OLD_DATABASE_BYTES],
     const uint8_t new_database[NEW_DATABASE_BYTES],
@@ -635,6 +725,10 @@ int main(void)
         return result;
     }
     result = test_encoders(old_database, new_database, new_authority, journal);
+    if (result != 0) {
+        return result;
+    }
+    result = test_generation_encoder(new_database);
     if (result != 0) {
         return result;
     }

@@ -1105,25 +1105,27 @@ package-transaction-tests: tools/sapote-transaction.py \
 	$(PYTHON) -u tools/sapote_transaction_host_test.py
 
 $(PACKAGE_STATE_HOST_TEST): tools/package-state-host-test.c \
-		src/kernel/package_state.c include/sapote/package_state.h
+		src/kernel/package_generation.c src/kernel/package_state.c \
+		include/sapote/package_generation.h include/sapote/package_state.h
 	mkdir -p $(dir $@)
 	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -Wshadow \
 		-Wundef -Wstrict-prototypes -Wmissing-prototypes -Iinclude \
-		tools/package-state-host-test.c src/kernel/package_state.c -o $@
+		tools/package-state-host-test.c src/kernel/package_generation.c \
+		src/kernel/package_state.c -o $@
 
 package-state-tests: $(PACKAGE_STATE_HOST_TEST)
 	$(PACKAGE_STATE_HOST_TEST)
 
 $(PACKAGE_SERVICE_HOST_TEST): tools/package-service-host-test.c \
 		tools/package-state-host-test.c src/kernel/package_service.c \
-		src/kernel/package_state.c include/sapote/package_service.h \
-		include/sapote/package_state.h include/sapote/fat32_fs.h \
-		include/sapote/heap.h
+		src/kernel/package_generation.c src/kernel/package_state.c \
+		include/sapote/package_generation.h include/sapote/package_service.h \
+		include/sapote/package_state.h include/sapote/fat32_fs.h include/sapote/heap.h
 	mkdir -p $(dir $@)
 	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -Wshadow \
 		-Wundef -Wstrict-prototypes -Wmissing-prototypes -Iinclude \
 		tools/package-service-host-test.c src/kernel/package_service.c \
-		src/kernel/package_state.c -o $@
+		src/kernel/package_generation.c src/kernel/package_state.c -o $@
 
 package-service-tests: $(PACKAGE_SERVICE_HOST_TEST)
 	$(PACKAGE_SERVICE_HOST_TEST)
