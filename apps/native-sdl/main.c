@@ -93,10 +93,11 @@ static int play_audio(SDL_AudioDeviceID *device)
     SDL_AudioSpec obtained;
 
     for (size_t frame = 0U; frame < AUDIO_FRAMES; ++frame) {
-        const int16_t sample = (frame / 48U) % 2U == 0U ?
-            INT16_C(7000) : -INT16_C(7000);
+        const uint32_t value = UINT32_C(1000) +
+            ((uint32_t)frame * UINT32_C(73)) % UINT32_C(12000);
+        const int16_t sample = (int16_t)value;
         pcm[frame * 2U] = sample;
-        pcm[frame * 2U + 1U] = (int16_t)(sample / 2);
+        pcm[frame * 2U + 1U] = (int16_t)-sample;
     }
     SDL_zero(wanted);
     wanted.freq = 48000;

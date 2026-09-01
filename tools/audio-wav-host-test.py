@@ -21,7 +21,7 @@ EXPECTED_SHA256 = "5864c13557496ba86294adbbfe8078e9f2c0b5e808e4d0c4f49738fd465d1
 SDL_FRAMES = 4_096
 SDL_CHUNKS = SDL_FRAMES // CHUNK_FRAMES
 SDL_PROOF_RUNS = 2
-SDL_EXPECTED_SHA256 = "5f69c57a2899917978544f1c8ed66b6f826c7e67b8302d281ea206f40852ef56"
+SDL_EXPECTED_SHA256 = "0a10d573e70eacd28cc4a9297713d5f6a916a9bbe0c60d64a3d1db96839f5d55"
 
 
 class VerificationError(RuntimeError):
@@ -46,8 +46,8 @@ def canceled_mix() -> bytes:
 def expected_sdl() -> bytes:
     samples: list[int] = []
     for frame in range(SDL_FRAMES):
-        sample = 7_000 if (frame // 48) % 2 == 0 else -7_000
-        samples.extend((sample, sample // 2))
+        sample = 1_000 + frame * 73 % 12_000
+        samples.extend((sample, -sample))
     return struct.pack(f"<{len(samples)}h", *samples)
 
 
@@ -144,9 +144,7 @@ def match_sdl_run(payload: bytes, chunks: list[bytes],
         chunk = chunks[(first_segment + count - 1) % SDL_CHUNKS]
         next_positions: set[int] = set()
         for position in positions:
-            starts = range(CHUNK_FRAMES - MIN_CAPTURE_FRAMES + 1) \
-                if count == 1 and position == 0 else (0,)
-            for first_frame in starts:
+            for first_frame in range(CHUNK_FRAMES - MIN_CAPTURE_FRAMES + 1):
                 remaining_frames = (len(payload) - position) // frame_bytes
                 limit = min(CHUNK_FRAMES - first_frame, remaining_frames)
                 matched = 0
@@ -332,6 +330,23 @@ def self_test() -> None:
         if offset_report["segments"] != SDL_CHUNKS * SDL_PROOF_RUNS or \
                 offset_report["runs"] != SDL_CHUNKS * SDL_PROOF_RUNS:
             raise VerificationError("offset SDL fixture geometry changed")
+        continuous_fixture = root / "sdl-offset-continuous.wav"
+        continuous_payload = bytes(29 * CHANNELS * SAMPLE_BYTES)
+        for index, (offset, frames) in enumerate(zip(offsets, prefixes)):
+            start = offset * CHANNELS * SAMPLE_BYTES
+            end = (offset + frames) * CHANNELS * SAMPLE_BYTES
+            continuous_payload += chunks[index % SDL_CHUNKS][start:end]
+            if index == SDL_CHUNKS - 1:
+                continuous_payload += bytes(11 * CHANNELS * SAMPLE_BYTES)
+        with wave.open(str(continuous_fixture), "wb") as output:
+            output.setnchannels(CHANNELS)
+            output.setsampwidth(SAMPLE_BYTES)
+            output.setframerate(RATE)
+            output.writeframes(continuous_payload)
+        continuous_report = verify(continuous_fixture, "sdl")
+        if continuous_report["segments"] != SDL_CHUNKS * SDL_PROOF_RUNS or \
+                continuous_report["runs"] != SDL_PROOF_RUNS:
+            raise VerificationError("continuous offset SDL fixture geometry changed")
         try:
             verify(sdl_fixture, "native-audio")
         except VerificationError:
