@@ -3,8 +3,9 @@
 
 use ext4plus::{
     Ext4, FILESYSTEM_SUPERBLOCK_START_BYTE, JOURNAL_BLOCK_BYTES, JournalCommitOperation,
-    JournalFlush, JournalPreparedTransaction, JournalRecordKind, JournalRing,
-    JournalSuperblockImage, JournalTransaction, JournalTransactionError, load_journal_inode_map,
+    JournalExecutionError, JournalFlush, JournalPreparedTransaction, JournalRecordKind,
+    JournalRing, JournalStorage, JournalSuperblockImage, JournalTransaction,
+    JournalTransactionError, execute_commit_operations, load_journal_inode_map,
     recover_committed_ring, replay_committed_transaction,
 };
 use std::collections::BTreeMap;
@@ -63,6 +64,71 @@ fn journal_images(operations: &[JournalCommitOperation]) -> Vec<Vec<u8>> {
             _ => None,
         })
         .collect()
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum StorageEvent {
+    Write(u64, usize),
+    Flush(JournalFlush),
+}
+
+#[derive(Default)]
+struct RecordingStorage {
+    events: Vec<StorageEvent>,
+}
+
+impl JournalStorage for RecordingStorage {
+    type Error = core::convert::Infallible;
+
+    fn write(&mut self, start_byte: u64, bytes: &[u8]) -> Result<(), Self::Error> {
+        self.events.push(StorageEvent::Write(start_byte, bytes.len()));
+        Ok(())
+    }
+
+    fn flush(&mut self, boundary: JournalFlush) -> Result<(), Self::Error> {
+        self.events.push(StorageEvent::Flush(boundary));
+        Ok(())
+    }
+}
+
+#[test]
+fn public_executor_maps_every_block_write_and_preserves_flushes() {
+    let slots = [3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007];
+    let mut ring = mapped_ring(17, &slots);
+    let prepared = ring.prepare(&transaction()).unwrap();
+    let operations = ring.prepare_commit_plan(&prepared).unwrap();
+    let mut storage = RecordingStorage::default();
+    execute_commit_operations(&mut storage, &operations).unwrap();
+
+    assert_eq!(
+        storage.events,
+        vec![
+            StorageEvent::Write(MAXIMUM_BLOCK * JOURNAL_BLOCK_BYTES as u64, 1024),
+            StorageEvent::Write(100 * JOURNAL_BLOCK_BYTES as u64, JOURNAL_BLOCK_BYTES),
+            StorageEvent::Flush(JournalFlush::OrderedData),
+            StorageEvent::Write(3000 * JOURNAL_BLOCK_BYTES as u64, JOURNAL_BLOCK_BYTES),
+            StorageEvent::Write(3001 * JOURNAL_BLOCK_BYTES as u64, JOURNAL_BLOCK_BYTES),
+            StorageEvent::Write(3002 * JOURNAL_BLOCK_BYTES as u64, JOURNAL_BLOCK_BYTES),
+            StorageEvent::Flush(JournalFlush::JournalPayload),
+            StorageEvent::Write(3003 * JOURNAL_BLOCK_BYTES as u64, JOURNAL_BLOCK_BYTES),
+            StorageEvent::Flush(JournalFlush::Commit),
+            StorageEvent::Write(200 * JOURNAL_BLOCK_BYTES as u64, JOURNAL_BLOCK_BYTES),
+            StorageEvent::Write(201 * JOURNAL_BLOCK_BYTES as u64, JOURNAL_BLOCK_BYTES),
+            StorageEvent::Flush(JournalFlush::Checkpoint),
+        ]
+    );
+
+    let overflow = [JournalCommitOperation::WriteJournal {
+        journal_block: u64::MAX,
+        kind: JournalRecordKind::Commit,
+        bytes: filled(0),
+    }];
+    let mut storage = RecordingStorage::default();
+    assert_eq!(
+        execute_commit_operations(&mut storage, &overflow),
+        Err(JournalExecutionError::AddressOverflow)
+    );
+    assert!(storage.events.is_empty());
 }
 
 fn install_journal_writes(

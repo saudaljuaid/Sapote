@@ -166,6 +166,97 @@ pub enum JournalCommitOperation {
     WriteHomeMetadata(JournalBlockImage),
 }
 
+/// Synchronous storage used to execute an already validated journal plan.
+///
+/// Implementations must not reorder writes across [`JournalStorage::flush`].
+/// A successful flush must make every earlier write durable according to the
+/// backing device's persistence contract.
+pub trait JournalStorage {
+    /// The platform-specific write or flush failure.
+    type Error;
+
+    /// Write every byte at the supplied absolute filesystem offset.
+    fn write(&mut self, start_byte: u64, bytes: &[u8]) -> Result<(), Self::Error>;
+
+    /// Make all preceding writes durable at the named protocol boundary.
+    fn flush(&mut self, boundary: JournalFlush) -> Result<(), Self::Error>;
+}
+
+/// A failure while executing an ordered journal plan.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum JournalExecutionError<E> {
+    /// A filesystem-block address could not be represented as a byte offset.
+    AddressOverflow,
+    /// The platform storage implementation refused a write or flush.
+    Storage(E),
+}
+
+impl<E: Display> Display for JournalExecutionError<E> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AddressOverflow => formatter.write_str("journal byte address overflowed"),
+            Self::Storage(error) => write!(formatter, "journal storage failed: {error}"),
+        }
+    }
+}
+
+impl<E: Error + 'static> Error for JournalExecutionError<E> {}
+
+/// Execute a validated journal plan exactly in the order it was constructed.
+///
+/// Journal and home-block addresses are converted from 4 KiB filesystem
+/// blocks with checked arithmetic. Flush operations are passed through without
+/// coalescing so the platform cannot erase a protocol durability boundary.
+pub fn execute_commit_operations<S: JournalStorage>(
+    storage: &mut S,
+    operations: &[JournalCommitOperation],
+) -> Result<(), JournalExecutionError<S::Error>> {
+    for operation in operations {
+        match operation {
+            JournalCommitOperation::WriteFilesystemSuperblock { start_byte, image } => storage
+                .write(*start_byte, image.bytes())
+                .map_err(JournalExecutionError::Storage)?,
+            JournalCommitOperation::WriteOrderedData(image)
+            | JournalCommitOperation::WriteHomeMetadata(image) => {
+                let start_byte = image
+                    .block_index()
+                    .checked_mul(JOURNAL_BLOCK_BYTES as u64)
+                    .ok_or(JournalExecutionError::AddressOverflow)?;
+                storage
+                    .write(start_byte, image.bytes())
+                    .map_err(JournalExecutionError::Storage)?;
+            }
+            JournalCommitOperation::Flush(boundary) => storage
+                .flush(*boundary)
+                .map_err(JournalExecutionError::Storage)?,
+            JournalCommitOperation::WriteJournal {
+                journal_block,
+                bytes,
+                ..
+            } => {
+                let start_byte = journal_block
+                    .checked_mul(JOURNAL_BLOCK_BYTES as u64)
+                    .ok_or(JournalExecutionError::AddressOverflow)?;
+                storage
+                    .write(start_byte, bytes)
+                    .map_err(JournalExecutionError::Storage)?;
+            }
+            JournalCommitOperation::WriteJournalSuperblock {
+                journal_block,
+                image,
+            } => {
+                let start_byte = journal_block
+                    .checked_mul(JOURNAL_BLOCK_BYTES as u64)
+                    .ok_or(JournalExecutionError::AddressOverflow)?;
+                storage
+                    .write(start_byte, image.bytes())
+                    .map_err(JournalExecutionError::Storage)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// A refusal produced while constructing or validating a transaction.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum JournalTransactionError {
