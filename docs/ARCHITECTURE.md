@@ -118,9 +118,12 @@ formats and produces bounded deterministic install/remove plans against
 `package_state.c` installed databases. Its serialized graph workspace is kept
 off the 16 KiB syscall stack, and every trust decision is delegated to explicit
 immutable-key and Ed25519 callbacks that fail closed when unavailable. The
-VFS-backed `package_service.c` recovers already-staged package generations.
-Crypto, download, staging, client commands, and Store presentation sit outside
-these cores. The boundary is documented in [`PACKAGE_MANAGER.md`](PACKAGE_MANAGER.md) and
+kernel's pinned, fail-closed `package_trust.c` provider supplies those callbacks;
+the privileged caller must provision its immutable key table. Authenticated
+package file/relation views feed the future generation builder. The VFS-backed
+`package_service.c` recovers already-staged package generations. Download,
+generation construction and commit, client commands, and Store presentation
+remain outside these cores. The boundary is documented in [`PACKAGE_MANAGER.md`](PACKAGE_MANAGER.md) and
 [`PACKAGE_TRANSACTIONS.md`](PACKAGE_TRANSACTIONS.md).
 
 `nvidia.c` contains fifteen bounded register and configuration probes based on

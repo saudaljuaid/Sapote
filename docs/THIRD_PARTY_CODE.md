@@ -57,6 +57,21 @@ archive is not a TLS or HTTPS success claim: hostname, chain, time, transport,
 shutdown, and negative-path evidence belong to the client integration and QEMU
 tests.
 
+## Guest signature implementation
+
+Monocypher 4.0.3 is pinned to upstream tag/commit
+`ab2b16dd619ad5f6979a4fbe69cfa324a6fcc35f` and is available under
+BSD-2-Clause OR CC0-1.0. The retained core and optional Ed25519/SHA-512 source
+files are byte-for-byte upstream; `vendor/monocypher/UPSTREAM-COMMIT.txt` and
+`SOURCE-MANIFEST.sha256` record exact provenance.
+
+Sapote compiles those sources freestanding with MMX/SSE disabled. The package
+trust wrapper rejects non-canonical encodings, pure low-order points,
+negative-zero encodings, and `S >= L` before or during the upstream cofactored
+equation check, and supports the package format's zeroed embedded-signature
+range without copying a 256 MiB object. The exact profile and non-uniqueness
+caveat are recorded in `vendor/monocypher/SAPOTE-PORT.md`.
+
 ## Host signature implementation
 
 Format-v3 package construction and inspection use the distribution-provided

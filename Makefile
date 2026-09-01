@@ -78,6 +78,7 @@ SDK_TIME_HOST_TEST := $(TEST_BUILD_DIR)/sdk-time-host-test
 PACKAGE_STATE_HOST_TEST := $(TEST_BUILD_DIR)/package-state-host-test
 PACKAGE_SERVICE_HOST_TEST := $(TEST_BUILD_DIR)/package-service-host-test
 PACKAGE_MANAGER_HOST_TEST := $(TEST_BUILD_DIR)/package-manager-host-test
+PACKAGE_TRUST_HOST_TEST := $(TEST_BUILD_DIR)/package-trust-host-test
 TLS_HOST_TEST := $(TEST_BUILD_DIR)/tls-client-host-test$(HOST_EXEEXT)
 TLS_HOST_OBJECT := $(TEST_BUILD_DIR)/tls-client.o
 TLS_HOST_WRAPPER_OBJECT := $(TEST_BUILD_DIR)/tls-wrapper.o
@@ -343,9 +344,19 @@ LDFLAGS := -nostdlib -z max-page-size=0x1000 -z noexecstack --fatal-warnings \
 
 C_SOURCES := $(wildcard src/kernel/*.c)
 C_OBJECTS := $(patsubst src/kernel/%.c,$(BUILD_DIR)/%.o,$(C_SOURCES))
+MONOCYPHER_OBJECTS := $(BUILD_DIR)/monocypher/monocypher.o \
+	$(BUILD_DIR)/monocypher/monocypher-ed25519.o
+MONOCYPHER_HOST_OBJECTS := $(TEST_BUILD_DIR)/monocypher/monocypher.o \
+	$(TEST_BUILD_DIR)/monocypher/monocypher-ed25519.o
 ASM_SOURCES := $(wildcard src/arch/x86_64/*.S)
 ASM_OBJECTS := $(patsubst src/arch/x86_64/%.S,$(BUILD_DIR)/arch_%.o,$(ASM_SOURCES))
-OBJECTS := $(ASM_OBJECTS) $(C_OBJECTS)
+OBJECTS := $(ASM_OBJECTS) $(C_OBJECTS) $(MONOCYPHER_OBJECTS)
+
+MONOCYPHER_CFLAGS := $(COMMON_FLAGS) -std=c11 -O2 -mno-red-zone \
+	-mno-mmx -mno-sse -mno-sse2 -msoft-float -fno-tree-vectorize \
+	-fno-builtin -fno-asynchronous-unwind-tables -fno-unwind-tables \
+	-Wall -Wextra -Werror -Ivendor/monocypher/src \
+	-Ivendor/monocypher/src/optional
 
 # Warnings are errors on both sides of the language boundary, and Rust is held
 # to the stricter rule that an unsafe operation inside an unsafe function still
@@ -358,7 +369,8 @@ OBJECTS := $(ASM_OBJECTS) $(C_OBJECTS)
 RUSTFLAGS := -C panic=abort -C relocation-model=static \
 	-C llvm-args=-max-store-memcpy=1024 \
 	-C llvm-args=-max-store-memset=1024
-DEPENDENCIES := $(C_OBJECTS:.o=.d) $(SDL2_OBJECTS:.o=.d)
+DEPENDENCIES := $(C_OBJECTS:.o=.d) $(MONOCYPHER_OBJECTS:.o=.d) \
+	$(SDL2_OBJECTS:.o=.d)
 
 # The qemu-test-% scenarios are deliberately absent from .PHONY. GNU Make skips
 # implicit and pattern rule search for a phony target, so declaring them phony
@@ -366,7 +378,7 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d) $(SDL2_OBJECTS:.o=.d)
 # They never create a file of their own name, so they rerun regardless.
 .PHONY: all audio-wav-tests capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios dynamic-elf-tests ext4-images ext4-tests fat32-images hooks https-tests \
 	iso kernel lint native-apps native-audio-proof native-dynamic-proof native-https-proof native-sdl-proof port-tests qemu-port-tests reproducible-sdk run \
-	package-manager-tests package-repository-tests package-service-tests package-state-tests package-transaction-tests qemu-test-ext4-powercuts screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests zlib-tests
+	package-manager-tests package-repository-tests package-service-tests package-state-tests package-transaction-tests package-trust-tests qemu-test-ext4-powercuts screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests zlib-tests
 
 all: kernel
 
@@ -840,6 +852,20 @@ $(BUILD_DIR)/arch_%.o: src/arch/x86_64/%.S | $(BUILD_DIR)
 $(BUILD_DIR)/%.o: src/kernel/%.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
 
+$(BUILD_DIR)/package_trust.o: CPPFLAGS += -Ivendor/monocypher/src \
+	-Ivendor/monocypher/src/optional
+$(BUILD_DIR)/package_trust.o: vendor/monocypher/src/monocypher.h \
+	vendor/monocypher/src/optional/monocypher-ed25519.h
+
+$(BUILD_DIR)/monocypher/monocypher.o: vendor/monocypher/src/monocypher.c
+	mkdir -p $(dir $@)
+	$(CC) $(MONOCYPHER_CFLAGS) -MMD -MP -c $< -o $@
+
+$(BUILD_DIR)/monocypher/monocypher-ed25519.o: \
+		vendor/monocypher/src/optional/monocypher-ed25519.c
+	mkdir -p $(dir $@)
+	$(CC) $(MONOCYPHER_CFLAGS) -MMD -MP -c $< -o $@
+
 # Regenerated only when the logo itself changes. The result is a build
 # artifact and is deliberately not committed; src/rust/abi.rs includes it.
 $(LOGO_BLOB): $(LOGO_SOURCE) tools/make-logo-asset.py | $(BUILD_DIR)
@@ -1102,14 +1128,48 @@ $(PACKAGE_SERVICE_HOST_TEST): tools/package-service-host-test.c \
 package-service-tests: $(PACKAGE_SERVICE_HOST_TEST)
 	$(PACKAGE_SERVICE_HOST_TEST)
 
-$(PACKAGE_MANAGER_HOST_TEST): tools/package-manager-host-test.c \
-		src/kernel/package_manager.c src/kernel/package_state.c \
-		include/sapote/package_manager.h include/sapote/package_state.h
+$(TEST_BUILD_DIR)/monocypher/monocypher.o: \
+		vendor/monocypher/src/monocypher.c vendor/monocypher/src/monocypher.h
+	mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -fno-tree-vectorize \
+		-Ivendor/monocypher/src -c $< -o $@
+
+$(TEST_BUILD_DIR)/monocypher/monocypher-ed25519.o: \
+		vendor/monocypher/src/optional/monocypher-ed25519.c \
+		vendor/monocypher/src/optional/monocypher-ed25519.h \
+		vendor/monocypher/src/monocypher.h
+	mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -fno-tree-vectorize \
+		-Ivendor/monocypher/src -Ivendor/monocypher/src/optional \
+		-c $< -o $@
+
+$(PACKAGE_TRUST_HOST_TEST): tools/package-trust-host-test.c \
+		src/kernel/package_trust.c src/kernel/package_state.c \
+		include/sapote/package_trust.h include/sapote/package_manager.h \
+		include/sapote/package_state.h $(MONOCYPHER_HOST_OBJECTS)
 	mkdir -p $(dir $@)
 	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -Wshadow \
 		-Wundef -Wstrict-prototypes -Wmissing-prototypes -Iinclude \
+		-Ivendor/monocypher/src -Ivendor/monocypher/src/optional \
+		tools/package-trust-host-test.c src/kernel/package_trust.c \
+		src/kernel/package_state.c $(MONOCYPHER_HOST_OBJECTS) -o $@
+
+package-trust-tests: $(PACKAGE_TRUST_HOST_TEST)
+	cd vendor/monocypher && sha256sum --check SOURCE-MANIFEST.sha256
+	$(PACKAGE_TRUST_HOST_TEST)
+
+$(PACKAGE_MANAGER_HOST_TEST): tools/package-manager-host-test.c \
+		src/kernel/package_manager.c src/kernel/package_trust.c \
+		src/kernel/package_state.c include/sapote/package_manager.h \
+		include/sapote/package_trust.h include/sapote/package_state.h \
+		$(MONOCYPHER_HOST_OBJECTS)
+	mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -Wshadow \
+		-Wundef -Wstrict-prototypes -Wmissing-prototypes -Iinclude \
+		-Ivendor/monocypher/src -Ivendor/monocypher/src/optional \
 		tools/package-manager-host-test.c src/kernel/package_manager.c \
-		src/kernel/package_state.c -o $@
+		src/kernel/package_trust.c src/kernel/package_state.c \
+		$(MONOCYPHER_HOST_OBJECTS) -o $@
 
 package-manager-tests: $(PACKAGE_MANAGER_HOST_TEST) \
 		tools/package_manager_host_test.py tools/sapote-repository.py \
@@ -1195,7 +1255,7 @@ verify: toolchain lint
 	$(MAKE) kernel
 	$(MAKE) wall-clock-tests ext4-tests package-repository-tests \
 		package-transaction-tests package-state-tests package-service-tests \
-		package-manager-tests \
+		package-trust-tests package-manager-tests \
 		dynamic-elf-tests \
 		https-tests tls-tests zlib-tests
 	$(PYTHON) tools/verify-ui-assets.py

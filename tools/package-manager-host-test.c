@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include <sapote/package_manager.h>
+#include <sapote/package_trust.h>
 
 #define FIXTURE_NOW UINT64_C(1800000060)
 #define FIXTURE_REPOSITORY_VERSION UINT64_C(42)
@@ -38,8 +39,8 @@ enum trust_mode {
 };
 
 struct trust_context {
-    uint8_t root_public[PACKAGE_MANAGER_ED25519_PUBLIC_KEY_BYTES];
-    uint8_t publisher_public[PACKAGE_MANAGER_ED25519_PUBLIC_KEY_BYTES];
+    struct package_trust_key keys[2];
+    struct package_trust_store store;
     enum trust_mode mode;
     uint32_t verification_count;
 };
@@ -109,8 +110,6 @@ static enum package_manager_key_status trust_lookup(
 )
 {
     struct trust_context *context = opaque;
-    uint8_t root_id[PACKAGE_MANAGER_SHA256_BYTES];
-    uint8_t publisher_id[PACKAGE_MANAGER_SHA256_BYTES];
 
     if (context->mode == TRUST_UNKNOWN) {
         return PACKAGE_MANAGER_KEY_UNKNOWN;
@@ -118,30 +117,12 @@ static enum package_manager_key_status trust_lookup(
     if (context->mode == TRUST_REVOKED) {
         return PACKAGE_MANAGER_KEY_REVOKED;
     }
-    if (package_state_sha256(context->root_public,
-            sizeof(context->root_public), root_id) != PACKAGE_STATE_STATUS_OK ||
-        package_state_sha256(context->publisher_public,
-            sizeof(context->publisher_public), publisher_id) !=
-            PACKAGE_STATE_STATUS_OK) {
-        return PACKAGE_MANAGER_KEY_UNKNOWN;
-    }
-    if (same_bytes(key_id, root_id, sizeof(root_id))) {
-        (void)memcpy(public_key, context->root_public, sizeof(context->root_public));
-        return PACKAGE_MANAGER_KEY_TRUSTED;
-    }
-    if (same_bytes(key_id, publisher_id, sizeof(publisher_id))) {
-        (void)memcpy(public_key, context->publisher_public,
-            sizeof(context->publisher_public));
-        return PACKAGE_MANAGER_KEY_TRUSTED;
-    }
-    return PACKAGE_MANAGER_KEY_UNKNOWN;
+    return package_trust_lookup(&context->store, key_id, public_key);
 }
 
 /*
- * The Python driver verifies these exact fixtures with real Ed25519 first.
- * This callback verifies the C trust-plumbing contract: the selected key,
- * embedded signature range and zeroed-message range must all agree.  It is not
- * a substitute for the still-missing in-kernel Ed25519 provider.
+ * Retain injectable refusal modes around the production guest verifier so the
+ * manager's status mapping remains independently covered.
  */
 static bool trust_verify(
     void *opaque,
@@ -154,16 +135,14 @@ static bool trust_verify(
 )
 {
     struct trust_context *context = opaque;
-    const bool known_key = same_bytes(public_key, context->root_public,
-            sizeof(context->root_public)) ||
-        same_bytes(public_key, context->publisher_public,
-            sizeof(context->publisher_public));
 
-    if (context->mode == TRUST_REJECT_SIGNATURE || !known_key ||
+    if (context->mode == TRUST_REJECT_SIGNATURE ||
         zero_bytes != PACKAGE_MANAGER_ED25519_SIGNATURE_BYTES ||
         zero_offset > message_bytes || zero_bytes > message_bytes - zero_offset ||
         signature != message + zero_offset || !any_bytes(signature, zero_bytes) ||
-        (zero_offset != 232U && zero_offset != 440U)) {
+        (zero_offset != 232U && zero_offset != 440U) ||
+        !package_trust_verify(&context->store, public_key, signature, message,
+            message_bytes, zero_offset, zero_bytes)) {
         return false;
     }
     ++context->verification_count;
@@ -177,6 +156,36 @@ static struct package_manager_policy normal_policy(void)
     };
 
     return result;
+}
+
+static bool initialize_trust_context(
+    struct trust_context *context,
+    const uint8_t root_public[PACKAGE_MANAGER_ED25519_PUBLIC_KEY_BYTES],
+    const uint8_t publisher_public[PACKAGE_MANAGER_ED25519_PUBLIC_KEY_BYTES]
+)
+{
+    struct package_trust_key temporary;
+    (void)memset(context, 0, sizeof(*context));
+    (void)memcpy(context->keys[0].public_key, root_public,
+        sizeof(context->keys[0].public_key));
+    (void)memcpy(context->keys[1].public_key, publisher_public,
+        sizeof(context->keys[1].public_key));
+    for (size_t index = 0U; index < 2U; ++index) {
+        context->keys[index].status = PACKAGE_MANAGER_KEY_TRUSTED;
+        if (package_state_sha256(context->keys[index].public_key,
+            sizeof(context->keys[index].public_key),
+            context->keys[index].key_id) != PACKAGE_STATE_STATUS_OK) {
+            return false;
+        }
+    }
+    if (memcmp(context->keys[0].key_id, context->keys[1].key_id,
+        sizeof(context->keys[0].key_id)) > 0) {
+        temporary = context->keys[0];
+        context->keys[0] = context->keys[1];
+        context->keys[1] = temporary;
+    }
+    return package_trust_open(context->keys, 2U, &context->store) ==
+        PACKAGE_TRUST_STATUS_OK;
 }
 
 static struct package_manager_trust make_trust(struct trust_context *context)
@@ -363,10 +372,8 @@ int main(int argc, char **argv)
         root_key.count == PACKAGE_MANAGER_ED25519_PUBLIC_KEY_BYTES &&
         publisher_key.count == PACKAGE_MANAGER_ED25519_PUBLIC_KEY_BYTES &&
         application_bytes.bytes != NULL && library_bytes.bytes != NULL);
-    (void)memset(&context, 0, sizeof(context));
-    (void)memcpy(context.root_public, root_key.bytes, sizeof(context.root_public));
-    (void)memcpy(context.publisher_public, publisher_key.bytes,
-        sizeof(context.publisher_public));
+    CHECK(initialize_trust_context(&context, root_key.bytes,
+        publisher_key.bytes));
     trust = make_trust(&context);
 
     CHECK(package_manager_repository_open(repository_bytes.bytes,

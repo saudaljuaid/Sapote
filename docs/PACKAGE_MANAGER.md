@@ -22,9 +22,15 @@ binds exact downloaded bytes to the signed repository size and SHA-256 before
 checking the package's publisher signature, identity, version, ABI, dependency
 and conflict records, file layout, per-file digest, mode, kind, and SONAME.
 
-The caller owns the Ed25519 provider and immutable key store. Host verification
-authenticates fixtures with Python `cryptography`, then uses the C harness to
-check callback selection and the zeroed-signature range.
+`package_trust.c` supplies the guest Ed25519 verifier and immutable key-table
+lookup. Provisioning still belongs to the privileged caller: the table admits
+only sorted unique keys whose SHA-256 IDs match, rejects non-canonical or pure
+low-order public keys, and preserves explicit trusted/revoked state. Provisioned
+keys must be generated Ed25519 keys. Verification incrementally substitutes the
+64-byte zero range and narrows pinned Monocypher 4.0.3's cofactored profile with
+canonical encoding, negative-zero, pure-low-order, and `S < L` requirements.
+Signature bytes are not a uniqueness identifier. No signing or private key
+enters the guest.
 
 ## Bounds and resolver behavior
 
@@ -77,8 +83,10 @@ transaction protocol.
 ## Verification and integration
 
 `make package-manager-tests` builds real deterministic Ed25519 packages and
-indexes with the canonical host tools, verifies them with the real host crypto
-backend, and passes those exact bytes to the strict freestanding C core. It
+indexes with the canonical host tools, verifies them with the independent host
+crypto backend, and passes those exact bytes through the production
+freestanding C trust provider and parser. `make package-trust-tests` adds a
+fixed cross-provider vector and strict encoding, revocation, and table tests. It
 covers package/repository admission, search, dependency-first install planning,
 installed-state no-op and removal, unknown/revoked keys, unavailable crypto,
 signature rejection, digest changes, freshness, rollback, ABI mismatch,
