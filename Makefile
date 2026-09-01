@@ -1719,10 +1719,17 @@ verify: toolchain lint
 	fi
 	@grep -Fq '#define NVME_NVM_WRITE UINT8_C(0x01)' src/kernel/nvme.c
 	@test "$$(grep -ERh '\bnvme_volume_write[[:space:]]*[(]' \
-		src/kernel --include='*.c' --exclude=nvme.c | wc -l)" -eq 1 && \
+		src/kernel --include='*.c' --exclude=nvme.c | wc -l)" -eq 3 && \
 		grep -Fq 'nvme_volume_write(session, sector, data,' \
-			src/kernel/fat32_fs.c || \
-		{ echo 'NVMe write access escaped the FAT32 owner'; exit 1; }
+			src/kernel/fat32_fs.c && \
+		test "$$(grep -Ec '\bnvme_volume_write[[:space:]]*[(]' \
+			src/kernel/ext4_fs.c)" -eq 2 && \
+		grep -Fq 'if (nvme_volume_write(session, lba, source, chunk)' \
+			src/kernel/ext4_fs.c && \
+		grep -Fq 'if (nvme_volume_write(session, lba, block,' \
+			src/kernel/ext4_fs.c || \
+		{ echo 'NVMe write access escaped the FAT32 or ext4 recovery owner'; \
+			exit 1; }
 	@test "$$(grep -Ec 'process_return_interrupt[[:space:]]*[(]' \
 		src/kernel/process.c)" -eq 1 && \
 		grep -Fq 'interrupt_process_gate_arm(process_return_interrupt,' \
