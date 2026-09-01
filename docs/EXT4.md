@@ -272,11 +272,15 @@ A bounded `JournalMutationStage`
 now gives synchronous ext4plus mutations an immutable backing reader and a
 copy-on-write overlay: the first partial write reads a complete 4 KiB home
 block, later writes coalesce into it, reads see the overlay, and at most 64
-complete images can be exported without any home write. Rollback clears the
-overlay and requires discarding the mutated ext4plus object as well. An atomic
-snapshot builder requires every caller-named ordered file-data block to exist
-exactly once in the stage, journals every remaining image as metadata, refuses
-a staged/revoked overlap, and leaves the input transaction unchanged on error.
+complete images can be exported without any home write. ext4plus reports every
+freed block range through its writer boundary before changing allocation
+metadata; the stage bounds and deduplicates 64 revocations and removes any
+same-transaction image of a block that was subsequently freed. Rollback clears
+both images and revocations and requires discarding the mutated ext4plus object
+as well. An atomic snapshot builder requires every caller-named ordered file-
+data block to exist exactly once in the stage, adds the derived revocation set,
+journals every remaining image as metadata, refuses a staged/revoked overlap,
+and leaves the input transaction unchanged on error.
 Successful classification takes the stage's exclusive lock and atomically
 seals the complete snapshot, so no later ext4plus write can race the transaction
 plan. A refused classification remains open for correction; explicit rollback
@@ -297,21 +301,23 @@ prove the persisted free-block count changed once, reopen the appended byte,
 and require read-only `e2fsck` acceptance. Before that commit, the same real
 fixture performs an allocation-bearing extension, injects an invalid ordered-
 data classification, discards the mutated ext4plus object, rolls back the
-stage, and reloads the original size and recovery-marked superblock exactly.
-This is a
+stage, and reloads the original size and recovery-marked superblock exactly. It
+then truncates the committed extension, requires the freed data block in the
+JBD2 revoke record, returns the free-space counter to its original value, and
+requires a second clean `e2fsck` result. This is a
 host integration proof over the operation executor, not yet a VFS or QEMU
 writable-volume claim.
 
 The stage is retained for the full Rust mount lifetime and both unmount phases
-refuse a nonempty overlay, so no unclassified upstream mutation can be silently
-dropped. Setup failures before a prepared commit discard the overlay and reload
-ext4plus so in-memory allocation counters cannot escape. The real fixture pins
-that rollback across an allocation-bearing, deliberately refused pre-commit
-classification. Once a storage operation has started, rollback would be unsafe
-because an unknown prefix may already be durable; the retained plan is retried
-instead. VFS mutations do not collect the touched offset range and revocation
-set needed to use that classifier. Revocation derivation, fsync binding, and
-close-failure semantics remain incomplete. The admitted
+refuse pending images or revocations, so no unclassified upstream mutation can
+be silently dropped. Setup failures before a prepared commit discard the
+overlay and reload ext4plus so in-memory allocation counters cannot escape. The
+real fixture pins that rollback across an allocation-bearing, deliberately
+refused pre-commit classification. Once a storage operation has started,
+rollback would be unsafe because an unknown prefix may already be durable; the
+retained plan is retried instead. VFS mutations do not yet collect the touched
+offset range needed for ordered-data classification. Fsync binding and close-
+failure semantics remain incomplete. The admitted
 `JournalRing` is also retained for the full Rust mount lifetime. C opens a
 writable NVMe lease before unmount preparation; Rust
 re-emits the same pending clean plan after a failed write or flush, acknowledges

@@ -114,21 +114,27 @@ durability acknowledgement.
 ext4plus mutations. It accepts only an immutable backing reader, coalesces
 partial writes into bounded complete 4 KiB copy-on-write images, serves reads
 from that overlay, and can discard the entire stage without issuing a home
-write. Sapote reloads every clean admitted mount with the retained stage as
-ext4plus's reader and only writer; both unmount phases refuse a nonempty stage,
-so an unclassified mutation cannot be silently dropped. A focused public test
-crosses a block boundary, proves coalescing and rollback, reaches the 64-block
-transaction bound, and proves the backing bytes never change. The Linux fixture
-additionally runs a real upstream file write through the stage and observes the
-overlay while the source image remains unchanged. The stage can also clone an
-input transaction into one atomic classified snapshot: each explicitly named
-ordered-data block must be staged exactly once, every remaining image becomes
-journaled metadata, and staged/revoked overlap is refused. Classification and
-sealing share one exclusive lock, so a successful snapshot cannot race a later
+write. ext4plus reports freed block ranges through the writer before changing
+allocation metadata. The journal stage bounds and deduplicates that set,
+removes a same-transaction image when its block is freed, and emits the
+corresponding JBD2 revoke record; ordinary direct writers use the default no-op
+callback. Sapote reloads every clean admitted mount with the retained stage as
+ext4plus's reader and only writer; both unmount phases refuse pending images or
+revocations, so an unclassified mutation cannot be silently dropped. A focused
+public test crosses a block boundary, proves coalescing and rollback, reaches
+the 64-block image and revocation bounds, and proves the backing bytes never
+change. The Linux fixture additionally runs a real upstream file write through
+the stage and observes the overlay while the source image remains unchanged.
+The stage can also clone an input transaction into one atomic classified
+snapshot: each explicitly named ordered-data block must be staged exactly once,
+derived revocations are added, every remaining image becomes journaled
+metadata, and staged/revoked overlap is refused. Classification and sealing
+share one exclusive lock, so a successful snapshot cannot race a later
 upstream write. Refused classification leaves the stage open; rollback clears
-and reopens it, but the mutated filesystem object must still be discarded. An open file can
-report the initialized physical block at a byte offset so Sapote can derive the
-ordered-data set after a staged regular-file write without exposing a writer.
+and reopens it, but the mutated filesystem object must still be discarded. An
+open file can report the initialized physical block at a byte offset so Sapote
+can derive the ordered-data set after a staged regular-file write without
+exposing a writer.
 The real Linux fixture persists the checksummed recovery marker, reloads the
 upstream filesystem on that dirty-marker backing, performs an allocation-bearing
 sparse extension, and verifies that its staged block-zero image cannot clear the
@@ -140,10 +146,12 @@ commit, and checks both normal checkpoint completion and mount replay after a
 reset following the durable commit record. Both paths preserve the allocation
 counter through tail cleanup, verify the group-zero bitmap checksum
 independently, reopen the appended byte, and require read-only `e2fsck`
-acceptance. Platform VFS writes remain gated.
+acceptance. A following real truncate must derive a revoke for that appended
+data block, return the allocation count to its original value, and pass
+`e2fsck` again. Platform VFS writes remain gated.
 
 The stage is not yet connected to VFS mutations, which do not yet collect their
-touched offset range and revocation set for the classifier. The retry-safe
+touched offset range for ordered-data classification. The retry-safe
 final-clean plan is bound to VFS unmount through a writable NVMe lease, but the
 VFS cannot make a dirty mount yet. The private QEMU probe retains one
 allocation-bearing transaction across an injected live-superblock write
@@ -151,10 +159,10 @@ failure and an injected ordered-data flush failure. A separate Linux target
 cuts ten independent VMs immediately after every named durability barrier,
 reboots each disk, and requires namespace, data, resource, and read-only
 `e2fsck` acceptance. The real fixture separately pins pre-commit allocation
-rollback after a refused classification. Revocation derivation and fsync/close
-semantics remain incomplete. Those gaps keep every user-facing Sapote ext4
-operation read-only even though the private recovery and unmount leases are
-writable.
+rollback after a refused classification and derives revocations from a real
+truncate. Fsync/close semantics remain incomplete. Those gaps keep every user-
+facing Sapote ext4 operation read-only even though the private recovery and
+unmount leases are writable.
 
 Sapote also tightens upstream writer admission: an image carrying ext4's
 `RO_COMPAT_READONLY` feature discards the supplied writer, as does an image

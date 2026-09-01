@@ -1045,11 +1045,28 @@ impl Ext4 {
     }
 
     #[maybe_async::maybe_async]
+    async fn revoke_blocks(
+        &self,
+        block_index: FsBlockIndex,
+        num_blocks: NonZeroU32,
+    ) -> Result<(), Ext4Error> {
+        let Some(writer) = &self.0.writer else {
+            return Err(Ext4Error::Readonly);
+        };
+        writer
+            .revoke_blocks(block_index, num_blocks.get())
+            .await
+            .map_err(Ext4Error::Io)
+    }
+
+    #[maybe_async::maybe_async]
     pub(crate) async fn free_block(
         &self,
         block_index: FsBlockIndex,
     ) -> Result<(), Ext4Error> {
         assert_ne!(block_index, 0);
+        self.revoke_blocks(block_index, NonZeroU32::new(1).unwrap())
+            .await?;
         let (block_group_index, block_offset) =
             self.block_block_group_location(block_index)?;
         let block_bitmap_handle =
@@ -1078,6 +1095,7 @@ impl Ext4 {
         num_blocks: NonZeroU32,
     ) -> Result<(), Ext4Error> {
         assert_ne!(block_index, 0);
+        self.revoke_blocks(block_index, num_blocks).await?;
         let (block_group_index, block_offset) =
             self.block_block_group_location(block_index)?;
         let block_bitmap_handle =

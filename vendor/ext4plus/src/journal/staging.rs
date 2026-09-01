@@ -10,14 +10,14 @@
 
 use super::transaction::{
     FILESYSTEM_SUPERBLOCK_START_BYTE, JOURNAL_BLOCK_BYTES,
-    JOURNAL_TRANSACTION_MAX_METADATA_BLOCKS, JournalBlockImage, JournalTransaction,
-    JournalTransactionError,
+    JOURNAL_TRANSACTION_MAX_METADATA_BLOCKS, JOURNAL_TRANSACTION_MAX_REVOKED_BLOCKS,
+    JournalBlockImage, JournalTransaction, JournalTransactionError,
 };
 use crate::error::BoxedError;
 use crate::sync::RwLock;
 use crate::{Ext4Read, Ext4Write};
 use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::error::Error;
@@ -32,6 +32,8 @@ pub enum JournalMutationStageError {
     Range,
     /// One mutation attempt exceeded the stage's transaction safety bound.
     TooManyBlocks,
+    /// One mutation attempt freed more blocks than one revoke record permits.
+    TooManyRevocations,
     /// The stage was sealed into an immutable transaction snapshot.
     Sealed,
 }
@@ -42,6 +44,7 @@ impl Display for JournalMutationStageError {
             Self::Geometry => "mutation stage geometry is invalid",
             Self::Range => "mutation stage byte range is invalid",
             Self::TooManyBlocks => "mutation stage block bound exceeded",
+            Self::TooManyRevocations => "mutation stage revocation bound exceeded",
             Self::Sealed => "mutation stage is sealed",
         };
         formatter.write_str(message)
@@ -98,6 +101,7 @@ impl From<JournalTransactionError> for JournalMutationPlanError {
 struct JournalMutationState {
     sealed: bool,
     blocks: BTreeMap<u64, Vec<u8>>,
+    revoked_blocks: BTreeSet<u64>,
 }
 
 /// A bounded overlay that never writes through to its backing reader.
@@ -131,6 +135,7 @@ impl JournalMutationStage {
             state: RwLock::new(JournalMutationState {
                 sealed: false,
                 blocks: BTreeMap::new(),
+                revoked_blocks: BTreeSet::new(),
             }),
         })
     }
@@ -150,6 +155,19 @@ impl JournalMutationStage {
     #[must_use]
     pub fn staged_block_count(&self) -> usize {
         self.state.read().blocks.len()
+    }
+
+    /// Return the number of distinct filesystem blocks revoked by this stage.
+    #[must_use]
+    pub fn revoked_block_count(&self) -> usize {
+        self.state.read().revoked_blocks.len()
+    }
+
+    /// Return whether this stage owns no pending images or revocations.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        let state = self.state.read();
+        state.blocks.is_empty() && state.revoked_blocks.is_empty()
     }
 
     /// Return whether classification has frozen this stage for execution.
@@ -199,6 +217,11 @@ impl JournalMutationStage {
             }
         }
         let mut output = transaction.clone();
+        for block in state.revoked_blocks.iter() {
+            if !output.revokes_block(*block) {
+                output.stage_revocation(*block)?;
+            }
+        }
         for (block, bytes) in state.blocks.iter() {
             if output.revokes_block(*block) {
                 return Err(JournalMutationPlanError::StagedBlockRevoked);
@@ -219,6 +242,7 @@ impl JournalMutationStage {
     pub fn rollback(&self) {
         let mut state = self.state.write();
         state.blocks.clear();
+        state.revoked_blocks.clear();
         state.sealed = false;
     }
 }
@@ -284,6 +308,40 @@ impl Ext4Write for JournalMutationStage {
             image[within..within + length].copy_from_slice(&remaining[..length]);
             position += length as u64;
             remaining = &remaining[length..];
+        }
+        Ok(())
+    }
+
+    fn revoke_blocks(
+        &self,
+        start_block: u64,
+        block_count: u32,
+    ) -> Result<(), BoxedError> {
+        let end = start_block
+            .checked_add(u64::from(block_count))
+            .ok_or_else(|| Box::new(JournalMutationStageError::Range) as BoxedError)?;
+        let filesystem_blocks = self.filesystem_bytes / JOURNAL_BLOCK_BYTES as u64;
+        if block_count == 0 || start_block == 0 || end > filesystem_blocks {
+            return Err(Box::new(JournalMutationStageError::Range));
+        }
+        let mut state = self.state.write();
+        if state.sealed {
+            return Err(Box::new(JournalMutationStageError::Sealed));
+        }
+        let additions = (start_block..end)
+            .filter(|block| !state.revoked_blocks.contains(block))
+            .count();
+        if state
+            .revoked_blocks
+            .len()
+            .checked_add(additions)
+            .is_none_or(|count| count > JOURNAL_TRANSACTION_MAX_REVOKED_BLOCKS)
+        {
+            return Err(Box::new(JournalMutationStageError::TooManyRevocations));
+        }
+        for block in start_block..end {
+            state.blocks.remove(&block);
+            state.revoked_blocks.insert(block);
         }
         Ok(())
     }

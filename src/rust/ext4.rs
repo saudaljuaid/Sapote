@@ -204,7 +204,7 @@ fn load_staged_view(
     .map_err(map_error)?;
     let journal = load_journal_inode_map(&filesystem).map_err(map_journal_error)?;
     if journal.filesystem_needs_recovery() != needs_recovery
-        || stage.staged_block_count() != 0
+        || !stage.is_empty()
         || stage.is_sealed()
     {
         return Err(Status::Invalid);
@@ -508,7 +508,7 @@ pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, I
     let filesystem = Ext4::load_with_writer(Box::new(stage.clone()), Some(Box::new(stage.clone())))
         .map_err(map_error)?;
     let journal = load_journal_inode_map(&filesystem).map_err(map_journal_error)?;
-    if journal.filesystem_needs_recovery() || stage.staged_block_count() != 0 {
+    if journal.filesystem_needs_recovery() || !stage.is_empty() {
         return Err(Status::Invalid);
     }
     let clean_ring = journal.into_clean_ring().map_err(|_| Status::Invalid)?;
@@ -549,7 +549,7 @@ fn arm_recovery_marker(mounted: &mut Mounted) -> Result<(), Status> {
         }
         return Ok(());
     }
-    if view_needs_recovery || mounted.stage.staged_block_count() != 0 || mounted.stage.is_sealed() {
+    if view_needs_recovery || !mounted.stage.is_empty() || mounted.stage.is_sealed() {
         return Err(Status::Invalid);
     }
     let operations = mounted
@@ -698,7 +698,7 @@ pub(crate) fn transaction_probe(
     if mounted.pending_mutation.is_some() {
         return resume_pending_mutation(mounted, &absolute, offset, source);
     }
-    if mounted.stage.staged_block_count() != 0 || mounted.stage.is_sealed() {
+    if !mounted.stage.is_empty() || mounted.stage.is_sealed() {
         let recovery = mounted
             .journal
             .filesystem_recovery_marker_is_durable()
@@ -848,7 +848,7 @@ pub(crate) fn transaction_probe(
 /// Retry and durably execute the final clean plan while C holds a write lease.
 pub(crate) fn prepare_unmount(mounted: &mut Mounted) -> Result<(), Status> {
     if mounted.pending_mutation.is_some()
-        || mounted.stage.staged_block_count() != 0
+        || !mounted.stage.is_empty()
         || mounted.stage.is_sealed()
     {
         return Err(Status::Invalid);
@@ -873,7 +873,7 @@ pub(crate) fn prepare_unmount(mounted: &mut Mounted) -> Result<(), Status> {
 /// Refuse to release a mount unless its retained journal state is idle and clean.
 pub(crate) fn unmount(mounted: &Mounted) -> Result<(), Status> {
     if mounted.pending_mutation.is_some()
-        || mounted.stage.staged_block_count() != 0
+        || !mounted.stage.is_empty()
         || mounted.stage.is_sealed()
     {
         return Err(Status::Invalid);

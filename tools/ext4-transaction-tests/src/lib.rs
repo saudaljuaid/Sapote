@@ -193,8 +193,15 @@ fn mutation_stage_coalesces_partial_blocks_without_writing_through() {
     assert_eq!(&overlaid[10..], &original[10..]);
     assert_eq!(&backing[8186..8202], original.as_slice());
 
+    Ext4Write::revoke_blocks(&stage, 2, 1).unwrap();
+    assert_eq!(stage.staged_block_count(), 1);
+    assert_eq!(stage.revoked_block_count(), 1);
+    assert!(!stage.is_empty());
+
     stage.rollback();
     assert_eq!(stage.staged_block_count(), 0);
+    assert_eq!(stage.revoked_block_count(), 0);
+    assert!(stage.is_empty());
     Ext4Read::read(&stage, 8186, &mut overlaid).unwrap();
     assert_eq!(overlaid.as_slice(), original.as_slice());
 
@@ -206,6 +213,54 @@ fn mutation_stage_coalesces_partial_blocks_without_writing_through() {
     assert_eq!(error.to_string(), JournalMutationStageError::TooManyBlocks.to_string());
     assert_eq!(stage.staged_block_count(), 64);
     assert_eq!(backing[65 * JOURNAL_BLOCK_BYTES], (65 * JOURNAL_BLOCK_BYTES % 251) as u8);
+}
+
+#[test]
+fn mutation_stage_derives_bounded_revocations_from_freed_blocks() {
+    let backing = Rc::new(vec![0u8; JOURNAL_BLOCK_BYTES * 70]);
+    let stage = JournalMutationStage::new(
+        Box::new(backing),
+        u64::try_from(JOURNAL_BLOCK_BYTES * 70).unwrap(),
+    )
+    .unwrap();
+    Ext4Write::write(&stage, JOURNAL_BLOCK_BYTES as u64, &[0x11]).unwrap();
+    Ext4Write::write(&stage, JOURNAL_BLOCK_BYTES as u64 * 2, &[0x22]).unwrap();
+    Ext4Write::revoke_blocks(&stage, 2, 1).unwrap();
+    assert_eq!(stage.staged_block_count(), 1);
+    assert_eq!(stage.revoked_block_count(), 1);
+
+    let transaction = stage
+        .build_transaction(&JournalTransaction::new(7, UUID, MAXIMUM_BLOCK).unwrap(), &[])
+        .unwrap();
+    assert!(transaction.revokes_block(2));
+    let plan = transaction
+        .commit_plan(&[3000, 3001, 3002, 3003])
+        .unwrap();
+    assert!(plan.iter().any(|operation| matches!(
+        operation,
+        JournalCommitOperation::WriteHomeMetadata(image) if image.block_index() == 1
+    )));
+    assert!(!plan.iter().any(|operation| matches!(
+        operation,
+        JournalCommitOperation::WriteHomeMetadata(image) if image.block_index() == 2
+    )));
+
+    stage.rollback();
+    Ext4Write::revoke_blocks(&stage, 1, 64).unwrap();
+    assert_eq!(stage.revoked_block_count(), 64);
+    assert_eq!(
+        Ext4Write::revoke_blocks(&stage, 65, 1)
+            .unwrap_err()
+            .to_string(),
+        JournalMutationStageError::TooManyRevocations.to_string()
+    );
+    assert_eq!(stage.revoked_block_count(), 64);
+    assert_eq!(
+        Ext4Write::revoke_blocks(&stage, 0, 1)
+            .unwrap_err()
+            .to_string(),
+        JournalMutationStageError::Range.to_string()
+    );
 }
 
 #[test]
@@ -1325,6 +1380,111 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
         "e2fsck rejected committed image:\n{}\n{}",
         String::from_utf8_lossy(&fsck.stdout),
         String::from_utf8_lossy(&fsck.stderr)
+    );
+
+    drop(final_file);
+    drop(final_filesystem);
+    let truncate_filesystem = Ext4::load(Box::new(commit_storage.bytes.clone())).unwrap();
+    let truncate_journal = load_journal_inode_map(&truncate_filesystem).unwrap();
+    let mut truncate_ring = truncate_journal.into_clean_ring().unwrap();
+    let truncate_marker_plan = truncate_ring.prepare_recovery_marker_plan().unwrap();
+    let mut truncate_storage = VectorStorage {
+        bytes: commit_storage.bytes.clone(),
+        flushes: Vec::new(),
+    };
+    execute_commit_operations(&mut truncate_storage, &truncate_marker_plan).unwrap();
+    truncate_ring.mark_recovery_marker_durable().unwrap();
+    let truncate_backing = Rc::new(truncate_storage.bytes.clone());
+    let truncate_stage = Rc::new(
+        JournalMutationStage::new(
+            Box::new(truncate_backing.clone()),
+            u64::try_from(truncate_backing.len()).unwrap(),
+        )
+        .unwrap(),
+    );
+    let truncate_mutation = Ext4::load_with_recovery_writer(
+        Box::new(truncate_stage.clone()),
+        Some(Box::new(truncate_stage.clone())),
+    )
+    .unwrap();
+    let mut truncate_file = truncate_mutation.open(b"/system/README.TXT").unwrap();
+    truncate_file.truncate(original_size).unwrap();
+    assert_eq!(truncate_file.inode().size_in_bytes(), original_size);
+    assert_eq!(truncate_stage.revoked_block_count(), 1);
+    drop(truncate_file);
+    drop(truncate_mutation);
+    let truncate_superblock = truncate_stage
+        .staged_images()
+        .into_iter()
+        .find(|image| image.block_index() == 0)
+        .expect("freeing the appended block must stage allocation counters");
+    let truncate_transaction = truncate_stage
+        .build_transaction(&truncate_ring.begin_transaction().unwrap(), &[])
+        .unwrap();
+    assert!(truncate_transaction.revokes_block(appended_data_block));
+    let truncate_prepared = truncate_ring.prepare(&truncate_transaction).unwrap();
+    let truncate_checkpointed_superblock = truncate_ring
+        .admit_checkpointed_filesystem_superblock(
+            &truncate_prepared,
+            &truncate_superblock,
+        )
+        .unwrap();
+    let truncate_commit_plan = truncate_ring
+        .prepare_commit_plan(&truncate_prepared)
+        .unwrap();
+    execute_commit_operations(&mut truncate_storage, &truncate_commit_plan).unwrap();
+    truncate_ring
+        .mark_commit_durable(truncate_prepared.ticket())
+        .unwrap();
+    let truncate_checkpoint_plan = truncate_ring
+        .prepare_checkpoint_plan(truncate_prepared.ticket())
+        .unwrap();
+    execute_commit_operations(&mut truncate_storage, &truncate_checkpoint_plan).unwrap();
+    truncate_ring
+        .checkpoint_durable_with_filesystem_superblock(
+            &truncate_checkpointed_superblock,
+        )
+        .unwrap();
+    let truncate_clean_plan = truncate_ring.prepare_filesystem_clean_plan().unwrap();
+    execute_commit_operations(&mut truncate_storage, &truncate_clean_plan).unwrap();
+    truncate_ring.mark_filesystem_clean_durable().unwrap();
+
+    let truncated_filesystem = Ext4::load(Box::new(truncate_storage.bytes.clone())).unwrap();
+    let truncated_journal = load_journal_inode_map(&truncated_filesystem).unwrap();
+    assert!(!truncated_journal.filesystem_needs_recovery());
+    truncated_journal.into_clean_ring().unwrap();
+    let mut truncated_file = truncated_filesystem
+        .open(b"/system/README.TXT")
+        .unwrap();
+    let mut removed_append = [0u8; 1];
+    assert_eq!(truncated_file.inode().size_in_bytes(), original_size);
+    assert_eq!(
+        truncated_file
+            .read_bytes_at(&mut removed_append, append_offset)
+            .unwrap(),
+        0
+    );
+    let truncated_superblock = &truncate_storage.bytes[1024..2048];
+    let truncated_free_blocks = u64::from(u32::from_le_bytes(
+        truncated_superblock[0x0c..0x10].try_into().unwrap(),
+    )) | (u64::from(u32::from_le_bytes(
+        truncated_superblock[0x158..0x15c].try_into().unwrap(),
+    )) << 32);
+    assert_eq!(truncated_free_blocks, initial_free_blocks);
+
+    let truncated_path = std::path::Path::new(&path).with_extension("truncated.img");
+    std::fs::write(&truncated_path, &truncate_storage.bytes).unwrap();
+    let truncated_fsck = std::process::Command::new("e2fsck")
+        .args(["-fn"])
+        .arg(&truncated_path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&truncated_path);
+    assert!(
+        truncated_fsck.status.success(),
+        "e2fsck rejected truncated image:\n{}\n{}",
+        String::from_utf8_lossy(&truncated_fsck.stdout),
+        String::from_utf8_lossy(&truncated_fsck.stderr)
     );
 }
 

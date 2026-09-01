@@ -32,6 +32,19 @@ pub trait Ext4Write {
         start_byte: u64,
         src: &[u8],
     ) -> Result<(), BoxedError>;
+
+    /// Record that a contiguous range of filesystem blocks was freed.
+    ///
+    /// Direct writers do not need a revoke side channel. Journal staging
+    /// writers override this callback so recovery cannot replay an older
+    /// metadata image onto storage that has since been freed or reallocated.
+    async fn revoke_blocks(
+        &self,
+        _start_block: u64,
+        _block_count: u32,
+    ) -> Result<(), BoxedError> {
+        Ok(())
+    }
 }
 
 /// Interface used by [`Ext4`] to write the filesystem data to a storage
@@ -42,6 +55,15 @@ pub trait Ext4Write {
 pub trait Ext4Write {
     /// Write bytes from `src`, starting at `start_byte`.
     fn write(&self, start_byte: u64, src: &[u8]) -> Result<(), BoxedError>;
+
+    /// Record that a contiguous range of filesystem blocks was freed.
+    fn revoke_blocks(
+        &self,
+        _start_block: u64,
+        _block_count: u32,
+    ) -> Result<(), BoxedError> {
+        Ok(())
+    }
 }
 
 /// Interface used by [`Ext4`] to write the filesystem data to a storage
@@ -57,6 +79,15 @@ pub trait Ext4Write: Send + Sync {
         start_byte: u64,
         src: &[u8],
     ) -> Result<(), BoxedError>;
+
+    /// Record that a contiguous range of filesystem blocks was freed.
+    async fn revoke_blocks(
+        &self,
+        _start_block: u64,
+        _block_count: u32,
+    ) -> Result<(), BoxedError> {
+        Ok(())
+    }
 }
 
 /// Interface used by [`Ext4`] to write the filesystem data to a storage
@@ -67,6 +98,15 @@ pub trait Ext4Write: Send + Sync {
 pub trait Ext4Write: Send + Sync {
     /// Write bytes from `src`, starting at `start_byte`.
     fn write(&self, start_byte: u64, src: &[u8]) -> Result<(), BoxedError>;
+
+    /// Record that a contiguous range of filesystem blocks was freed.
+    fn revoke_blocks(
+        &self,
+        _start_block: u64,
+        _block_count: u32,
+    ) -> Result<(), BoxedError> {
+        Ok(())
+    }
 }
 
 #[cfg(all(
@@ -141,6 +181,14 @@ where
     ) -> Result<(), BoxedError> {
         (**self).write(start_byte, src).await
     }
+
+    async fn revoke_blocks(
+        &self,
+        start_block: u64,
+        block_count: u32,
+    ) -> Result<(), BoxedError> {
+        (**self).revoke_blocks(start_block, block_count).await
+    }
 }
 
 #[cfg(all(not(feature = "multi-threaded"), feature = "sync"))]
@@ -150,6 +198,14 @@ where
 {
     fn write(&self, start_byte: u64, src: &[u8]) -> Result<(), BoxedError> {
         (**self).write(start_byte, src)
+    }
+
+    fn revoke_blocks(
+        &self,
+        start_block: u64,
+        block_count: u32,
+    ) -> Result<(), BoxedError> {
+        (**self).revoke_blocks(start_block, block_count)
     }
 }
 
@@ -166,6 +222,14 @@ where
     ) -> Result<(), BoxedError> {
         (**self).write(start_byte, src).await
     }
+
+    async fn revoke_blocks(
+        &self,
+        start_block: u64,
+        block_count: u32,
+    ) -> Result<(), BoxedError> {
+        (**self).revoke_blocks(start_block, block_count).await
+    }
 }
 
 #[cfg(all(feature = "multi-threaded", feature = "sync"))]
@@ -175,6 +239,14 @@ where
 {
     fn write(&self, start_byte: u64, src: &[u8]) -> Result<(), BoxedError> {
         (**self).write(start_byte, src)
+    }
+
+    fn revoke_blocks(
+        &self,
+        start_block: u64,
+        block_count: u32,
+    ) -> Result<(), BoxedError> {
+        (**self).revoke_blocks(start_block, block_count)
     }
 }
 
@@ -274,6 +346,7 @@ mod tests {
     async fn test_mutex_vec_write() {
         let storage = Mutex::new(vec![0, 1, 2, 3]);
 
+        storage.revoke_blocks(1, 1).await.unwrap();
         storage.write(1, &[9, 8]).await.unwrap();
         assert_eq!(*storage.lock().unwrap(), vec![0, 9, 8, 3]);
 
