@@ -4773,6 +4773,7 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
     const struct boot_ledger *ledger = boot_ledger_installed();
     const struct boot_stage_receipt *nvme_proof;
     const struct boot_stage_receipt *fat16_proof;
+    struct sapote_ext4_mount_diagnostic mount_diagnostic = {0};
     struct sapote_ext4_recovery_report recovery = {0};
     const struct sapfs_drive_info drive = sapfs_drive(SAPFS_VOLUME_SYSTEM);
     struct sapfs_stat stat = {0};
@@ -4803,9 +4804,19 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
         kernel_test_fail("ext4 namespace proof skips are invalid");
     }
     if (!drive.present || !drive.mounted || !drive.read_only || !drive.healthy) {
+        if (!ext4_backend_mount_diagnostic(SAPFS_VOLUME_SYSTEM,
+                &mount_diagnostic)) {
+            kernel_test_fail("ext4 mount diagnostic is unavailable");
+        }
         console_write("ST EXT4 RECOVERY mount status ");
         console_write_u64((uint64_t)ext4_backend_last_mount_status(
             SAPFS_VOLUME_SYSTEM));
+        console_write(" begin ");
+        console_write_u64((uint64_t)mount_diagnostic.begin_status);
+        console_write(" rust ");
+        console_write_u64((uint64_t)(uint32_t)mount_diagnostic.rust_status);
+        console_write(" close ");
+        console_write_u64((uint64_t)mount_diagnostic.close_status);
         console_putc('\n');
         kernel_test_fail("ext4 recovered drive state is invalid");
     }

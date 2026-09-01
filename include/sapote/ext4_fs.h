@@ -61,6 +61,12 @@ struct sapote_ext4_recovery_report {
     bool performed;
 };
 
+struct sapote_ext4_mount_diagnostic {
+    enum sapfs_status begin_status;
+    int32_t rust_status;
+    enum sapfs_status close_status;
+};
+
 /* Private Rust/C storage callbacks; valid only during a backend operation. */
 int32_t sapote_ext4_block_read(
     uintptr_t context,
@@ -79,6 +85,8 @@ int32_t sapote_ext4_block_flush(uintptr_t context);
 void ext4_backend_initialize(void);
 enum sapfs_status ext4_backend_mount(enum sapfs_volume volume);
 enum sapfs_status ext4_backend_last_mount_status(enum sapfs_volume volume);
+bool ext4_backend_mount_diagnostic(enum sapfs_volume volume,
+    struct sapote_ext4_mount_diagnostic *diagnostic);
 enum sapfs_status ext4_backend_unmount(enum sapfs_volume volume);
 enum sapfs_status ext4_backend_sync(enum sapfs_volume volume);
 struct sapfs_drive_info ext4_backend_drive(enum sapfs_volume volume);
