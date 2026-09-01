@@ -86,6 +86,9 @@ extern int32_t sapote_ext4_create_directory_probe(uintptr_t mounted,
     const uint8_t *path, size_t path_length);
 extern int32_t sapote_ext4_remove_directory_probe(uintptr_t mounted,
     const uint8_t *path, size_t path_length);
+extern int32_t sapote_ext4_rename_probe(uintptr_t mounted,
+    const uint8_t *source, size_t source_length, const uint8_t *destination,
+    size_t destination_length);
 extern int32_t sapote_ext4_directory_entry(uintptr_t mounted,
     const uint8_t *path, size_t path_length, uint64_t index,
     struct sapote_ext4_directory_entry *entry, bool *present);
@@ -1082,6 +1085,32 @@ enum sapfs_status ext4_backend_remove_directory_probe(
     }
     status = map_status(sapote_ext4_remove_directory_probe(mount->rust_mount,
         (const uint8_t *)path, length));
+    close_status = end_operation(mount, NULL);
+    return status != SAPFS_STATUS_OK ? status : close_status;
+}
+
+enum sapfs_status ext4_backend_rename_probe(enum sapfs_volume volume,
+    const char *source, const char *destination)
+{
+    struct ext4_mount_state *mount;
+    const size_t source_length = path_length(source);
+    const size_t destination_length = path_length(destination);
+    enum sapfs_status status;
+    enum sapfs_status close_status;
+
+    if (!valid_volume(volume) || source_length == 0U ||
+        source_length >= SAPFS_MAX_PATH || destination_length == 0U ||
+        destination_length >= SAPFS_MAX_PATH) {
+        return SAPFS_STATUS_INVALID_ARGUMENT;
+    }
+    mount = &ext4_mounts[volume];
+    status = begin_operation(mount, true);
+    if (status != SAPFS_STATUS_OK) {
+        return status;
+    }
+    status = map_status(sapote_ext4_rename_probe(mount->rust_mount,
+        (const uint8_t *)source, source_length,
+        (const uint8_t *)destination, destination_length));
     close_status = end_operation(mount, NULL);
     return status != SAPFS_STATUS_OK ? status : close_status;
 }

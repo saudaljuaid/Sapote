@@ -130,7 +130,9 @@ Sapote's directory delta initializes new directory inodes with checksummed
 Removal validates the complete single-block directory before changing the
 stage, updates the parent link count, frees the inode and data block, and
 returns that physical block so the platform adapter can require its exact JBD2
-revocation.
+revocation. A same-parent rename primitive adds the destination and removes the
+source without changing inode or parent link counts; it refuses replacement
+and leaves cross-parent moves to a future, separately proven adapter.
 The stage can also clone an input transaction into one atomic classified
 snapshot: each explicitly named ordered-data block must be staged exactly once,
 derived revocations are added, every remaining image becomes journaled

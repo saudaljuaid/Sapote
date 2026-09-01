@@ -712,6 +712,56 @@ impl Dir {
         Ok(())
     }
 
+    /// Rename an entry within this directory without replacing another entry.
+    ///
+    /// Link counts and a directory's `..` entry remain unchanged because this
+    /// bounded operation never crosses parent directories.
+    #[maybe_async::maybe_async]
+    pub async fn rename_entry(
+        &mut self,
+        source: DirEntryName<'_>,
+        destination: DirEntryName<'_>,
+        inode: Inode,
+    ) -> Result<(), Ext4Error> {
+        if source.0 == b"."
+            || source.0 == b".."
+            || destination.0 == b"."
+            || destination.0 == b".."
+        {
+            return Err(Ext4Error::DotEntry);
+        }
+        if source == destination {
+            return Err(Ext4Error::AlreadyExists);
+        }
+
+        let linked_inode =
+            get_dir_entry_inode_by_name(&self.fs, &self.inode, source).await?;
+        if linked_inode.index != inode.index {
+            return Err(dir_entry_error(self.inode.index));
+        }
+        match get_dir_entry_inode_by_name(
+            &self.fs,
+            &self.inode,
+            destination,
+        )
+        .await
+        {
+            Ok(_) => return Err(Ext4Error::AlreadyExists),
+            Err(Ext4Error::NotFound) => {}
+            Err(error) => return Err(error),
+        }
+
+        add_dir_entry(
+            &self.fs,
+            &mut self.inode,
+            destination,
+            inode.index,
+            inode.file_type(),
+        )
+        .await?;
+        remove_dir_entry(&self.fs, &mut self.inode, source).await
+    }
+
     /// Remove a directory entry at `path`.
     ///
     /// This is similar to `unlink(2)` for non-directories.

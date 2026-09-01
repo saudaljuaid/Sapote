@@ -106,6 +106,7 @@ enum PendingMutationKind {
     LinkFile,
     CreateDirectory,
     RemoveDirectory,
+    Rename,
 }
 
 struct PendingMutation {
@@ -1333,6 +1334,64 @@ pub(crate) fn remove_directory_probe(
     } else {
         Err(Status::Invalid)
     }
+}
+
+/// Rename one regular file or directory within its parent through JBD2.
+pub(crate) fn rename_probe(
+    mounted: &mut Mounted,
+    source: &[u8],
+    destination: &[u8],
+) -> Result<(), Status> {
+    let source_absolute = absolute_path(source)?;
+    let destination_absolute = absolute_path(destination)?;
+    let pending_key = namespace_pair_key(&source_absolute, &destination_absolute)?;
+    if mounted.pending_mutation.is_some() {
+        return resume_namespace_mutation(
+            mounted,
+            PendingMutationKind::Rename,
+            &pending_key,
+        );
+    }
+    if !mounted.stage.is_empty() || mounted.stage.is_sealed() {
+        let recovery = mounted
+            .journal
+            .filesystem_recovery_marker_is_durable()
+            .map_err(|_| Status::Invalid)?;
+        discard_uncommitted_stage(mounted, recovery)?;
+    }
+    arm_recovery_marker(mounted)?;
+    let source_path = Path::try_from(source_absolute.as_slice())
+        .map_err(|_| Status::Invalid)?;
+    let (source_parent, source_name) = parent_and_name(&source_absolute)?;
+    let (destination_parent, destination_name) =
+        parent_and_name(&destination_absolute)?;
+    if source_parent != destination_parent {
+        discard_uncommitted_stage(mounted, true)?;
+        return Err(Status::Invalid);
+    }
+    let mutation = (|| {
+        let inode = mounted
+            .filesystem
+            .path_to_inode(source_path, FollowSymlinks::ExcludeFinalComponent)?;
+        if !inode.file_type().is_regular_file() && !inode.file_type().is_dir() {
+            return Err(Ext4Error::IsASpecialFile);
+        }
+        let parent_inode = mounted
+            .filesystem
+            .path_to_inode(source_parent, FollowSymlinks::All)?;
+        let mut parent_directory =
+            Dir::open_inode(&mounted.filesystem, parent_inode)?;
+        parent_directory.rename_entry(source_name, destination_name, inode)
+    })();
+    if let Err(error) = mutation {
+        discard_uncommitted_stage(mounted, true)?;
+        return Err(map_error(error));
+    }
+    if mounted.stage.is_empty() || mounted.stage.revoked_block_count() != 0 {
+        discard_uncommitted_stage(mounted, true)?;
+        return Err(Status::Invalid);
+    }
+    commit_namespace_mutation(mounted, PendingMutationKind::Rename, pending_key)
 }
 
 /// Retry and durably execute the final clean plan while C holds a write lease.
