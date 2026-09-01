@@ -76,6 +76,10 @@ Sapote's mount adapter implements that boundary with native NVMe writes and
 `nvme_volume_flush()`. Dirty mounts checkpoint the validated replay set, flush
 home metadata, persist and flush the clean JBD2 superblock, clear and flush the
 checksummed ext4 recovery marker, then reload and re-admit the clean image.
+For future writable mounts, the ring exposes a separate final-clean plan only
+after all reservations are checkpointed and the durable JBD2 start is zero. It
+blocks new reservations until the checksummed ext4 marker clear is flushed, and
+the next commit cycle must make the recovery marker durable again.
 
 `JournalMutationStage` is the synchronous interception boundary for future
 ext4plus mutations. It accepts only an immutable backing reader, coalesces
@@ -88,11 +92,11 @@ through the stage and observes the overlay while the source image remains
 unchanged.
 
 The stage is not yet connected to VFS mutations or classified into ordered
-file data versus journaled metadata. Allocation rollback and revocations,
-failure injection, clean-unmount/fsync semantics, and deliberate recovery
-power-cut QEMU evidence are also incomplete. Those gaps keep every user-facing
-Sapote ext4 operation read-only even though the private mount recovery lease is
-writable.
+file data versus journaled metadata. The final-clean plan is not yet bound to a
+VFS unmount path. Allocation rollback and revocations, failure injection, fsync
+semantics, and the complete deliberate recovery power-cut QEMU matrix are also
+incomplete. Those gaps keep every user-facing Sapote ext4 operation read-only
+even though the private mount recovery lease is writable.
 
 Sapote also tightens upstream writer admission: an image carrying ext4's
 `RO_COMPAT_READONLY` feature now discards the supplied writer just as an image

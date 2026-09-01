@@ -725,6 +725,50 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
     );
     ring.mark_recovery_marker_durable().unwrap();
     assert!(ring.prepare_commit_plan(&prepared).is_ok());
+    assert_eq!(
+        ring.prepare_filesystem_clean_plan(),
+        Err(JournalTransactionError::JournalNotClean)
+    );
+    ring.mark_commit_durable(prepared.ticket()).unwrap();
+    let checkpoint = ring.prepare_checkpoint_plan(prepared.ticket()).unwrap();
+    assert!(matches!(
+        &checkpoint[0],
+        JournalCommitOperation::WriteJournalSuperblock { image, .. }
+            if image.start_block() == 0
+    ));
+    assert_eq!(
+        checkpoint[1],
+        JournalCommitOperation::Flush(JournalFlush::JournalState)
+    );
+    ring.checkpoint_durable(prepared.ticket()).unwrap();
+    let clean_plan = ring.prepare_filesystem_clean_plan().unwrap();
+    assert!(matches!(
+        &clean_plan[0],
+        JournalCommitOperation::WriteFilesystemSuperblock { start_byte, image }
+            if *start_byte == FILESYSTEM_SUPERBLOCK_START_BYTE
+                && image == &clean_filesystem_superblock
+    ));
+    assert_eq!(
+        clean_plan[1],
+        JournalCommitOperation::Flush(JournalFlush::FilesystemState)
+    );
+    ring.mark_filesystem_clean_durable().unwrap();
+
+    let mut next = ring.begin_transaction().unwrap();
+    next.stage_metadata(home_block, &filled(0x55)).unwrap();
+    let next = ring.prepare(&next).unwrap();
+    assert_eq!(
+        ring.prepare_commit_plan(&next),
+        Err(JournalTransactionError::RecoveryMarkerNotDurable)
+    );
+    let marker_plan = ring.prepare_recovery_marker_plan().unwrap();
+    assert!(matches!(
+        &marker_plan[0],
+        JournalCommitOperation::WriteFilesystemSuperblock { image, .. }
+            if image == &recovery_marker
+    ));
+    ring.mark_recovery_marker_durable().unwrap();
+    assert!(ring.prepare_commit_plan(&next).is_ok());
 
     let backing = Rc::new(std::fs::read(&path).unwrap());
     let stage = Rc::new(

@@ -1239,6 +1239,7 @@ enum FilesystemRecoveryState {
     Clean,
     PlanPrepared,
     Durable,
+    CleanPlanPrepared,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1412,15 +1413,85 @@ impl JournalRing {
         Ok(())
     }
 
+    /// Build the final write and flush that mark an idle filesystem clean.
+    ///
+    /// The recovery marker may clear only after every committed transaction
+    /// has been checkpointed, its clean JBD2 superblock has been flushed, and
+    /// the corresponding reservation has been reclaimed. While this plan is
+    /// pending, the ring refuses new reservations so a transaction cannot be
+    /// prepared behind a filesystem-superblock image that claims no recovery
+    /// is required.
+    pub fn prepare_filesystem_clean_plan(
+        &mut self,
+    ) -> Result<Vec<JournalCommitOperation>, JournalTransactionError> {
+        if self.filesystem_recovery_state != Some(FilesystemRecoveryState::Durable) {
+            return Err(JournalTransactionError::ReservationState);
+        }
+        if !self.active.is_empty() || self.used != 0 {
+            return Err(JournalTransactionError::JournalNotClean);
+        }
+        let superblock = self
+            .superblock
+            .as_ref()
+            .ok_or(JournalTransactionError::JournalStateUnavailable)?;
+        if superblock.start_block() != 0 {
+            return Err(JournalTransactionError::JournalNotClean);
+        }
+        let marker = self
+            .filesystem_superblock
+            .as_ref()
+            .ok_or(JournalTransactionError::FilesystemStateUnavailable)?;
+        if !marker.needs_recovery() {
+            return Err(JournalTransactionError::RecoveryStateMismatch);
+        }
+        let clean = marker.with_recovery_state(false);
+        self.filesystem_recovery_state = Some(FilesystemRecoveryState::CleanPlanPrepared);
+        Ok(vec![
+            JournalCommitOperation::WriteFilesystemSuperblock {
+                start_byte: FILESYSTEM_SUPERBLOCK_START_BYTE,
+                image: clean,
+            },
+            JournalCommitOperation::Flush(JournalFlush::FilesystemState),
+        ])
+    }
+
+    /// Acknowledge the completed final filesystem-state flush.
+    pub fn mark_filesystem_clean_durable(&mut self) -> Result<(), JournalTransactionError> {
+        if self.filesystem_recovery_state != Some(FilesystemRecoveryState::CleanPlanPrepared)
+            || !self.active.is_empty()
+            || self.used != 0
+        {
+            return Err(JournalTransactionError::ReservationState);
+        }
+        let superblock = self
+            .superblock
+            .as_ref()
+            .ok_or(JournalTransactionError::JournalStateUnavailable)?;
+        if superblock.start_block() != 0 {
+            return Err(JournalTransactionError::JournalNotClean);
+        }
+        let marker = self
+            .filesystem_superblock
+            .as_ref()
+            .ok_or(JournalTransactionError::FilesystemStateUnavailable)?;
+        if !marker.needs_recovery() {
+            return Err(JournalTransactionError::RecoveryStateMismatch);
+        }
+        self.filesystem_superblock = Some(marker.with_recovery_state(false));
+        self.filesystem_recovery_state = Some(FilesystemRecoveryState::Clean);
+        Ok(())
+    }
+
     /// Reserve ring slots and build a complete commit plan without issuing I/O.
     pub fn prepare(
         &mut self,
         transaction: &JournalTransaction,
     ) -> Result<JournalPreparedTransaction, JournalTransactionError> {
-        if self
-            .active
-            .iter()
-            .any(|reservation| reservation.state == ReservationState::TailStatePrepared)
+        if self.filesystem_recovery_state == Some(FilesystemRecoveryState::CleanPlanPrepared)
+            || self
+                .active
+                .iter()
+                .any(|reservation| reservation.state == ReservationState::TailStatePrepared)
         {
             return Err(JournalTransactionError::ReservationState);
         }
@@ -2120,11 +2191,79 @@ mod tests {
         superblock.map_clean_ring(MAXIMUM_BLOCK, &physical).unwrap()
     }
 
+    fn mapped_filesystem_ring(next_sequence: u32, slots: &[u64]) -> JournalRing {
+        let mut ring = mapped_ring(next_sequence, slots);
+        ring.filesystem_superblock = Some(FilesystemSuperblockImage {
+            bytes: [0; FILESYSTEM_SUPERBLOCK_BYTES],
+            needs_recovery: false,
+        });
+        ring.filesystem_recovery_state = Some(FilesystemRecoveryState::Clean);
+        ring
+    }
+
     fn finish_transaction(ring: &mut JournalRing, prepared: &JournalPreparedTransaction) {
         let _commit = ring.prepare_commit_plan(prepared).unwrap();
         ring.mark_commit_durable(prepared.ticket()).unwrap();
         let _checkpoint = ring.prepare_checkpoint_plan(prepared.ticket()).unwrap();
         ring.checkpoint_durable(prepared.ticket()).unwrap();
+    }
+
+    #[test]
+    fn clean_filesystem_state_waits_for_durable_empty_journal() {
+        let mut ring = mapped_filesystem_ring(17, &JOURNAL_SLOTS);
+        assert_eq!(
+            ring.prepare_filesystem_clean_plan(),
+            Err(JournalTransactionError::ReservationState)
+        );
+        let marker = ring.prepare_recovery_marker_plan().unwrap();
+        assert_eq!(marker.len(), 2);
+        ring.mark_recovery_marker_durable().unwrap();
+
+        let mut transaction = ring.begin_transaction().unwrap();
+        transaction.stage_metadata(200, &filled(0x22)).unwrap();
+        let prepared = ring.prepare(&transaction).unwrap();
+        assert_eq!(
+            ring.prepare_filesystem_clean_plan(),
+            Err(JournalTransactionError::JournalNotClean)
+        );
+        finish_transaction(&mut ring, &prepared);
+
+        let clean = ring.prepare_filesystem_clean_plan().unwrap();
+        assert!(matches!(
+            &clean[0],
+            JournalCommitOperation::WriteFilesystemSuperblock { start_byte, image }
+                if *start_byte == FILESYSTEM_SUPERBLOCK_START_BYTE
+                    && !image.needs_recovery()
+        ));
+        assert_eq!(
+            clean[1],
+            JournalCommitOperation::Flush(JournalFlush::FilesystemState)
+        );
+        let mut blocked = ring.begin_transaction().unwrap();
+        blocked.stage_metadata(201, &filled(0x33)).unwrap();
+        assert_eq!(
+            ring.prepare(&blocked),
+            Err(JournalTransactionError::ReservationState)
+        );
+        ring.mark_filesystem_clean_durable().unwrap();
+        assert_eq!(
+            ring.mark_filesystem_clean_durable(),
+            Err(JournalTransactionError::ReservationState)
+        );
+
+        let prepared = ring.prepare(&blocked).unwrap();
+        assert_eq!(
+            ring.prepare_commit_plan(&prepared),
+            Err(JournalTransactionError::RecoveryMarkerNotDurable)
+        );
+        let marker = ring.prepare_recovery_marker_plan().unwrap();
+        assert!(matches!(
+            &marker[0],
+            JournalCommitOperation::WriteFilesystemSuperblock { image, .. }
+                if image.needs_recovery()
+        ));
+        ring.mark_recovery_marker_durable().unwrap();
+        assert!(ring.prepare_commit_plan(&prepared).is_ok());
     }
 
     fn journal_images(operations: &[JournalCommitOperation]) -> Vec<Vec<u8>> {
