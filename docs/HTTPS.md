@@ -12,6 +12,15 @@ allocation. A short or failed sink write aborts the connection with a distinct
 status; callers can therefore stage to a temporary file, hash, sync, and publish
 only after the complete authenticated response succeeds.
 
+`sapote_package_fetch_stage()` applies that pattern to the Data volume. It
+streams into a temporary path while computing SHA-256, optionally requires an
+exact signed length and digest, closes and flushes the temporary file, atomically
+replaces an inert staging path, and flushes the namespace change. Every
+pre-publish refusal removes and syncs the temporary file. A failure after replace
+reports `published=true` and `durable=false` so the caller must re-open and
+authenticate the staged bytes after reboot; it never treats transport success as
+package admission or advances installed-package authority.
+
 The caller supplies one lowercase DNS hostname, a port, an origin-form path,
 an immutable external trust-anchor set, one absolute monotonic deadline, and a
 fixed output buffer or maximum streamed body length. The TLS layer snapshots at
@@ -76,7 +85,8 @@ length, short body, and extra body refusal. The same harness interrupts a
 blocking lower-level TLS read from a second thread. The host adapter reports
 `HTTPS HANDLES clean` after every case.
 
-`apps/native-https/` is the freestanding Ring 3 proof client.
+`apps/native-https/` is the freestanding Ring 3 proof client. It exercises the
+streaming SHA-256 staging path, both durability barriers, and atomic publication.
 `tools/https_network_fixture.py` is its offline raw-Ethernet peer for QEMU's
 dgram backend: it supplies DHCP/ARP/DNS, a TCP peer on 10.0.2.20:443, a Python
 `ssl.MemoryBIO` TLS 1.2 server using the committed certificate, strict request
@@ -107,8 +117,8 @@ port 443, and refuses captures containing the request, HTTP status line, or
 body in plaintext.
 
 This is an in-guest TLS 1.2/HTTPS download over Sapote DNS and TCP. The client
-writes an inert bounded body to its Data namespace without installing or
-executing it. There is no general
+writes an exact-digest, durably staged inert body to its Data namespace without
+installing or executing it. There is no general
 Internet, redirect, chunked/compressed response, HTTP/2, mutable system trust
 store, OCSP/CRL, certificate pin update, or persistent clock anti-rollback
 claim.

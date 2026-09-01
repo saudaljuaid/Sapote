@@ -359,9 +359,10 @@ normal recovery core to prove both the pre-switch `OLD` and encoded post-switch
 `NEW` decisions before writing authority. It then uses the ordered replacement
 protocol above. Once the new authority sync completes, `report.committed` is
 true and reboot recovery must select the target even if later cleanup reports an
-error. There is still no shell or native ABI endpoint, signature-key provider,
-fresh-store bootstrap, repair path, or end-user lifecycle that can present this
-private service as a completed installation feature.
+error. Platform trust, fresh-store bootstrap, repair construction, and durable
+HTTPS staging now exist as separate bounded layers. There is still no shell or
+native ABI endpoint or end-user lifecycle that can present this private service
+as a completed installation feature.
 
 Fresh-store bootstrap is a distinct privileged operation because the normal
 journal format intentionally requires a real base database and never invents a
@@ -461,6 +462,7 @@ cleanup ordering, durability failure with recoverable state, and zero live
 handle/allocation census on every exit.
 
 The transaction service starts from authenticated package bytes and an existing
-valid authenticated builder result. Download, trust-provider provisioning,
-client presentation, and writable-ext4 backend evidence are separate integration
-layers.
+valid authenticated builder result. The SDK can durably stage exact HTTPS bytes
+and boot provisions the immutable trust provider, but no privileged client
+endpoint connects those layers yet. Client presentation and writable-ext4
+backend evidence remain separate integration layers.

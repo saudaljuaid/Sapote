@@ -1,17 +1,21 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
+#include <sapote/package_fetch.h>
 #include <sapote/runtime.h>
-#include <sapote/tls.h>
 
 #include <stdio.h>
-#include <string.h>
 
 #include "trust_anchor.h"
 
 #define HTTPS_PORT 443U
 #define HTTPS_DEADLINE_NS UINT64_C(15000000000)
+#define EXPECTED_BODY_BYTES 33U
 
-static const unsigned char expected_body[] =
-    "hello from the Sapote HTTPS peer\n";
+static const uint8_t expected_sha256[32] = {
+    0xbeU, 0xb6U, 0x68U, 0xceU, 0xc4U, 0x96U, 0x0aU, 0x4fU,
+    0x74U, 0xddU, 0x82U, 0x70U, 0x3aU, 0xe8U, 0x2cU, 0x3dU,
+    0x0aU, 0x69U, 0xd4U, 0xecU, 0xc1U, 0x3bU, 0x09U, 0xdeU,
+    0xc6U, 0x4fU, 0xc7U, 0xecU, 0x72U, 0x26U, 0x5eU, 0x53U
+};
 
 static uint64_t deadline(void)
 {
@@ -23,40 +27,33 @@ static uint64_t deadline(void)
 
 int main(void)
 {
-    unsigned char body[128];
-    struct sapote_https_response response;
-    const struct sapote_https_request request = {
+    struct sapote_package_fetch_report report;
+    const struct sapote_package_fetch_request request = {
         "repo.sapote.test", HTTPS_PORT, 0U, "/artifact.bin",
         sapote_https_test_anchors,
         sizeof(sapote_https_test_anchors) /
             sizeof(sapote_https_test_anchors[0]),
-        deadline(), body, sizeof(body)
+        deadline(), 128U, EXPECTED_BODY_BYTES, expected_sha256,
+        "HTTPS.NEW", "HTTPS.TXT"
     };
-    enum sapote_https_status status;
-    FILE *output;
+    enum sapote_package_fetch_status status;
 
     puts("SAPOTE HTTPSAPP PHASE start");
-    status = sapote_https_get(&request, &response);
-    if (status != SAPOTE_HTTPS_OK) {
-        printf("SAPOTE HTTPSAPP REFUSED %s tls=%d transport=%ld\n",
-            sapote_https_status_string(status), response.bearssl_error,
-            response.transport_error);
+    status = sapote_package_fetch_stage(&request, &report);
+    if (status != SAPOTE_PACKAGE_FETCH_OK) {
+        printf("SAPOTE HTTPSAPP REFUSED %s https=%s tls=%d transport=%ld "
+            "storage=%ld cleanup=%ld\n",
+            sapote_package_fetch_status_string(status),
+            sapote_https_status_string(report.https_status),
+            report.bearssl_error, report.transport_error,
+            report.storage_error, report.cleanup_error);
         return 20;
     }
-    if (response.status_code != 200U ||
-        response.body_length != sizeof(expected_body) - 1U ||
-        memcmp(body, expected_body, sizeof(expected_body) - 1U) != 0) {
+    if (report.bytes_received != EXPECTED_BODY_BYTES ||
+        !report.published || !report.durable) {
         return 21;
     }
     puts("SAPOTE HTTPSAPP PHASE authenticated-download PASS");
-    output = fopen("HTTPS.TXT", "w");
-    if (output == NULL ||
-        fwrite(body, 1U, response.body_length, output) !=
-            response.body_length ||
-        fflush(output) != 0 || fclose(output) != 0 ||
-        sapote_volume_sync(SAPOTE_VOLUME_DATA) < 0) {
-        return 22;
-    }
     puts("SAPOTE HTTPSAPP PHASE durable-output PASS");
     puts("SAPOTE HTTPSAPP PASS hostname time trust length close");
     return 0;

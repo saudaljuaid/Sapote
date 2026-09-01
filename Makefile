@@ -79,6 +79,7 @@ PACKAGE_STATE_HOST_TEST := $(TEST_BUILD_DIR)/package-state-host-test
 PACKAGE_SERVICE_HOST_TEST := $(TEST_BUILD_DIR)/package-service-host-test
 PACKAGE_MANAGER_HOST_TEST := $(TEST_BUILD_DIR)/package-manager-host-test
 PACKAGE_TRUST_HOST_TEST := $(TEST_BUILD_DIR)/package-trust-host-test
+PACKAGE_FETCH_HOST_TEST := $(TEST_BUILD_DIR)/package-fetch-host-test
 TLS_HOST_TEST := $(TEST_BUILD_DIR)/tls-client-host-test$(HOST_EXEEXT)
 TLS_HOST_OBJECT := $(TEST_BUILD_DIR)/tls-client.o
 TLS_HOST_WRAPPER_OBJECT := $(TEST_BUILD_DIR)/tls-wrapper.o
@@ -383,7 +384,7 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d) $(MONOCYPHER_OBJECTS:.o=.d) \
 # They never create a file of their own name, so they rerun regardless.
 .PHONY: all audio-wav-tests capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios dynamic-elf-tests ext4-images ext4-tests fat32-images force-package-trust hooks https-tests \
 	iso kernel lint native-apps native-audio-proof native-dynamic-proof native-https-proof native-sdl-proof port-tests qemu-port-tests reproducible-sdk run \
-	package-manager-tests package-repository-tests package-service-tests package-state-tests package-transaction-tests package-trust-asset-tests package-trust-tests qemu-test-ext4-powercuts screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests zlib-tests
+	package-fetch-tests package-manager-tests package-repository-tests package-service-tests package-state-tests package-transaction-tests package-trust-asset-tests package-trust-tests qemu-test-ext4-powercuts screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests zlib-tests
 
 all: kernel
 
@@ -1274,6 +1275,20 @@ https-tests: $(HTTPS_HOST_TEST) tools/https_host_test.py \
 	$(PYTHON) tools/https_network_fixture.py --self-test
 	$(PYTHON) -u tools/https_host_test.py $(HTTPS_HOST_TEST)
 
+$(PACKAGE_FETCH_HOST_TEST): tools/package-fetch-host-test.c \
+		sdk/src/package_fetch.c sdk/include/sapote/package_fetch.h \
+		sdk/include/sapote/tls.h include/sapote/abi.h \
+		$(TLS_HOST_BEARSSL_LIB)
+	mkdir -p $(dir $@)
+	$(CC) -Iinclude -Ivendor/bearssl/inc -idirafter sdk/include \
+		-std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -Wshadow \
+		-Wundef -Wstrict-prototypes -Wmissing-prototypes \
+		tools/package-fetch-host-test.c sdk/src/package_fetch.c \
+		$(TLS_HOST_BEARSSL_LIB) -o $@
+
+package-fetch-tests: $(PACKAGE_FETCH_HOST_TEST)
+	$(PACKAGE_FETCH_HOST_TEST)
+
 $(EXT4_FIXTURE): tools/ext4_image.py
 	mkdir -p $(dir $@)
 	$(PYTHON) tools/ext4_image.py build $@ --report $@.json
@@ -1286,6 +1301,7 @@ verify: toolchain lint
 	$(MAKE) wall-clock-tests ext4-tests package-repository-tests \
 		package-transaction-tests package-state-tests package-service-tests \
 		package-trust-asset-tests package-trust-tests package-manager-tests \
+		package-fetch-tests \
 		dynamic-elf-tests \
 		https-tests tls-tests zlib-tests
 	$(PYTHON) tools/verify-ui-assets.py

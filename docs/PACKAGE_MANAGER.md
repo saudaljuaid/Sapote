@@ -132,5 +132,9 @@ generation-one bootstrap uses only admitted signed payload sources and a durable
 authority receipt rather than inventing a generation-zero database. A bounded
 repair builder preserves the installed graph and metadata while replacing only
 sorted owned paths whose authenticated bytes match the installed length and
-digest. Fetching, signature-provider setup, client commands, Store presentation,
-and writable-ext4 integration remain outside this parser and planner.
+digest. The SDK's `sapote_package_fetch_stage()` supplies bounded HTTPS
+streaming, incremental SHA-256, temporary-file cleanup, and two-barrier atomic
+publication for inert repository/package bytes. Platform trust provisioning is
+also wired at boot. A privileged native ABI endpoint, end-user client commands,
+Store presentation, and writable-ext4 integration remain outside this parser
+and planner.
