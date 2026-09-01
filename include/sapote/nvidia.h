@@ -16,6 +16,9 @@
  * and non-NVIDIA rejection also run as boot proofs. These probes do not enable
  * bus mastering or allocate DMA. The VBIOS probe temporarily changes the ROM
  * shadow-disable bit and restores it before returning.
+ *
+ * NOTHING HERE HAS BEEN RUN AGAINST NVIDIA SILICON. The QEMU model validates
+ * the emulated register contract; it is not evidence from physical hardware.
  */
 
 /* PCI-SIG vendor identifier assigned to NVIDIA Corporation. */
