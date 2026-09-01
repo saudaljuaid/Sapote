@@ -58,6 +58,22 @@ array, and topological ordering is iterative. The input byte buffers must remain
 immutable and live while returned views or plans are used because text and
 digest fields are slices into those authenticated buffers.
 
+## Authenticated staging views
+
+After `package_manager_package_open()` admits exact repository-bound and
+publisher-signed bytes, `package_manager_package_file()` exposes one immutable
+path, kind, mode, SONAME, SHA-256, and payload slice at a time. The accessor
+rechecks record bounds, path and kind invariants, and the payload digest before
+returning it. Dependency and conflict accessors expose the exact canonical
+relations from those same admitted bytes. Out-of-range and structurally forged
+views fail closed; no accessor writes a filesystem or reports installation.
+
+These slices are the extraction boundary for a privileged generation builder.
+They remain valid only while the admitted package buffer is live and unchanged.
+The future builder must still prevent path traversal and ownership collisions,
+write a complete next generation, verify it, and commit it through the package
+transaction protocol.
+
 ## Verification and integration
 
 `make package-manager-tests` builds real deterministic Ed25519 packages and
@@ -70,5 +86,5 @@ unsatisfied dependencies, conflicts, ambiguous providers, cycles, backtracking,
 and the dependency-depth bound.
 
 `package_service.c` recovers already-staged FAT32 generations. Fetching,
-signature-provider setup, extraction, generation building, client commands, and
-Store presentation are outside this parser and planner.
+signature-provider setup, generation building and commit, client commands, and
+Store presentation remain outside this parser and planner.

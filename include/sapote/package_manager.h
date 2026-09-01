@@ -151,6 +151,37 @@ struct package_manager_package_view {
     size_t payload_offset;
 };
 
+enum package_manager_file_kind {
+    PACKAGE_MANAGER_FILE_EXECUTABLE = 1,
+    PACKAGE_MANAGER_FILE_LIBRARY = 2,
+    PACKAGE_MANAGER_FILE_RESOURCE = 3,
+    PACKAGE_MANAGER_FILE_FONT = 4
+};
+
+/*
+ * Immutable slices into package bytes already admitted by
+ * package_manager_package_open().  The package buffer must remain live and
+ * unchanged while these views are used.
+ */
+struct package_manager_file_view {
+    const struct package_manager_package_view *package;
+    uint32_t package_index;
+    struct package_manager_text path;
+    struct package_manager_text soname;
+    enum package_manager_file_kind kind;
+    uint32_t mode;
+    const uint8_t *sha256;
+    const uint8_t *payload;
+    size_t payload_bytes;
+};
+
+struct package_manager_relation_view {
+    const struct package_manager_package_view *package;
+    uint32_t package_index;
+    struct package_manager_text identifier;
+    struct package_manager_text constraint;
+};
+
 enum package_manager_plan_operation {
     PACKAGE_MANAGER_PLAN_INSTALL = 1,
     PACKAGE_MANAGER_PLAN_UPDATE = 2,
@@ -206,6 +237,29 @@ enum package_manager_status package_manager_package_open(
     const struct package_manager_policy *policy,
     const struct package_manager_trust *trust,
     struct package_manager_package_view *result
+);
+
+/*
+ * Revalidates the selected record and file digest before exposing a payload
+ * slice.  It does not independently authenticate a fabricated package view;
+ * callers must use a view returned by package_manager_package_open().
+ */
+enum package_manager_status package_manager_package_file(
+    const struct package_manager_package_view *package,
+    uint32_t index,
+    struct package_manager_file_view *result
+);
+
+enum package_manager_status package_manager_package_dependency(
+    const struct package_manager_package_view *package,
+    uint32_t index,
+    struct package_manager_relation_view *result
+);
+
+enum package_manager_status package_manager_package_conflict(
+    const struct package_manager_package_view *package,
+    uint32_t index,
+    struct package_manager_relation_view *result
 );
 
 /*

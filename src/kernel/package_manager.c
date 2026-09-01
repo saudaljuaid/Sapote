@@ -936,6 +936,132 @@ static enum package_manager_status package_relation_at(
     return PACKAGE_MANAGER_STATUS_OK;
 }
 
+static enum package_manager_status package_relation_view(
+    const struct package_manager_package_view *package,
+    size_t table_offset,
+    uint32_t count,
+    uint32_t index,
+    struct package_manager_relation_view *result
+)
+{
+    struct package_manager_relation_view parsed;
+    enum package_manager_status status;
+    size_t record_offset;
+    if (package == NULL || result == NULL) {
+        return PACKAGE_MANAGER_STATUS_NULL_ARGUMENT;
+    }
+    if (package->bytes == NULL || count >
+            PACKAGE_MANAGER_REPOSITORY_MAX_RELATIONS_PER_PACKAGE ||
+        index >= count || table_offset > package->byte_count ||
+        !multiply_size(index, PACKAGE_RELATION_BYTES, &record_offset) ||
+        record_offset > package->byte_count - table_offset ||
+        PACKAGE_RELATION_BYTES >
+            package->byte_count - table_offset - record_offset) {
+        return PACKAGE_MANAGER_STATUS_TABLE;
+    }
+    status = package_relation_at(package->bytes, table_offset, count, index,
+        &parsed.identifier, &parsed.constraint);
+    if (status != PACKAGE_MANAGER_STATUS_OK) {
+        return status;
+    }
+    parsed.package = package;
+    parsed.package_index = index;
+    *result = parsed;
+    return PACKAGE_MANAGER_STATUS_OK;
+}
+
+enum package_manager_status package_manager_package_dependency(
+    const struct package_manager_package_view *package,
+    uint32_t index,
+    struct package_manager_relation_view *result
+)
+{
+    if (package == NULL) {
+        return PACKAGE_MANAGER_STATUS_NULL_ARGUMENT;
+    }
+    return package_relation_view(package, package->dependency_offset,
+        package->dependency_count, index, result);
+}
+
+enum package_manager_status package_manager_package_conflict(
+    const struct package_manager_package_view *package,
+    uint32_t index,
+    struct package_manager_relation_view *result
+)
+{
+    if (package == NULL) {
+        return PACKAGE_MANAGER_STATUS_NULL_ARGUMENT;
+    }
+    return package_relation_view(package, package->conflict_offset,
+        package->conflict_count, index, result);
+}
+
+enum package_manager_status package_manager_package_file(
+    const struct package_manager_package_view *package,
+    uint32_t index,
+    struct package_manager_file_view *result
+)
+{
+    struct package_manager_file_view parsed;
+    const uint8_t *record;
+    uint8_t digest[PACKAGE_MANAGER_SHA256_BYTES];
+    uint16_t kind;
+    uint16_t flags;
+    uint64_t payload_offset;
+    uint64_t payload_bytes;
+    size_t record_offset;
+    if (package == NULL || result == NULL) {
+        return PACKAGE_MANAGER_STATUS_NULL_ARGUMENT;
+    }
+    if (package->bytes == NULL || package->file_count == 0U ||
+        package->file_count > PACKAGE_MANAGER_PACKAGE_MAX_FILES ||
+        index >= package->file_count || package->file_offset >
+            package->byte_count ||
+        !multiply_size(index, PACKAGE_FILE_BYTES, &record_offset) ||
+        record_offset > package->byte_count - package->file_offset ||
+        PACKAGE_FILE_BYTES >
+            package->byte_count - package->file_offset - record_offset) {
+        return PACKAGE_MANAGER_STATUS_TABLE;
+    }
+    record = package->bytes + package->file_offset + record_offset;
+    kind = read_u16(record + 128U);
+    flags = read_u16(record + 130U);
+    parsed.mode = read_u32(record + 132U);
+    payload_offset = read_u64(record + 136U);
+    payload_bytes = read_u64(record + 144U);
+    if (fixed_text(record, 128U, false, &parsed.path) !=
+            PACKAGE_MANAGER_STATUS_OK ||
+        !package_path(&parsed.path) || kind < PACKAGE_MANAGER_FILE_EXECUTABLE ||
+        kind > PACKAGE_MANAGER_FILE_FONT || flags != 0U ||
+        (parsed.mode != 0444U && parsed.mode != 0555U) ||
+        (kind == PACKAGE_MANAGER_FILE_EXECUTABLE && parsed.mode != 0555U) ||
+        payload_bytes == 0U || payload_bytes > PACKAGE_MAX_FILE_BYTES ||
+        payload_offset > SIZE_MAX || payload_bytes > SIZE_MAX ||
+        payload_offset < package->payload_offset ||
+        (size_t)payload_offset > package->byte_count ||
+        (size_t)payload_bytes > package->byte_count - (size_t)payload_offset ||
+        fixed_text(record + 184U, 64U, true, &parsed.soname) !=
+            PACKAGE_MANAGER_STATUS_OK ||
+        (kind == PACKAGE_MANAGER_FILE_LIBRARY ?
+            !library_name(&parsed.soname) : parsed.soname.length != 0U) ||
+        !zero_bytes(record + 248U, 8U)) {
+        return PACKAGE_MANAGER_STATUS_PACKAGE;
+    }
+    parsed.package = package;
+    parsed.package_index = index;
+    parsed.kind = (enum package_manager_file_kind)kind;
+    parsed.sha256 = record + 152U;
+    parsed.payload = package->bytes + (size_t)payload_offset;
+    parsed.payload_bytes = (size_t)payload_bytes;
+    if (package_state_sha256(parsed.payload, parsed.payload_bytes, digest) !=
+            PACKAGE_STATE_STATUS_OK ||
+        !bytes_equal(digest, parsed.sha256, sizeof(digest))) {
+        return PACKAGE_MANAGER_STATUS_DIGEST;
+    }
+    *result = parsed;
+    return PACKAGE_MANAGER_STATUS_OK;
+}
+
 enum package_manager_status package_manager_package_open(
     const uint8_t *bytes,
     size_t byte_count,
@@ -1051,7 +1177,6 @@ enum package_manager_status package_manager_package_open(
         return PACKAGE_MANAGER_STATUS_RESERVED;
     }
     for (uint32_t group = 0U; group < 2U; ++group) {
-        size_t table = group == 0U ? parsed.dependency_offset : parsed.conflict_offset;
         uint32_t count = group == 0U ? parsed.dependency_count : parsed.conflict_count;
         uint32_t repository_first = group == 0U ? expected->dependency_start :
             expected->conflict_start;
@@ -1062,34 +1187,34 @@ enum package_manager_status package_manager_package_open(
             return PACKAGE_MANAGER_STATUS_DEPENDENCY;
         }
         for (uint32_t index = 0U; index < count; ++index) {
-            struct package_manager_text identifier;
-            struct package_manager_text constraint;
+            struct package_manager_relation_view relation;
             struct package_manager_text expected_identifier;
             struct package_manager_text expected_constraint;
-            enum package_manager_status status = package_relation_at(bytes, table,
-                count, index, &identifier, &constraint);
+            enum package_manager_status status = group == 0U ?
+                package_manager_package_dependency(&parsed, index, &relation) :
+                package_manager_package_conflict(&parsed, index, &relation);
             if (status != PACKAGE_MANAGER_STATUS_OK ||
-                (index != 0U && compare_text(&previous, &identifier) >= 0) ||
+                (index != 0U && compare_text(&previous, &relation.identifier) >= 0) ||
                 expected->repository == NULL ||
                 relation_at(expected->repository, repository_first + index, false,
                     &expected_identifier, &expected_constraint) !=
                     PACKAGE_MANAGER_STATUS_OK) {
                 return PACKAGE_MANAGER_STATUS_DEPENDENCY;
             }
-            previous = identifier;
-            if (!text_equal(&identifier, &expected_identifier) ||
-                !text_equal(&constraint, &expected_constraint)) {
+            previous = relation.identifier;
+            if (!text_equal(&relation.identifier, &expected_identifier) ||
+                !text_equal(&relation.constraint, &expected_constraint)) {
                 return PACKAGE_MANAGER_STATUS_DEPENDENCY;
             }
             if (group == 0U) {
                 for (uint32_t conflict = 0U; conflict < parsed.conflict_count;
                     ++conflict) {
-                    struct package_manager_text conflict_identifier;
-                    struct package_manager_text ignored;
-                    if (package_relation_at(bytes, parsed.conflict_offset,
-                        parsed.conflict_count, conflict, &conflict_identifier, &ignored) !=
+                    struct package_manager_relation_view conflict_relation;
+                    if (package_manager_package_conflict(&parsed, conflict,
+                        &conflict_relation) !=
                             PACKAGE_MANAGER_STATUS_OK ||
-                        text_equal(&identifier, &conflict_identifier)) {
+                        text_equal(&relation.identifier,
+                            &conflict_relation.identifier)) {
                         return PACKAGE_MANAGER_STATUS_DEPENDENCY;
                     }
                 }
@@ -1099,36 +1224,18 @@ enum package_manager_status package_manager_package_open(
     expected_file_payload = parsed.payload_offset;
     struct package_manager_text previous_path = { NULL, 0U };
     for (uint32_t index = 0U; index < parsed.file_count; ++index) {
-        const uint8_t *record = bytes + parsed.file_offset +
-            (size_t)index * PACKAGE_FILE_BYTES;
-        struct package_manager_text path;
-        struct package_manager_text soname_value;
-        uint16_t kind = read_u16(record + 128U);
-        uint16_t flags = read_u16(record + 130U);
-        uint32_t mode = read_u32(record + 132U);
-        uint64_t offset = read_u64(record + 136U);
-        uint64_t length = read_u64(record + 144U);
-        if (fixed_text(record, 128U, false, &path) != PACKAGE_MANAGER_STATUS_OK ||
-            !package_path(&path) ||
-            (index != 0U && compare_text(&previous_path, &path) >= 0) ||
-            kind < 1U || kind > 4U || flags != 0U ||
-            (mode != 0444U && mode != 0555U) || (kind == 1U && mode != 0555U) ||
-            length == 0U || length > PACKAGE_MAX_FILE_BYTES ||
-            offset != expected_file_payload || offset > byte_count ||
-            length > byte_count - (size_t)offset ||
-            fixed_text(record + 184U, 64U, true, &soname_value) !=
-                PACKAGE_MANAGER_STATUS_OK ||
-            (kind == 2U ? !library_name(&soname_value) : soname_value.length != 0U) ||
-            !zero_bytes(record + 248U, 8U)) {
+        struct package_manager_file_view file;
+        enum package_manager_status status = package_manager_package_file(
+            &parsed, index, &file);
+        if (status != PACKAGE_MANAGER_STATUS_OK) {
+            return status;
+        }
+        if ((index != 0U && compare_text(&previous_path, &file.path) >= 0) ||
+            (size_t)(file.payload - bytes) != expected_file_payload) {
             return PACKAGE_MANAGER_STATUS_PACKAGE;
         }
-        previous_path = path;
-        if (package_state_sha256(bytes + (size_t)offset, (size_t)length, digest) !=
-                PACKAGE_STATE_STATUS_OK ||
-            !bytes_equal(digest, record + 152U, sizeof(digest))) {
-            return PACKAGE_MANAGER_STATUS_DIGEST;
-        }
-        expected_file_payload += length;
+        previous_path = file.path;
+        expected_file_payload += file.payload_bytes;
     }
     if (expected_file_payload != byte_count) {
         return PACKAGE_MANAGER_STATUS_TABLE;

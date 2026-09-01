@@ -343,6 +343,10 @@ int main(int argc, char **argv)
     struct package_manager_catalog_entry library_entry;
     struct package_manager_package_view application_package;
     struct package_manager_package_view library_package;
+    struct package_manager_package_view changed_package;
+    struct package_manager_file_view application_file;
+    struct package_manager_file_view library_file;
+    struct package_manager_relation_view application_dependency;
     struct package_manager_search_results search;
     struct package_manager_plan plan;
     struct package_state_database_view installed;
@@ -387,12 +391,42 @@ int main(int argc, char **argv)
         application_bytes.count, &application_entry, &policy, &trust,
         &application_package) == PACKAGE_MANAGER_STATUS_OK &&
         text_is(&application_package.identifier, "org.sapote.app") &&
-        application_package.file_count == 1U);
+        application_package.file_count == 1U &&
+        package_manager_package_file(&application_package, 0U,
+            &application_file) == PACKAGE_MANAGER_STATUS_OK &&
+        application_file.package == &application_package &&
+        application_file.package_index == 0U &&
+        text_is(&application_file.path, "bin/proof-app") &&
+        application_file.kind == PACKAGE_MANAGER_FILE_EXECUTABLE &&
+        application_file.mode == 0555U &&
+        application_file.payload_bytes == sizeof("\x7f" "ELFproof-application") - 1U &&
+        memcmp(application_file.payload, "\x7f" "ELFproof-application",
+            application_file.payload_bytes) == 0 &&
+        package_manager_package_dependency(&application_package, 0U,
+            &application_dependency) == PACKAGE_MANAGER_STATUS_OK &&
+        application_dependency.package == &application_package &&
+        application_dependency.package_index == 0U &&
+        text_is(&application_dependency.identifier, "org.sapote.lib") &&
+        text_is(&application_dependency.constraint, ">=1.0.0,<2.0.0") &&
+        package_manager_package_dependency(&application_package, 1U,
+            &application_dependency) == PACKAGE_MANAGER_STATUS_TABLE &&
+        package_manager_package_conflict(&application_package, 0U,
+            &application_dependency) == PACKAGE_MANAGER_STATUS_TABLE);
     CHECK(package_manager_package_open(library_bytes.bytes, library_bytes.count,
         &library_entry, &policy, &trust, &library_package) ==
             PACKAGE_MANAGER_STATUS_OK &&
         text_is(&library_package.identifier, "org.sapote.lib") &&
-        library_package.file_count == 1U && context.verification_count == 3U);
+        library_package.file_count == 1U &&
+        package_manager_package_file(&library_package, 0U, &library_file) ==
+            PACKAGE_MANAGER_STATUS_OK &&
+        text_is(&library_file.path, "lib/libproof.so.1") &&
+        text_is(&library_file.soname, "libproof.so.1") &&
+        library_file.kind == PACKAGE_MANAGER_FILE_LIBRARY &&
+        library_file.mode == 0444U &&
+        library_file.payload_bytes == sizeof("\x7f" "ELFproof-library") - 1U &&
+        memcmp(library_file.payload, "\x7f" "ELFproof-library",
+            library_file.payload_bytes) == 0 &&
+        context.verification_count == 3U);
 
     CHECK(build_installed_database(installed_bytes, &application_entry,
         &library_entry));
@@ -466,6 +500,10 @@ int main(int argc, char **argv)
     CHECK(changed != NULL);
     (void)memcpy(changed, application_bytes.bytes, application_bytes.count);
     changed[application_bytes.count - 1U] ^= UINT8_C(1);
+    changed_package = application_package;
+    changed_package.bytes = changed;
+    CHECK(package_manager_package_file(&changed_package, 0U,
+        &application_file) == PACKAGE_MANAGER_STATUS_DIGEST);
     CHECK(package_manager_package_open(changed, application_bytes.count,
         &application_entry, &policy, &trust, &application_package) ==
             PACKAGE_MANAGER_STATUS_DIGEST);
