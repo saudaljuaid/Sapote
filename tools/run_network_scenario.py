@@ -39,10 +39,12 @@ STORAGE = {
     "network-persistence",
     "network-native",
     "native-https",
+    "native-sap",
 }
 
 FIXTURE_MODE = {
     "native-https": "https",
+    "native-sap": "packages",
     "network-dhcp-timeout": "dhcp-timeout",
     "network-icmp-timeout": "silent",
     "network-dns-cname": "dns-cname",
@@ -227,21 +229,31 @@ def run(args: argparse.Namespace) -> int:
         "-monitor", "none", "-serial", "stdio", "-device",
         "isa-debug-exit,iobase=0xf4,iosize=0x04",
     ]
-    if args.scenario == "native-https":
+    if args.scenario in ("native-https", "native-sap"):
         qemu.extend([
             "-cpu", "max",
-            "-rtc", "base=2026-08-31T00:00:00,clock=vm",
+            "-rtc", "base=" + (
+                "2027-01-15T08:01:00" if args.scenario == "native-sap"
+                else "2026-08-31T00:00:00"
+            ) + ",clock=vm",
         ])
     qemu.extend(boot_arguments(args, output))
     qemu.extend(storage_arguments(args, output))
     if args.scenario not in NO_NIC:
         fixture_stream = fixture_log.open("wb")
         mode = FIXTURE_MODE.get(args.scenario, "normal")
-        fixture = subprocess.Popen([
+        fixture_command = [
             args.python, str(args.fixture.resolve()), "--unicast",
             "--port", str(peer_port), "--peer-port", str(guest_port),
             "--mode", mode, "--capture", str(capture), "--ready", str(ready),
-        ], stdout=fixture_stream, stderr=subprocess.STDOUT)
+        ]
+        if args.content_root is not None:
+            fixture_command.extend([
+                "--content-root", str(args.content_root.resolve())
+            ])
+        fixture = subprocess.Popen(
+            fixture_command, stdout=fixture_stream, stderr=subprocess.STDOUT
+        )
         wait_ready(ready, fixture)
         qemu.extend([
             "-netdev", "dgram,id=sapnet,local.type=inet,local.host=127.0.0.1,local.port="
@@ -316,6 +328,22 @@ def run(args: argparse.Namespace) -> int:
                 "--https", "--json", str(audit),
             ], check=False)
             healthy = audited.returncode == 0
+    if args.scenario == "native-sap" and healthy:
+        required = (
+            "SAPOTE SAP PHASE start\n",
+            "SAPOTE SAP PHASE signed-plan PASS\n",
+            "SAPOTE SAP PHASE payloads-authenticated PASS\n",
+            "SAPOTE SAP PHASE committed generation=1 PASS\n",
+            "SAPOTE SAP PASS https trust plan payload transaction cleanup\n",
+            "Sapote: signed HTTPS package install and cleanup passed\n",
+        )
+        healthy = all(transcript.count(marker) == 1 for marker in required)
+        if healthy:
+            audited = subprocess.run([
+                args.python, str(args.audit.resolve()), str(capture),
+                "--https", "--json", str(audit),
+            ], check=False)
+            healthy = audited.returncode == 0
     if args.scenario == "network-http-length" and healthy:
         audited = subprocess.run([
             args.python, str(args.audit.resolve()), str(capture),
@@ -349,6 +377,7 @@ def main() -> int:
     parser.add_argument("--system", type=Path)
     parser.add_argument("--data", type=Path)
     parser.add_argument("--full", type=Path)
+    parser.add_argument("--content-root", type=Path)
     parser.add_argument("--qemu", default="qemu-system-x86_64")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--accel", default="tcg")

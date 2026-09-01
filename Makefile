@@ -32,9 +32,9 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	nvidia nvidia-builtin native native-lua native-sqlite native-canvas \
 	native-rust native-crash native-elf-refusal native-digest-refusal \
 	native-abi-refusal native-relaunch native-audio native-sdl native-dynamic \
-	native-https
+	native-https native-sap
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 116
+EXPECTED_TEST_SCENARIO_COUNT := 117
 EXPECTED_SHELL_ASSERTION_COUNT := 463
 
 CC := gcc
@@ -292,6 +292,12 @@ HTTPSAPP_APP := $(HTTPSAPP_DIR)/HTTPS.APP
 HTTPSAPP_PACKAGE := $(HTTPSAPP_DIR)/HTTPSAPP.SPK
 HTTPSAPP_SYSTEM_IMAGE := $(HTTPSAPP_DIR)/system.raw
 HTTPSAPP_DATA_IMAGE := $(HTTPSAPP_DIR)/data.raw
+SAPAPP_DIR := $(BUILD_DIR)/native-sap
+SAPAPP_APP := $(SAPAPP_DIR)/SAP.APP
+SAPAPP_PACKAGE := $(SAPAPP_DIR)/SAP.SPK
+SAPAPP_SYSTEM_IMAGE := $(SAPAPP_DIR)/system.raw
+SAPAPP_DATA_IMAGE := $(SAPAPP_DIR)/data.raw
+SAPAPP_REPOSITORY := $(SAPAPP_DIR)/repository/repository.sri
 AUDIO_APP_DIR := $(BUILD_DIR)/native-audio
 AUDIO_APP := $(AUDIO_APP_DIR)/AUDIO.APP
 AUDIO_PACKAGE := $(AUDIO_APP_DIR)/AUDIO.SPK
@@ -385,7 +391,7 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d) $(MONOCYPHER_OBJECTS:.o=.d) \
 # makes every scenario resolve to "nothing to be done" and pass without booting.
 # They never create a file of their own name, so they rerun regardless.
 .PHONY: all audio-wav-tests capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios dynamic-elf-tests ext4-images ext4-tests fat32-images force-package-trust hooks https-tests \
-	iso kernel lint native-apps native-audio-proof native-dynamic-proof native-https-proof native-sdl-proof port-tests qemu-port-tests reproducible-sdk run \
+	iso kernel lint native-apps native-audio-proof native-dynamic-proof native-https-proof native-sap-proof native-sdl-proof port-tests qemu-port-tests reproducible-sdk run \
 	package-control-tests package-fetch-tests package-manager-tests package-repository-tests package-service-tests package-state-tests package-transaction-tests package-trust-asset-tests package-trust-tests package-upload-tests qemu-test-ext4-powercuts screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests zlib-tests
 
 all: kernel
@@ -494,6 +500,9 @@ $(NETAPP_DIR):
 	mkdir -p $@
 
 $(HTTPSAPP_DIR):
+	mkdir -p $@
+
+$(SAPAPP_DIR):
 	mkdir -p $@
 
 $(AUDIO_APP_DIR):
@@ -656,6 +665,33 @@ $(HTTPSAPP_SYSTEM_IMAGE): $(HTTPSAPP_PACKAGE) tools/sapote-package.py \
 $(HTTPSAPP_DATA_IMAGE): tools/fat32_image.py | $(HTTPSAPP_DIR)
 	$(PYTHON) tools/fat32_image.py format data $@
 
+$(SAPAPP_DIR)/main.o: apps/sap/main.c \
+		apps/native-https/trust_anchor.h $(SDK_BUILD_DIR)/.installed | \
+		$(SAPAPP_DIR)
+	$(SDK_CC) $(SDK_CFLAGS) -c $< -o $@
+
+$(SAPAPP_APP): $(SAPAPP_DIR)/main.o $(SDK_BUILD_DIR)/.installed
+	$(SDK_LD) $(SDK_LDFLAGS) -Map=$(SAPAPP_DIR)/SAP.map \
+		-o $@ $(SDK_CRT) $< $(SDK_LIB) $(BEARSSL_LIB)
+
+$(SAPAPP_PACKAGE): $(SAPAPP_APP) apps/sap/manifest.json
+	$(PYTHON) tools/sapote-package.py build \
+		--spec apps/sap/manifest.json --executable $< --output $@
+
+$(SAPAPP_SYSTEM_IMAGE): $(SAPAPP_PACKAGE) tools/sapote-package.py \
+		tools/fat32_image.py
+	$(PYTHON) tools/sapote-package.py install-system \
+		--output $@ $(SAPAPP_PACKAGE)
+
+$(SAPAPP_DATA_IMAGE): tools/fat32_image.py | $(SAPAPP_DIR)
+	$(PYTHON) tools/fat32_image.py format data $@
+
+$(SAPAPP_REPOSITORY): $(SAPAPP_APP) tools/package_lifecycle_fixture.py \
+		tools/sapote-package.py tools/sapote-repository.py \
+		platform/package-trust.json
+	$(PYTHON) tools/package_lifecycle_fixture.py \
+		--output $(SAPAPP_DIR)/repository --executable $(SAPAPP_APP)
+
 $(AUDIO_APP_DIR)/main.o: apps/native-audio/main.c \
 		$(SDK_BUILD_DIR)/.installed | $(AUDIO_APP_DIR)
 	$(SDK_CC) $(SDK_CFLAGS) -c $< -o $@
@@ -775,7 +811,7 @@ $(ADMISSION_DATA_IMAGE): tools/fat32_image.py | $(ADMISSION_DIR)
 
 native-apps: $(NATIVE_TEST_PACKAGE) $(LUA_PACKAGE) $(SQLITE_PACKAGE) \
 	$(CANVAS_PACKAGE) $(CANVAS_PROOF_PACKAGE) $(NETAPP_PACKAGE) \
-	$(HTTPSAPP_PACKAGE) \
+	$(HTTPSAPP_PACKAGE) $(SAPAPP_PACKAGE) \
 	$(AUDIO_PACKAGE) $(AUDIO_REFUSAL_PACKAGE) $(RUST_APP_PACKAGE) \
 	$(CRASH_PACKAGE) $(SDL_PROOF_PACKAGE) $(DYNAMIC_PACKAGE)
 
@@ -796,6 +832,10 @@ native-https-proof: $(HTTPSAPP_SYSTEM_IMAGE) $(HTTPSAPP_DATA_IMAGE) \
 		https-tests
 	@echo 'native authenticated HTTPS package and images built'
 
+native-sap-proof: $(SAPAPP_SYSTEM_IMAGE) $(SAPAPP_DATA_IMAGE) \
+		$(SAPAPP_REPOSITORY) https-tests
+	@echo 'native signed HTTPS package lifecycle proof built'
+
 port-tests: native-apps audio-wav-tests
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(NATIVE_TEST_APP)' \
 		$(RUSTC) --edition 2024 --test -D warnings \
@@ -810,6 +850,8 @@ port-tests: native-apps audio-wav-tests
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(NETAPP_APP)' \
 		$(RUST_NATIVE_IMAGE_TEST)
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(HTTPSAPP_APP)' \
+		$(RUST_NATIVE_IMAGE_TEST)
+	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(SAPAPP_APP)' \
 		$(RUST_NATIVE_IMAGE_TEST)
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(AUDIO_APP)' \
 		$(RUST_NATIVE_IMAGE_TEST)
@@ -827,6 +869,7 @@ port-tests: native-apps audio-wav-tests
 	$(PYTHON) tools/sapote-package.py inspect $(CANVAS_PROOF_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(NETAPP_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(HTTPSAPP_PACKAGE)
+	$(PYTHON) tools/sapote-package.py inspect $(SAPAPP_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(AUDIO_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(AUDIO_REFUSAL_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(SDL_PROOF_PACKAGE)
@@ -839,8 +882,8 @@ qemu-port-tests: qemu-test-native qemu-test-native-lua qemu-test-native-sqlite \
 	qemu-test-native-crash qemu-test-native-elf-refusal \
 	qemu-test-native-digest-refusal qemu-test-native-abi-refusal \
 	qemu-test-native-relaunch qemu-test-native-audio qemu-test-native-sdl \
-	qemu-test-native-dynamic qemu-test-native-https
-	@echo 'native userspace, Lua, SQLite, Canvas, network, HTTPS, audio, SDL, dynamic ELF and Rust QEMU scenarios passed'
+	qemu-test-native-dynamic qemu-test-native-https qemu-test-native-sap
+	@echo 'native userspace, Lua, SQLite, Canvas, network, HTTPS, signed package lifecycle, audio, SDL, dynamic ELF and Rust QEMU scenarios passed'
 
 contract-counts:
 	@printf '%s %s\n' '$(EXPECTED_TEST_SCENARIO_COUNT)' \
@@ -2230,6 +2273,20 @@ qemu-test-native-https: $(TEST_BUILD_DIR)/native-https/sapote.iso
 		--data '$(HTTPSAPP_DATA_IMAGE)' --full '$(FAT32_FULL_IMAGE)' \
 		--qemu qemu-system-x86_64 --python '$(PYTHON)' \
 		--accel '$(QEMU_ACCEL)' --timeout 180
+
+qemu-test-native-sap: $(TEST_BUILD_DIR)/native-sap/sapote.iso
+	$(MAKE) '$(SAPAPP_SYSTEM_IMAGE)' '$(SAPAPP_DATA_IMAGE)' \
+		'$(SAPAPP_REPOSITORY)'
+	$(PYTHON) tools/run_network_scenario.py \
+		--scenario native-sap --expected 15 --iso '$<' \
+		--output '$(TEST_BUILD_DIR)/native-sap' \
+		--fixture tools/https_network_fixture.py \
+		--audit tools/network_packet_audit.py \
+		--content-root '$(SAPAPP_DIR)/repository' \
+		--system '$(SAPAPP_SYSTEM_IMAGE)' \
+		--data '$(SAPAPP_DATA_IMAGE)' --full '$(FAT32_FULL_IMAGE)' \
+		--qemu qemu-system-x86_64 --python '$(PYTHON)' \
+		--accel '$(QEMU_ACCEL)' --timeout 240
 
 qemu-test-ext4-powercuts: $(KERNEL) $(EXT4_FIXTURE) \
 		tools/ext4_image.py tools/ext4_powercut_test.py

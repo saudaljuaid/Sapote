@@ -96,7 +96,7 @@ jobs:
                       build/busybox-uname-contract/busybox
                   cmp build/release-cat/one/busybox \
                       build/busybox-cat-contract/busybox
-            - name: Run all 116 production-path QEMU scenarios individually
+            - name: Run all 117 production-path QEMU scenarios individually
               shell: bash
               run: |
                   set -euo pipefail
@@ -107,13 +107,13 @@ jobs:
                       make --no-print-directory -s contract-scenarios | wc -l
                   )
                   assertion_count=$(grep -c 'grep -F\|grep -E' Makefile)
-                  test "$expected_scenarios" -eq 116
+                  test "$expected_scenarios" -eq 117
                   test "$scenario_count" -eq "$expected_scenarios"
                   test "$assertion_count" -eq "$expected_assertions"
                   make qemu-tests QEMU_ACCEL=tcg \
                       | tee build/evidence-logs/all-qemu-scenarios.txt
                   test "$(grep -Ec '^QEMU scenario [a-z0-9-]+ passed$' \
-                      build/evidence-logs/all-qemu-scenarios.txt)" -eq 116
+                      build/evidence-logs/all-qemu-scenarios.txt)" -eq 117
             - name: Capture authentic clean-reboot persistence media
               shell: bash
               run: |
@@ -170,7 +170,7 @@ jobs:
                   done < <(find build/tests -mindepth 2 -maxdepth 2 \
                       -name serial.log -print | sort)
                   test "$(find "$release/qemu-transcripts" -type f | wc -l)" \
-                      -eq 116
+                      -eq 117
                   for profile in echo uname cat; do
                       cp "build/release-$profile/one/build-record.txt" \
                           "$release/$profile-reproducible-build-record.txt"

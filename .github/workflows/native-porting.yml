@@ -64,6 +64,13 @@ jobs:
                       build/tests/native-https/network.pcap
                       build/tests/native-https/fixture.log
                       build/tests/native-https/packet-audit.json
+                      build/tests/native-sap/network.pcap
+                      build/tests/native-sap/fixture.log
+                      build/tests/native-sap/packet-audit.json
+                      build/native-sap/SAP.APP
+                      build/native-sap/SAP.map
+                      build/native-sap/repository/repository.sri
+                      build/native-sap/repository/packages/**/*.spk
                       build/native-dynamic/DYNROOT.APP
                       build/native-dynamic/DYNLIB.SO
                       build/native-dynamic/DYNROOT.CAT

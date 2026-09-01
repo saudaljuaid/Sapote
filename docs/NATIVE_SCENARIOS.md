@@ -47,10 +47,11 @@ clean-census assertion rather than treating continued boot as success.
 | 29. SDL 2 application lifecycle | `native-sdl` | Runs the real SDL Sapote video, event, timer, thread, filesystem, and audio backends twice; requires partial presentation, injected key and pointer input, non-silent queued PCM, synchronized preference state on relaunch, and a clean resource census. |
 | 30. Dynamic shared object, shared RX, TLS, and lifecycle | `native-dynamic` | Starts two instances of one PIE/DSO package, authenticates its catalog and SONAME digest, relocates with root-first lookup scope, requires a positive immutable DSO RX reuse count, proves private library initial-exec plus root local-exec TLS in both processes, and requires dependency/root constructors and reverse destructors before the clean cache/resource census. |
 | 31. Validated HTTPS download | `native-https` | Uses fail-closed strong hardware entropy plus the pinned-RTC offline Ethernet/DHCP/DNS/TCP/TLS peer, validates the pinned chain, hostname, certificate time, strict Content-Length body, authenticated close and encrypted PCAP, synchronizes the exact body to Data, then repeats the transfer into an exact-digest, flushed kernel package-upload handle and requires clean process/network/upload censuses. |
+| 32. Signed HTTPS package install | `native-sap` | Runs the Ring 3 `sap` client against a deterministic root-signed repository and publisher-signed v3 package, authenticates an exact install plan, downloads every digest-bound payload over TLS, commits generation one, removes repository staging, independently parses the authority-selected database, and requires clean process/network/file/upload/controller/service censuses plus an encrypted PCAP audit. |
 
 The Makefile owns the expected debug-exit values and exact serial expressions.
 The native-porting workflow retains serial logs, writable Data images, Canvas
 and SDL media, available native-audio and SDL WAV captures, the Lua ELF/map,
-the dynamic root/library/catalog and `readelf` reports, HTTPS encrypted packet
-capture and peer log, and the native-network packet capture and peer log from
-the same commit.
+the dynamic root/library/catalog and `readelf` reports, HTTPS and signed-package
+encrypted packet captures and peer logs, and the native-network packet capture
+and peer log from the same commit.

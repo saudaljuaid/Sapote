@@ -33,6 +33,8 @@
 #include <sapote/multiprocess.h>
 #include <sapote/nvme.h>
 #include <sapote/paging.h>
+#include <sapote/package_service.h>
+#include <sapote/package_state.h>
 #include <sapote/pci.h>
 #include <sapote/pci_resource.h>
 #include <sapote/pic.h>
@@ -140,6 +142,24 @@ static size_t literal_length(const char *text)
     }
 
     return length;
+}
+
+static bool package_text_equals(
+    const struct package_state_text *text,
+    const char *literal
+)
+{
+    size_t length = literal_length(literal);
+
+    if (text == NULL || text->bytes == NULL || text->length != length) {
+        return false;
+    }
+    for (size_t index = 0U; index < length; ++index) {
+        if (text->bytes[index] != (uint8_t)literal[index]) {
+            return false;
+        }
+    }
+    return true;
 }
 
 static bool token_equals(const char *token, size_t token_length, const char *literal)
@@ -579,6 +599,9 @@ static enum kernel_test_scenario scenario_from_value(
     if (token_equals(value, length, "native-https")) {
         return KERNEL_TEST_NATIVE_HTTPS;
     }
+    if (token_equals(value, length, "native-sap")) {
+        return KERNEL_TEST_NATIVE_SAP;
+    }
     if (token_equals(value, length, "ext4-recovery")) {
         return KERNEL_TEST_EXT4_RECOVERY;
     }
@@ -774,6 +797,7 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
     case KERNEL_TEST_NATIVE_DYNAMIC: return UINT8_C(0x84);
     case KERNEL_TEST_NATIVE_HTTPS: return UINT8_C(0x85);
     case KERNEL_TEST_EXT4_RECOVERY: return UINT8_C(0x86);
+    case KERNEL_TEST_NATIVE_SAP: return UINT8_C(0x87);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -4739,6 +4763,7 @@ void kernel_test_run(
     case KERNEL_TEST_NATIVE_SDL:
     case KERNEL_TEST_NATIVE_DYNAMIC:
     case KERNEL_TEST_NATIVE_HTTPS:
+    case KERNEL_TEST_NATIVE_SAP:
     case KERNEL_TEST_EXT4_RECOVERY:
         /* Deferred until Sapote Redwood and the Boot Ledger are published. */
         return;
@@ -5666,6 +5691,59 @@ _Noreturn void kernel_test_complete_native_https(void)
     console_write("Sapote: HTTPS strong hardware entropy passed\n");
     console_write(
         "Sapote: HTTPS TLS 1.2 hostname time trust framing close and teardown passed\n");
+    console_write("ST NETWORK production path bounded and recoverable\n");
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_native_sap(void)
+{
+    static uint8_t database[4096U];
+    struct native_process_result proof = { 0 };
+    struct package_service_report service;
+    struct package_state_database_view view;
+    struct package_state_package_view package;
+    struct package_state_file_view file;
+    struct network_state network;
+    size_t database_bytes = 0U;
+
+    if (active_scenario != KERNEL_TEST_NATIVE_SAP) {
+        kernel_test_fail("native sap completion used outside its scenario");
+    }
+    if (random_get_state().capability != RANDOM_CAPABILITY_INITIALIZED) {
+        kernel_test_fail("native sap did not retain strong hardware entropy");
+    }
+    if (native_process_launch("SAP.MAN", &proof) != NATIVE_PROCESS_OK ||
+        !proof.exited || proof.faulted || proof.exit_status != 0 ||
+        !proof.resources_released || proof.peak_handles < 3U ||
+        proof.syscall_count < 20U || proof.thread_switches == 0U ||
+        !native_process_resources_released()) {
+        kernel_test_fail("native sap client did not leave a clean census");
+    }
+    network = network_get_state();
+    if (network.udp_sockets != 0U || network.tcp_connections != 0U ||
+        network.timers != 0U) {
+        kernel_test_fail("native sap network resources survived teardown");
+    }
+    if (package_service_snapshot(database, sizeof(database), &database_bytes,
+            &service) != PACKAGE_SERVICE_STATUS_OK ||
+        service.generation != 1U || service.live_file_handles != 0U ||
+        service.live_allocations != 0U || database_bytes == 0U ||
+        package_state_database_parse(database, database_bytes, &view) !=
+            PACKAGE_STATE_STATUS_OK ||
+        view.generation != 1U || view.package_count != 1U ||
+        view.edge_count != 0U || view.file_count != 1U ||
+        package_state_database_package(&view, 0U, &package) !=
+            PACKAGE_STATE_STATUS_OK ||
+        package_state_database_file(&view, 0U, &file) !=
+            PACKAGE_STATE_STATUS_OK ||
+        !package_text_equals(&package.identifier, "org.sapote.proof") ||
+        !package_text_equals(&package.version, "1.0.0") ||
+        !package_text_equals(&file.path, "bin/proof.app") ||
+        file.owner_index != 0U || file.length == 0U) {
+        kernel_test_fail("native sap installed authority is not canonical");
+    }
+    console_write(
+        "Sapote: signed HTTPS package install and cleanup passed\n");
     console_write("ST NETWORK production path bounded and recoverable\n");
     kernel_test_pass();
 }
@@ -9238,6 +9316,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "native-dynamic";
     case KERNEL_TEST_NATIVE_HTTPS:
         return "native-https";
+    case KERNEL_TEST_NATIVE_SAP:
+        return "native-sap";
     case KERNEL_TEST_EXT4_RECOVERY:
         return "ext4-recovery";
     case KERNEL_TEST_INVALID:

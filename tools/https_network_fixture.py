@@ -8,6 +8,7 @@ import argparse
 import ssl
 import struct
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -52,10 +53,48 @@ class HttpsPeer:
 
 class HttpsFixture(network.Fixture):
     def __init__(self, group: str, port: int, peer_port: int, capture: Path,
-                 unicast: bool = False) -> None:
+                 unicast: bool = False,
+                 content_root: Path | None = None) -> None:
         super().__init__(group, port, peer_port, "normal", capture, unicast)
         self.https_peers: dict[int, HttpsPeer] = {}
         self.context = make_server_context()
+        self.content_root = content_root.resolve() if content_root else None
+
+    def response_body(self, request: bytes) -> bytes:
+        lines = request.split(b"\r\n")
+        if len(lines) != 7 or lines[1:] != [
+            b"Host: repo.sapote.test",
+            b"Accept: application/octet-stream",
+            b"Accept-Encoding: identity",
+            b"Connection: close",
+            b"",
+            b"",
+        ]:
+            raise ValueError("HTTPS request headers were not canonical")
+        words = lines[0].split(b" ")
+        if len(words) != 3 or words[0] != b"GET" or \
+                words[2] != b"HTTP/1.1" or not words[1].startswith(b"/"):
+            raise ValueError("HTTPS request line was not canonical")
+        if self.content_root is None:
+            if words[1] != b"/artifact.bin":
+                raise ValueError("HTTPS fixture path was not canonical")
+            return BODY
+        try:
+            path = words[1][1:].decode("ascii")
+        except UnicodeDecodeError as error:
+            raise ValueError("HTTPS fixture path was not ASCII") from error
+        parts = path.split("/")
+        if not path or any(
+            not part or part in (".", "..") or "\\" in part for part in parts
+        ):
+            raise ValueError("HTTPS fixture path escaped its content root")
+        candidate = self.content_root.joinpath(*parts).resolve()
+        if self.content_root not in candidate.parents or not candidate.is_file():
+            raise ValueError("HTTPS fixture path was absent")
+        body = candidate.read_bytes()
+        if not body or len(body) > 16 * 1024 * 1024:
+            raise ValueError("HTTPS fixture body exceeded its bound")
+        return body
 
     def new_peer(self, client_port: int, sequence: int) -> HttpsPeer:
         incoming = ssl.MemoryBIO()
@@ -102,20 +141,12 @@ class HttpsFixture(network.Fixture):
                         raise ValueError("HTTPS request exceeded fixture bound")
                     peer.request.extend(block)
                 if b"\r\n\r\n" in peer.request:
-                    expected = (
-                        b"GET /artifact.bin HTTP/1.1\r\n"
-                        b"Host: repo.sapote.test\r\n"
-                        b"Accept: application/octet-stream\r\n"
-                        b"Accept-Encoding: identity\r\n"
-                        b"Connection: close\r\n\r\n"
-                    )
-                    if bytes(peer.request) != expected:
-                        raise ValueError("HTTPS request was not canonical")
+                    body = self.response_body(bytes(peer.request))
                     response = (
                         b"HTTP/1.1 200 OK\r\nContent-Length: "
-                        + str(len(BODY)).encode("ascii")
+                        + str(len(body)).encode("ascii")
                         + b"\r\nConnection: close\r\n\r\n"
-                        + BODY
+                        + body
                     )
                     if peer.tls.write(response) != len(response):
                         raise ValueError("short fixture TLS write")
@@ -233,7 +264,31 @@ def self_test() -> int:
     assert parsed is not None and parsed[0] == HOSTNAME
     assert len(BODY) == 33
     assert CERTIFICATE.is_file() and PRIVATE_KEY.is_file()
-    print("HTTPS network fixture self-test: DNS, bounds, TLS 1.2 certificate passed")
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        expected = b"signed repository fixture"
+        (root / "repository.sri").write_bytes(expected)
+        fixture = object.__new__(HttpsFixture)
+        fixture.content_root = root.resolve()
+        request = (
+            b"GET /repository.sri HTTP/1.1\r\n"
+            b"Host: repo.sapote.test\r\n"
+            b"Accept: application/octet-stream\r\n"
+            b"Accept-Encoding: identity\r\n"
+            b"Connection: close\r\n\r\n"
+        )
+        assert fixture.response_body(request) == expected
+        refused = request.replace(b"/repository.sri", b"/../repository.sri")
+        try:
+            fixture.response_body(refused)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("package content root traversal was accepted")
+    print(
+        "HTTPS network fixture self-test: DNS, bounded content root, "
+        "TLS 1.2 certificate passed"
+    )
     return 0
 
 
@@ -243,7 +298,8 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=network.PORT)
     parser.add_argument("--peer-port", type=int, default=network.PORT + 1)
     parser.add_argument("--unicast", action="store_true")
-    parser.add_argument("--mode", default="https", choices=("https",))
+    parser.add_argument("--mode", default="https", choices=("https", "packages"))
+    parser.add_argument("--content-root", type=Path)
     parser.add_argument(
         "--capture", type=Path, default=Path("build/https-network.pcap")
     )
@@ -252,8 +308,13 @@ def main() -> int:
     args = parser.parse_args()
     if args.self_test:
         return self_test()
+    if args.mode == "packages" and args.content_root is None:
+        parser.error("packages mode requires --content-root")
+    if args.mode == "https" and args.content_root is not None:
+        parser.error("--content-root is only valid in packages mode")
     fixture = HttpsFixture(
-        args.group, args.port, args.peer_port, args.capture, args.unicast
+        args.group, args.port, args.peer_port, args.capture, args.unicast,
+        args.content_root
     )
     try:
         fixture.run(args.ready)

@@ -20,7 +20,7 @@ rejects warnings, unresolved symbols, unexpected sections, W+X mappings,
 floating-point or SIMD instructions in the kernel, modified pinned assets, and
 non-reproducible filesystem images.
 
-`make qemu-tests` runs the complete 116-scenario guest suite. The Makefile is
+`make qemu-tests` runs the complete 117-scenario guest suite. The Makefile is
 the source of truth for scenario names and expected results.
 
 The `native-canvas` scenario captures `canvas.png` and `canvas.mp4` directly
@@ -50,6 +50,16 @@ and then passes only after the kernel observes a clean process/network census.
 Its independent PCAP audit requires port-443 TLS records and rejects plaintext
 request, response-line, or body bytes. The scenario uses QEMU's `max` CPU and a
 pinned in-certificate RTC, and it requires the strong-hardware-entropy marker.
+
+The `native-sap` scenario serves a deterministic, root-signed repository and
+publisher-signed v3 package over that same authenticated HTTPS path. The Ring 3
+`sap` client copies the repository into a sealed upload, asks the privileged
+controller for an authenticated plan, streams each exact package directly into
+a digest-bound upload, commits the generation, removes its staging file, and
+exits. The kernel then independently parses the authority-selected database,
+checks the installed identifier, version, and owned file, and requires clean
+process, network, file, upload, controller, and package-service censuses. Its
+PCAP is independently audited for encrypted TLS traffic.
 
 [`NATIVE_SCENARIOS.md`](NATIVE_SCENARIOS.md) maps each required native
 application proof to its Ring 3 action, exact QEMU scenario, and retained
