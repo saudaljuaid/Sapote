@@ -4802,9 +4802,13 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
             BOOT_CAPABILITY_FILESYSTEM_FILE_PROOF_COMPLETE)) {
         kernel_test_fail("ext4 namespace proof skips are invalid");
     }
-    if (!drive.present || !drive.mounted || !drive.read_only || !drive.healthy ||
-        !ext4_backend_recovery_report(SAPFS_VOLUME_SYSTEM, &recovery) ||
-        !recovery.performed || recovery.transactions != 0U ||
+    if (!drive.present || !drive.mounted || !drive.read_only || !drive.healthy) {
+        kernel_test_fail("ext4 recovered drive state is invalid");
+    }
+    if (!ext4_backend_recovery_report(SAPFS_VOLUME_SYSTEM, &recovery)) {
+        kernel_test_fail("ext4 recovery report is unavailable");
+    }
+    if (!recovery.performed || recovery.transactions != 0U ||
         recovery.replayed_blocks != 0U || recovery.consumed_slots != 0U) {
         kernel_test_fail("ext4 marker-only recovery report is invalid");
     }
