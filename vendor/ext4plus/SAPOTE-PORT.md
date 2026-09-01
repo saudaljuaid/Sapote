@@ -94,10 +94,12 @@ additionally runs a real upstream file write through the stage and observes the
 overlay while the source image remains unchanged. The stage can also clone an
 input transaction into one atomic classified snapshot: each explicitly named
 ordered-data block must be staged exactly once, every remaining image becomes
-journaled metadata, and staged/revoked overlap is refused.
+journaled metadata, and staged/revoked overlap is refused. An open file can
+report the initialized physical block at a byte offset so Sapote can derive the
+ordered-data set after a staged regular-file write without exposing a writer.
 
-The stage is not yet connected to VFS mutations, which do not yet provide their
-regular-file block mapping and revocation set to the classifier. The retry-safe
+The stage is not yet connected to VFS mutations, which do not yet collect their
+touched offset range and revocation set for the classifier. The retry-safe
 final-clean plan is bound to VFS unmount through a writable NVMe lease, but the
 VFS cannot make a dirty mount yet. Allocation rollback, failure injection,
 fsync semantics, and the complete deliberate recovery power-cut QEMU matrix are

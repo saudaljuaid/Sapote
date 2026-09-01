@@ -220,10 +220,13 @@ overlay and requires discarding the mutated ext4plus object as well. An atomic
 snapshot builder requires every caller-named ordered file-data block to exist
 exactly once in the stage, journals every remaining image as metadata, refuses
 a staged/revoked overlap, and leaves the input transaction unchanged on error.
+An open regular file exposes its initialized physical block at a byte offset so
+the eventual mutation adapter can derive that ordered-data set after the
+upstream write; holes and uninitialized extents are never misclassified.
 
 The stage is retained for the full Rust mount lifetime and both unmount phases
 refuse a nonempty overlay, so no unclassified upstream mutation can be silently
-dropped. VFS mutations do not yet provide the regular-file block mapping and
+dropped. VFS mutations do not yet collect the touched offset range and
 revocation set needed to use that classifier. Allocation rollback, fsync
 binding, write-failure injection, and the deliberate power-cut matrix at every
 commit and recovery durability boundary are not complete. The admitted

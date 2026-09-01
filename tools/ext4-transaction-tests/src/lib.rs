@@ -910,12 +910,19 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
     let mut file = staged_filesystem.open(b"/system/README.TXT").unwrap();
     let mut original = [0u8; 1];
     assert_eq!(file.read_bytes_at(&mut original, 0).unwrap(), 1);
+    let data_block = file.filesystem_block_at_offset(0).unwrap().unwrap();
     assert_eq!(file.write_bytes_at(b"X", 0).unwrap(), 1);
     let mut overlaid = [0u8; 1];
     assert_eq!(file.read_bytes_at(&mut overlaid, 0).unwrap(), 1);
     assert_eq!(overlaid, *b"X");
     assert_ne!(original, overlaid);
     assert!(stage.staged_block_count() >= 1);
+    assert!(
+        stage
+            .staged_images()
+            .iter()
+            .any(|image| image.block_index() == data_block)
+    );
     assert_eq!(std::fs::read(&path).unwrap(), backing.as_slice());
     drop(file);
     drop(staged_filesystem);

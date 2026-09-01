@@ -136,6 +136,24 @@ impl File {
         self.file_blocks.write_at(&mut self.inode, buf, pos).await
     }
 
+    /// Return the initialized physical filesystem block mapped at `offset`.
+    ///
+    /// This exposes no storage writer. Sapote uses the result after a staged
+    /// regular-file mutation to classify its exact data block as ordered data;
+    /// holes and uninitialized extents return `None`.
+    #[maybe_async::maybe_async]
+    pub async fn filesystem_block_at_offset(
+        &self,
+        offset: u64,
+    ) -> Result<Option<u64>, Ext4Error> {
+        let block_size = self.fs.0.superblock.block_size().to_u64();
+        let block = self
+            .file_blocks
+            .get_block(file_block_from_offset(offset, block_size)?)
+            .await?;
+        Ok((block != 0).then_some(block))
+    }
+
     /// Truncate the file to `new_size` bytes.
     #[maybe_async::maybe_async]
     pub async fn truncate(&mut self, new_size: u64) -> Result<(), Ext4Error> {
