@@ -990,7 +990,15 @@ pub(crate) fn prepare_unmount(mounted: &mut Mounted) -> Result<(), Status> {
         return Err(Status::Invalid);
     }
     match mounted.journal.filesystem_is_clean() {
-        Ok(true) => return Ok(()),
+        Ok(true) => {
+            let view_needs_recovery = load_journal_inode_map(&mounted.filesystem)
+                .map_err(map_journal_error)?
+                .filesystem_needs_recovery();
+            if view_needs_recovery {
+                replace_staged_view(mounted, false)?;
+            }
+            return unmount(mounted);
+        }
         Ok(false) => {}
         Err(_) => return Err(Status::Invalid),
     }
@@ -1003,6 +1011,7 @@ pub(crate) fn prepare_unmount(mounted: &mut Mounted) -> Result<(), Status> {
         .journal
         .mark_filesystem_clean_durable()
         .map_err(|_| Status::Invalid)?;
+    replace_staged_view(mounted, false)?;
     unmount(mounted)
 }
 

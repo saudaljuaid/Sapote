@@ -155,10 +155,13 @@ touched offset range for ordered-data classification. The retry-safe
 final-clean plan is bound to both VFS sync and unmount through a writable NVMe
 lease. Sync retains the mount, acknowledges the marker clear only after its
 flush, and requires the next mutation to re-arm recovery; a clean sync needs no
-extra I/O because every transaction already checkpoints synchronously. Sync and
-unmount preparation also finish an already-started retained transaction plan;
-another refusal keeps that exact plan retryable. The VFS cannot make a dirty
-mount yet. The private QEMU probe retains one
+extra write or flush because every transaction already checkpoints
+synchronously. Sync and unmount preparation also finish an already-started
+retained transaction plan;
+another refusal keeps that exact plan retryable. Once the marker clear is
+durable, the adapter reloads a clean staged view so the retained mount can arm a
+later transaction; a failed reload is retried without rewriting durable state.
+The VFS cannot make a dirty mount yet. The private QEMU probe retains one
 allocation-bearing transaction across an injected live-superblock write
 failure and an injected ordered-data flush failure, including retry through VFS
 sync, then retries injected final-clean marker-write and flush failures. Its

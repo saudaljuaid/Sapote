@@ -328,13 +328,15 @@ VFS sync now executes that same retry-stable plan without releasing the mount.
 If a transaction has already started, sync or unmount preparation first resumes
 its retained commit/checkpoint/reload phase; a further refusal leaves that exact
 plan owned for another retry instead of discarding staged state.
+After the marker clear is durable, Rust reloads a clean staged filesystem view;
+a refused reload is retried by the next sync without rewriting durable state.
 The QEMU probe injects both its marker write and flush failures, retries the
 same plan through both the original mutation request and VFS sync, and only then
 accepts sync. Its non-power-cut path then shrinks the sparse extension, requires
 the freed physical block to appear in the prepared JBD2 revocation set, commits
 and cleans it, and appends again to prove that a post-sync mutation durably
 re-arms the recovery marker. Because every current transaction checkpoints
-synchronously, a clean sync needs no extra device operation.
+synchronously, a clean sync needs no extra write or flush.
 The recovery-marker activation plan is equally retry-stable: its exact
 checksummed write and filesystem-state flush are re-emitted after an I/O refusal
 and acknowledged only after the flush completes. Started commit plans and
