@@ -154,6 +154,7 @@ struct nvme_filesystem_runtime {
     struct interrupt_vector_state vectors_before;
     struct msix_state msix_before;
     struct frame_allocator_stats frames_before;
+    struct frame_allocator_stats frames_ready;
     uint64_t generation;
     bool active;
 };
@@ -1938,6 +1939,73 @@ static bool resource_state_matches(
         msix_before, frames_before) == 0U;
 }
 
+/*
+ * A volume client may retain unrelated frames while its controller lease is
+ * open (for example, an admitted filesystem object in the kernel heap). Prove
+ * the controller released exactly the frame count it acquired at open rather
+ * than requiring those client-owned frames to disappear with the lease.
+ */
+static bool volume_frames_released(
+    struct frame_allocator_stats frames_before,
+    struct frame_allocator_stats frames_ready,
+    struct frame_allocator_stats frames_before_teardown,
+    struct frame_allocator_stats frames_after
+)
+{
+    size_t controller_frames;
+
+    if (frames_before.addressable_frames != frames_ready.addressable_frames ||
+        frames_before.addressable_frames !=
+            frames_before_teardown.addressable_frames ||
+        frames_before.addressable_frames != frames_after.addressable_frames ||
+        frames_before.allocatable_frames != frames_ready.allocatable_frames ||
+        frames_before.allocatable_frames !=
+            frames_before_teardown.allocatable_frames ||
+        frames_before.allocatable_frames != frames_after.allocatable_frames ||
+        frames_before.reserved_frames != frames_ready.reserved_frames ||
+        frames_before.reserved_frames !=
+            frames_before_teardown.reserved_frames ||
+        frames_before.reserved_frames != frames_after.reserved_frames ||
+        frames_before.highest_allocatable_address !=
+            frames_ready.highest_allocatable_address ||
+        frames_before.highest_allocatable_address !=
+            frames_before_teardown.highest_allocatable_address ||
+        frames_before.highest_allocatable_address !=
+            frames_after.highest_allocatable_address ||
+        frames_ready.allocated_frames < frames_before.allocated_frames ||
+        frames_ready.free_frames > frames_before.free_frames) {
+        return false;
+    }
+    controller_frames = frames_ready.allocated_frames -
+        frames_before.allocated_frames;
+    if (frames_before.free_frames - frames_ready.free_frames !=
+            controller_frames ||
+        frames_before_teardown.allocated_frames < controller_frames ||
+        frames_before_teardown.free_frames > SIZE_MAX - controller_frames) {
+        return false;
+    }
+    return frames_after.allocated_frames ==
+            frames_before_teardown.allocated_frames - controller_frames &&
+        frames_after.free_frames ==
+            frames_before_teardown.free_frames + controller_frames;
+}
+
+static uint32_t volume_resource_state_mismatches(
+    const struct nvme_filesystem_runtime *runtime,
+    struct frame_allocator_stats frames_before_teardown
+)
+{
+    uint32_t mismatches = resource_state_mismatches(runtime->pci_before,
+        runtime->dma_before, runtime->vectors_before, runtime->msix_before,
+        runtime->frames_before);
+
+    if (volume_frames_released(runtime->frames_before, runtime->frames_ready,
+            frames_before_teardown, frame_allocator_get_stats())) {
+        mismatches &= ~NVME_VOLUME_RESOURCE_MISMATCH_FRAMES;
+    }
+    return mismatches;
+}
+
 static enum nvme_status reclaim_all(struct nvme_runtime *controller)
 {
     struct dma_allocation *allocations[7] = {
@@ -2129,6 +2197,34 @@ static bool exercise_cleanup_boundary(size_t boundary)
     }
     return prepared && resource_state_matches(pci_before, dma_before,
         vectors_before, msix_before, frames_before);
+}
+
+static bool exercise_volume_frame_isolation(void)
+{
+    const struct frame_allocator_stats before = {
+        .addressable_frames = 100U,
+        .allocatable_frames = 80U,
+        .free_frames = 70U,
+        .allocated_frames = 10U,
+        .reserved_frames = 20U,
+        .highest_allocatable_address = UINT64_C(0x100000)
+    };
+    struct frame_allocator_stats ready = before;
+    struct frame_allocator_stats before_teardown = before;
+    struct frame_allocator_stats after = before;
+
+    ready.free_frames -= 7U;
+    ready.allocated_frames += 7U;
+    before_teardown.free_frames -= 9U;
+    before_teardown.allocated_frames += 9U;
+    after.free_frames -= 2U;
+    after.allocated_frames += 2U;
+    if (!volume_frames_released(before, ready, before_teardown, after)) {
+        return false;
+    }
+    ++after.allocated_frames;
+    --after.free_frames;
+    return !volume_frames_released(before, ready, before_teardown, after);
 }
 
 static bool exercise_owned_release_refusal(void)
@@ -2424,13 +2520,14 @@ bool nvme_foundation_self_test(size_t *completed_tests)
         exercise_owned_release_refusal(), &completed)) {
         return false;
     }
-    /* 19: every partial DMA/queue boundary unwinds without retained state. */
+    /* 19: partial boundaries unwind and volume frames retain distinct owners. */
     bool every_boundary_clean = true;
     for (size_t boundary = 0U; boundary <= 7U; ++boundary) {
         every_boundary_clean = every_boundary_clean &&
             exercise_cleanup_boundary(boundary);
     }
-    if (!test_record(every_boundary_clean, &completed)) {
+    if (!test_record(every_boundary_clean && exercise_volume_frame_isolation(),
+            &completed)) {
         return false;
     }
     /* 20: the teardown hook detects freed state without inspecting it. */
@@ -2942,6 +3039,7 @@ static enum nvme_status volume_open_interrupts_disabled(
     }
     filesystem_runtime.generation =
         filesystem_runtime.controller.claim.discovery.generation;
+    filesystem_runtime.frames_ready = frame_allocator_get_stats();
     zero_bytes(session, sizeof(*session));
     session->generation = filesystem_runtime.generation;
     session->namespace_blocks =
@@ -3177,6 +3275,8 @@ enum nvme_status nvme_volume_flush(struct nvme_volume_session *session)
 
 enum nvme_status nvme_volume_close(struct nvme_volume_session *session)
 {
+    const struct frame_allocator_stats frames_before_teardown =
+        frame_allocator_get_stats();
     enum nvme_status result;
 
     if (session == NULL) {
@@ -3189,10 +3289,8 @@ enum nvme_status nvme_volume_close(struct nvme_volume_session *session)
     session->state = NVME_FILESYSTEM_SESSION_STOPPING;
     result = teardown_controller(&filesystem_runtime.controller);
     session->close_teardown_status = result;
-    session->close_resource_mismatches = resource_state_mismatches(
-        filesystem_runtime.pci_before, filesystem_runtime.dma_before,
-        filesystem_runtime.vectors_before, filesystem_runtime.msix_before,
-        filesystem_runtime.frames_before);
+    session->close_resource_mismatches = volume_resource_state_mismatches(
+        &filesystem_runtime, frames_before_teardown);
     if (result == NVME_STATUS_OK &&
         session->close_resource_mismatches != 0U) {
         result = NVME_STATUS_TEARDOWN_FAILURE;
