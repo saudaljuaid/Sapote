@@ -44,6 +44,10 @@ The Sapote event pump treats the ABI's empty-queue `-EAGAIN` as normal after it
 has drained all pending events. The proof moves the deterministic initial PS/2
 cursor into the SDL client before clicking, so both keyboard and pointer paths
 are observed rather than relying on an ambient host cursor position. Its WAV
-profile authenticates the persisted prefix of each of the four 1,024-frame SDL
-chunks in both process launches against the complete 4,096-frame fixture hash
-`5f69c57a2899917978544f1c8ed66b6f826c7e67b8302d281ea206f40852ef56`.
+profile uses a non-repeating, frame-identifiable stereo sequence. It requires
+at least 256 exact, forward-moving frames from each of the four 1,024-frame SDL
+callbacks in both process launches, in callback order, against complete fixture
+hash `0a10d573e70eacd28cc4a9297713d5f6a916a9bbe0c60d64a3d1db96839f5d55`.
+QEMU WAV silence may split one callback into multiple delivery fragments; the
+matcher ignores only those silent gaps and still rejects unknown, repeated,
+backward, corrupted, reordered, or single-launch PCM.

@@ -134,70 +134,70 @@ def nonzero_runs(payload: bytes) -> list[bytes]:
     return runs
 
 
-def match_sdl_run(payload: bytes, chunks: list[bytes],
-                  first_segment: int, maximum_segments: int) -> set[int]:
-    frame_bytes = CHANNELS * SAMPLE_BYTES
-    positions = {0}
-    matches: set[int] = set()
-
-    for count in range(1, maximum_segments + 1):
-        chunk = chunks[(first_segment + count - 1) % SDL_CHUNKS]
-        next_positions: set[int] = set()
-        for position in positions:
-            for first_frame in range(CHUNK_FRAMES - MIN_CAPTURE_FRAMES + 1):
-                remaining_frames = (len(payload) - position) // frame_bytes
-                limit = min(CHUNK_FRAMES - first_frame, remaining_frames)
-                matched = 0
-                while matched < limit:
-                    source = (first_frame + matched) * frame_bytes
-                    destination = position + matched * frame_bytes
-                    if payload[destination:destination + frame_bytes] != \
-                            chunk[source:source + frame_bytes]:
-                        break
-                    matched += 1
-                for frames in range(MIN_CAPTURE_FRAMES, matched + 1):
-                    next_positions.add(position + frames * frame_bytes)
-        positions = next_positions
-        if len(payload) in positions:
-            matches.add(count)
-        if not positions:
-            break
-    return matches
-
-
 def verify_sdl(frames: int, payload: bytes) -> dict[str, int | str]:
     expected = expected_sdl()
     digest = hashlib.sha256(expected).hexdigest()
     if digest != SDL_EXPECTED_SHA256:
         raise VerificationError("SDL host waveform fixture hash drifted")
-    chunks = [expected[offset:offset + CHUNK_FRAMES * CHANNELS * SAMPLE_BYTES]
-              for offset in range(0, len(expected),
-                                  CHUNK_FRAMES * CHANNELS * SAMPLE_BYTES)]
+    frame_bytes = CHANNELS * SAMPLE_BYTES
+    expected_frames = {
+        expected[offset:offset + frame_bytes]: offset // frame_bytes
+        for offset in range(0, len(expected), frame_bytes)
+    }
+    if len(expected_frames) != SDL_FRAMES:
+        raise VerificationError("SDL frame identifiers are not unique")
     runs = nonzero_runs(payload)
     required = SDL_CHUNKS * SDL_PROOF_RUNS
-    admitted = {0}
-    for run in runs:
-        next_admitted: set[int] = set()
-        for first_segment in admitted:
-            for count in match_sdl_run(
-                    run, chunks, first_segment, required - first_segment):
-                next_admitted.add(first_segment + count)
-        admitted = next_admitted
-        if not admitted:
-            break
-    if not runs or required not in admitted:
-        raise VerificationError("unrecognized SDL non-silent run")
-    segments = required
+    segment = 0
+    segment_frames = [0] * required
+    last_frame: int | None = None
+    audio_frames = 0
+    silence = bytes(frame_bytes)
+
+    for capture_frame, offset in enumerate(range(0, len(payload), frame_bytes)):
+        frame = payload[offset:offset + frame_bytes]
+        if frame == silence:
+            continue
+        source_frame = expected_frames.get(frame)
+        if source_frame is None:
+            raise VerificationError(
+                f"non-SDL PCM at capture frame {capture_frame}")
+        source_chunk = source_frame // CHUNK_FRAMES
+        if source_chunk != segment % SDL_CHUNKS:
+            if (segment + 1 < required and
+                    source_chunk == (segment + 1) % SDL_CHUNKS and
+                    segment_frames[segment] >= MIN_CAPTURE_FRAMES):
+                segment += 1
+                last_frame = None
+            else:
+                raise VerificationError(
+                    "SDL callback order or minimum coverage failed at "
+                    f"capture frame {capture_frame}; segment={segment} "
+                    f"counts={segment_frames}")
+        if last_frame is not None and source_frame <= last_frame:
+            raise VerificationError(
+                "SDL callback frames repeated or moved backward at "
+                f"capture frame {capture_frame}; segment={segment}")
+        segment_frames[segment] += 1
+        audio_frames += 1
+        last_frame = source_frame
+
+    if (not runs or segment != required - 1 or
+            any(count < MIN_CAPTURE_FRAMES for count in segment_frames)):
+        raise VerificationError(
+            f"incomplete SDL callback coverage: segment={segment} "
+            f"counts={segment_frames}")
     matched = b"".join(runs)
     nonzero = sum(sample != 0 for (sample,) in
                   struct.iter_unpack("<h", matched))
-    if nonzero < required * MIN_CAPTURE_FRAMES:
+    if audio_frames < required * MIN_CAPTURE_FRAMES or \
+            nonzero != audio_frames * CHANNELS:
         raise VerificationError("SDL matched waveform is unexpectedly silent")
     return {
         "frames": frames,
         "duration_ns": frames * 1_000_000_000 // RATE,
-        "audio_frames": len(matched) // (CHANNELS * SAMPLE_BYTES),
-        "segments": segments,
+        "audio_frames": audio_frames,
+        "segments": required,
         "runs": len(runs),
         "nonzero_samples": nonzero,
         "matched_sha256": hashlib.sha256(matched).hexdigest(),
@@ -330,6 +330,25 @@ def self_test() -> None:
         if offset_report["segments"] != SDL_CHUNKS * SDL_PROOF_RUNS or \
                 offset_report["runs"] != SDL_CHUNKS * SDL_PROOF_RUNS:
             raise VerificationError("offset SDL fixture geometry changed")
+        split_fixture = root / "sdl-split-callbacks.wav"
+        split_payload = bytes(29 * CHANNELS * SAMPLE_BYTES)
+        for index in range(SDL_CHUNKS * SDL_PROOF_RUNS):
+            chunk = chunks[index % SDL_CHUNKS]
+            split_payload += chunk[50 * CHANNELS * SAMPLE_BYTES:
+                                   190 * CHANNELS * SAMPLE_BYTES]
+            split_payload += bytes((index + 3) * CHANNELS * SAMPLE_BYTES)
+            split_payload += chunk[300 * CHANNELS * SAMPLE_BYTES:
+                                   500 * CHANNELS * SAMPLE_BYTES]
+            split_payload += bytes((index + 4) * CHANNELS * SAMPLE_BYTES)
+        with wave.open(str(split_fixture), "wb") as output:
+            output.setnchannels(CHANNELS)
+            output.setsampwidth(SAMPLE_BYTES)
+            output.setframerate(RATE)
+            output.writeframes(split_payload)
+        split_report = verify(split_fixture, "sdl")
+        if split_report["segments"] != SDL_CHUNKS * SDL_PROOF_RUNS or \
+                split_report["runs"] != SDL_CHUNKS * SDL_PROOF_RUNS * 2:
+            raise VerificationError("split callback SDL fixture geometry changed")
         continuous_fixture = root / "sdl-offset-continuous.wav"
         continuous_payload = bytes(29 * CHANNELS * SAMPLE_BYTES)
         for index, (offset, frames) in enumerate(zip(offsets, prefixes)):
@@ -360,6 +379,13 @@ def self_test() -> None:
             "reordered": bytes(31 * CHANNELS * SAMPLE_BYTES) + b"".join(
                 chunks[index][:prefixes[position] * CHANNELS * SAMPLE_BYTES]
                 for position, index in enumerate((0, 2, 1, 3, 0, 1, 2, 3))),
+            "backward": (
+                bytes(31 * CHANNELS * SAMPLE_BYTES) +
+                chunks[0][100 * CHANNELS * SAMPLE_BYTES:
+                          400 * CHANNELS * SAMPLE_BYTES] +
+                chunks[0][200 * CHANNELS * SAMPLE_BYTES:
+                          500 * CHANNELS * SAMPLE_BYTES]
+            ),
             "corrupted": bytearray(sdl_payload),
         }
         invalid_sdl["corrupted"][

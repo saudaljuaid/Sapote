@@ -35,3 +35,7 @@ Vendoring and compiling SDL do not by themselves prove an application works.
 That claim requires a Ring 3 QEMU scenario which creates a window, presents
 pixels, receives injected input, submits non-silent PCM, writes persistent
 state, exits, and leaves a clean handle/allocation/process census.
+The retained WAV proof identifies every PCM frame in the non-repeating fixture,
+requires ordered minimum coverage for all four callbacks across both launches,
+and tolerates only silent backend gaps that fragment an otherwise forward-moving
+callback stream.

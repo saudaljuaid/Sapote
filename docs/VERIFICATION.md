@@ -32,7 +32,8 @@ activity before their resource census is checked.
 The `native-sdl` scenario launches the SDL 2 proof application twice. It
 captures a screenshot and video, injects keyboard and pointer input into the
 first launch, validates non-silent PCM output when QEMU provides its WAV
-backend, checks synchronized preference state on the second launch, and then
+backend with exact frame identities and per-callback minimum coverage even when
+backend silence fragments a callback, checks synchronized preference state on the second launch, and then
 requires clean process, window, audio, and handle censuses.
 
 The `native-dynamic` scenario installs one package containing a PIE root,
