@@ -94,7 +94,10 @@ additionally runs a real upstream file write through the stage and observes the
 overlay while the source image remains unchanged. The stage can also clone an
 input transaction into one atomic classified snapshot: each explicitly named
 ordered-data block must be staged exactly once, every remaining image becomes
-journaled metadata, and staged/revoked overlap is refused. An open file can
+journaled metadata, and staged/revoked overlap is refused. Classification and
+sealing share one exclusive lock, so a successful snapshot cannot race a later
+upstream write. Refused classification leaves the stage open; rollback clears
+and reopens it, but the mutated filesystem object must still be discarded. An open file can
 report the initialized physical block at a byte offset so Sapote can derive the
 ordered-data set after a staged regular-file write without exposing a writer.
 

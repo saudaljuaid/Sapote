@@ -225,8 +225,25 @@ fn mutation_stage_classifies_one_atomic_journal_transaction() {
         stage.build_transaction(&base, &[2, 2]).unwrap_err(),
         JournalMutationPlanError::DuplicateOrderedData
     );
+    let mut revoked = base.clone();
+    revoked.stage_revocation(1).unwrap();
+    assert_eq!(
+        stage.build_transaction(&revoked, &[2]).unwrap_err(),
+        JournalMutationPlanError::StagedBlockRevoked
+    );
 
     let classified = stage.build_transaction(&base, &[2]).unwrap();
+    assert!(stage.is_sealed());
+    assert_eq!(
+        stage.build_transaction(&base, &[2]).unwrap_err(),
+        JournalMutationPlanError::StageSealed
+    );
+    assert_eq!(
+        Ext4Write::write(&stage, JOURNAL_BLOCK_BYTES as u64 * 3, &[0x33])
+            .unwrap_err()
+            .to_string(),
+        JournalMutationStageError::Sealed.to_string()
+    );
     assert_eq!(
         base.required_journal_slots(),
         Err(JournalTransactionError::EmptyTransaction)
@@ -242,13 +259,6 @@ fn mutation_stage_classifies_one_atomic_journal_transaction() {
         JournalCommitOperation::WriteHomeMetadata(image) if image.block_index() == 1
     ));
     assert_eq!(plan[8], JournalCommitOperation::Flush(JournalFlush::Checkpoint));
-
-    let mut revoked = base.clone();
-    revoked.stage_revocation(1).unwrap();
-    assert_eq!(
-        stage.build_transaction(&revoked, &[2]).unwrap_err(),
-        JournalMutationPlanError::StagedBlockRevoked
-    );
 }
 
 fn install_journal_writes(

@@ -32,6 +32,8 @@ pub enum JournalMutationStageError {
     Range,
     /// One mutation attempt exceeded the stage's transaction safety bound.
     TooManyBlocks,
+    /// The stage was sealed into an immutable transaction snapshot.
+    Sealed,
 }
 
 impl Display for JournalMutationStageError {
@@ -40,6 +42,7 @@ impl Display for JournalMutationStageError {
             Self::Geometry => "mutation stage geometry is invalid",
             Self::Range => "mutation stage byte range is invalid",
             Self::TooManyBlocks => "mutation stage block bound exceeded",
+            Self::Sealed => "mutation stage is sealed",
         };
         formatter.write_str(message)
     }
@@ -58,6 +61,8 @@ pub enum JournalMutationPlanError {
     DuplicateOrderedData,
     /// A current staged image is also named as an older-image revocation.
     StagedBlockRevoked,
+    /// A transaction snapshot has already sealed this stage.
+    StageSealed,
     /// The resulting bounded JBD2 transaction is invalid.
     Transaction(JournalTransactionError),
 }
@@ -75,6 +80,7 @@ impl Display for JournalMutationPlanError {
             Self::StagedBlockRevoked => {
                 formatter.write_str("staged mutation block is also revoked")
             }
+            Self::StageSealed => formatter.write_str("mutation stage is already sealed"),
             Self::Transaction(error) => Display::fmt(error, formatter),
         }
     }
@@ -88,17 +94,25 @@ impl From<JournalTransactionError> for JournalMutationPlanError {
     }
 }
 
+#[cfg(feature = "sync")]
+struct JournalMutationState {
+    sealed: bool,
+    blocks: BTreeMap<u64, Vec<u8>>,
+}
+
 /// A bounded overlay that never writes through to its backing reader.
 ///
 /// The first write to a block reads its complete 4 KiB home image, then every
 /// partial write coalesces into that owned copy. Reads observe staged copies.
-/// The caller must discard both this stage and the `Ext4` instance that used it
-/// after rollback because ext4plus also updates in-memory allocation counters.
+/// Successful transaction classification atomically seals the overlay against
+/// further writes. The caller must discard both this stage and the `Ext4`
+/// instance that used it after rollback because ext4plus also updates in-memory
+/// allocation counters.
 #[cfg(feature = "sync")]
 pub struct JournalMutationStage {
     reader: Box<dyn Ext4Read>,
     filesystem_bytes: u64,
-    blocks: RwLock<BTreeMap<u64, Vec<u8>>>,
+    state: RwLock<JournalMutationState>,
 }
 
 #[cfg(feature = "sync")]
@@ -114,7 +128,10 @@ impl JournalMutationStage {
         Ok(Self {
             reader,
             filesystem_bytes,
-            blocks: RwLock::new(BTreeMap::new()),
+            state: RwLock::new(JournalMutationState {
+                sealed: false,
+                blocks: BTreeMap::new(),
+            }),
         })
     }
 
@@ -132,14 +149,21 @@ impl JournalMutationStage {
     /// Return the number of complete block images currently staged.
     #[must_use]
     pub fn staged_block_count(&self) -> usize {
-        self.blocks.read().len()
+        self.state.read().blocks.len()
+    }
+
+    /// Return whether classification has frozen this stage for execution.
+    #[must_use]
+    pub fn is_sealed(&self) -> bool {
+        self.state.read().sealed
     }
 
     /// Snapshot every complete staged block image in ascending block order.
     #[must_use]
     pub fn staged_images(&self) -> Vec<JournalBlockImage> {
-        self.blocks
+        self.state
             .read()
+            .blocks
             .iter()
             .map(|(block_index, bytes)| {
                 JournalBlockImage::from_staged(*block_index, bytes.clone())
@@ -159,20 +183,23 @@ impl JournalMutationStage {
         transaction: &JournalTransaction,
         ordered_data_blocks: &[u64],
     ) -> Result<JournalTransaction, JournalMutationPlanError> {
-        let blocks = self.blocks.read();
-        if blocks.is_empty() {
+        let mut state = self.state.write();
+        if state.sealed {
+            return Err(JournalMutationPlanError::StageSealed);
+        }
+        if state.blocks.is_empty() {
             return Err(JournalMutationPlanError::EmptyStage);
         }
         for (index, block) in ordered_data_blocks.iter().enumerate() {
             if ordered_data_blocks[..index].contains(block) {
                 return Err(JournalMutationPlanError::DuplicateOrderedData);
             }
-            if !blocks.contains_key(block) {
+            if !state.blocks.contains_key(block) {
                 return Err(JournalMutationPlanError::OrderedDataNotStaged);
             }
         }
         let mut output = transaction.clone();
-        for (block, bytes) in blocks.iter() {
+        for (block, bytes) in state.blocks.iter() {
             if output.revokes_block(*block) {
                 return Err(JournalMutationPlanError::StagedBlockRevoked);
             }
@@ -182,6 +209,7 @@ impl JournalMutationStage {
                 output.stage_metadata(*block, bytes)?;
             }
         }
+        state.sealed = true;
         Ok(output)
     }
 
@@ -189,7 +217,9 @@ impl JournalMutationStage {
     ///
     /// The associated ext4plus filesystem object must be discarded too.
     pub fn rollback(&self) {
-        self.blocks.write().clear();
+        let mut state = self.state.write();
+        state.blocks.clear();
+        state.sealed = false;
     }
 }
 
@@ -205,7 +235,7 @@ impl Ext4Read for JournalMutationStage {
             let within = usize::try_from(position % JOURNAL_BLOCK_BYTES as u64)
                 .map_err(|_| Box::new(JournalMutationStageError::Range) as BoxedError)?;
             let length = remaining.len().min(JOURNAL_BLOCK_BYTES - within);
-            if let Some(image) = self.blocks.read().get(&block_index) {
+            if let Some(image) = self.state.read().blocks.get(&block_index) {
                 remaining[..length].copy_from_slice(&image[within..within + length]);
             } else {
                 self.reader.read(position, &mut remaining[..length])?;
@@ -227,7 +257,10 @@ impl Ext4Write for JournalMutationStage {
         }
         let mut position = start_byte;
         let mut remaining = source;
-        let mut blocks = self.blocks.write();
+        let mut state = self.state.write();
+        if state.sealed {
+            return Err(Box::new(JournalMutationStageError::Sealed));
+        }
         while !remaining.is_empty() {
             let block_index = position / JOURNAL_BLOCK_BYTES as u64;
             let block_start = block_index
@@ -236,15 +269,16 @@ impl Ext4Write for JournalMutationStage {
             let within = usize::try_from(position - block_start)
                 .map_err(|_| Box::new(JournalMutationStageError::Range) as BoxedError)?;
             let length = remaining.len().min(JOURNAL_BLOCK_BYTES - within);
-            if !blocks.contains_key(&block_index) {
-                if blocks.len() >= JOURNAL_TRANSACTION_MAX_METADATA_BLOCKS {
+            if !state.blocks.contains_key(&block_index) {
+                if state.blocks.len() >= JOURNAL_TRANSACTION_MAX_METADATA_BLOCKS {
                     return Err(Box::new(JournalMutationStageError::TooManyBlocks));
                 }
                 let mut image = vec![0; JOURNAL_BLOCK_BYTES];
                 self.reader.read(block_start, &mut image)?;
-                blocks.insert(block_index, image);
+                state.blocks.insert(block_index, image);
             }
-            let image = blocks
+            let image = state
+                .blocks
                 .get_mut(&block_index)
                 .ok_or_else(|| Box::new(JournalMutationStageError::Range) as BoxedError)?;
             image[within..within + length].copy_from_slice(&remaining[..length]);

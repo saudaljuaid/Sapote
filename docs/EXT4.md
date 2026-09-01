@@ -220,6 +220,11 @@ overlay and requires discarding the mutated ext4plus object as well. An atomic
 snapshot builder requires every caller-named ordered file-data block to exist
 exactly once in the stage, journals every remaining image as metadata, refuses
 a staged/revoked overlap, and leaves the input transaction unchanged on error.
+Successful classification takes the stage's exclusive lock and atomically
+seals the complete snapshot, so no later ext4plus write can race the transaction
+plan. A refused classification remains open for correction; explicit rollback
+discards every staged image and reopens the overlay, while still requiring the
+mutated ext4plus object to be discarded.
 An open regular file exposes its initialized physical block at a byte offset so
 the eventual mutation adapter can derive that ordered-data set after the
 upstream write; holes and uninitialized extents are never misclassified.
