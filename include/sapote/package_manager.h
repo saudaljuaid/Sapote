@@ -185,7 +185,8 @@ struct package_manager_relation_view {
 enum package_manager_plan_operation {
     PACKAGE_MANAGER_PLAN_INSTALL = 1,
     PACKAGE_MANAGER_PLAN_UPDATE = 2,
-    PACKAGE_MANAGER_PLAN_REMOVE = 3
+    PACKAGE_MANAGER_PLAN_REMOVE = 3,
+    PACKAGE_MANAGER_PLAN_REPAIR = 4
 };
 
 struct package_manager_plan_item {

@@ -604,6 +604,81 @@ static bool bootstrap_workspace(
     return true;
 }
 
+static bool repair_workspace(
+    const uint8_t installed_database[NEW_DATABASE_BYTES],
+    struct package_builder_workspace *workspace,
+    uint8_t target_database[NEW_DATABASE_BYTES]
+)
+{
+    static const uint8_t payload[] = "app";
+
+    memset(workspace, 0, sizeof(*workspace));
+    if (package_state_database_parse(installed_database, NEW_DATABASE_BYTES,
+            &workspace->installed) != PACKAGE_STATE_STATUS_OK) {
+        return false;
+    }
+    workspace->has_installed = true;
+    workspace->verified_plan.operation = PACKAGE_MANAGER_PLAN_REPAIR;
+    workspace->spec = (struct package_generation_spec){
+        workspace->installed.generation + 1U, workspace->installed.abi,
+        workspace->packages, workspace->installed.package_count,
+        workspace->dependencies, workspace->installed.edge_count,
+        workspace->files, workspace->installed.file_count
+    };
+    for (uint32_t index = 0U; index < workspace->installed.package_count;
+        ++index) {
+        struct package_state_package_view package;
+
+        if (package_state_database_package(&workspace->installed, index,
+                &package) != PACKAGE_STATE_STATUS_OK) {
+            return false;
+        }
+        workspace->packages[index] = (struct package_generation_package){
+            package.identifier, package.version, package.package_sha256,
+            package.publisher_key_id, package.explicit_root,
+            package.dependency_start, package.dependency_count,
+            package.file_count
+        };
+    }
+    for (uint32_t index = 0U; index < workspace->installed.edge_count; ++index) {
+        struct package_state_dependency_view dependency;
+
+        if (package_state_database_dependency(&workspace->installed, index,
+                &dependency) != PACKAGE_STATE_STATUS_OK) {
+            return false;
+        }
+        workspace->dependencies[index] =
+            (struct package_generation_dependency){
+                dependency.requested, dependency.constraint,
+                dependency.provider
+            };
+    }
+    for (uint32_t index = 0U; index < workspace->installed.file_count; ++index) {
+        struct package_state_file_view file;
+
+        if (package_state_database_file(&workspace->installed, index, &file) !=
+                PACKAGE_STATE_STATUS_OK) {
+            return false;
+        }
+        workspace->files[index] = (struct package_generation_file){
+            file.path, file.owner_index, file.kind, file.mode, file.length,
+            file.sha256, file.soname
+        };
+        workspace->file_sources[index] =
+            (struct package_builder_file_source){
+                PACKAGE_BUILDER_FILE_SOURCE_INSTALLED, file.owner_index, index,
+                NULL, 0U
+            };
+    }
+    workspace->file_sources[0] = (struct package_builder_file_source){
+        PACKAGE_BUILDER_FILE_SOURCE_PAYLOAD, 0U, 0U, payload,
+        sizeof(payload) - 1U
+    };
+    struct package_state_database_view target;
+    return package_generation_encode(&workspace->spec, target_database,
+        NEW_DATABASE_BYTES, &target) == PACKAGE_STATE_STATUS_OK;
+}
+
 static void build_bootstrap_database(
     uint8_t database[NEW_DATABASE_BYTES],
     const uint8_t new_database[NEW_DATABASE_BYTES]
@@ -983,6 +1058,74 @@ static int test_recovery_accepts_persisted_bootstrap_prefixes(
     CHECK(package_service_recover(&report) == PACKAGE_SERVICE_STATUS_STATE &&
         !report.cleanup_complete &&
         find_node(PACKAGE_SERVICE_AUTHORITY_NEW_PATH) != MOCK_MAX_NODES, 233);
+    return 0;
+}
+
+static int test_repair_replaces_damaged_files(
+    const uint8_t installed_database[NEW_DATABASE_BYTES],
+    const uint8_t installed_authority[PACKAGE_STATE_AUTHORITY_BYTES]
+)
+{
+    struct package_builder_workspace *workspace = malloc(sizeof(*workspace));
+    struct package_service_prepare_request request;
+    struct package_service_report report;
+    uint8_t target_database[NEW_DATABASE_BYTES];
+
+    CHECK(workspace != NULL && repair_workspace(installed_database, workspace,
+        target_database), 240);
+    request = (struct package_service_prepare_request){
+        workspace, target_database, sizeof(target_database)
+    };
+
+    reset_filesystem();
+    add_new_generation(installed_database);
+    add_file(PACKAGE_SERVICE_AUTHORITY_PATH, installed_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    size_t damaged = find_node(
+        "pkgstate/gen/00000000/00000002/root/bin/app");
+    nodes[damaged].bytes[0] ^= UINT8_C(1);
+    workspace->file_sources[0] = (struct package_builder_file_source){
+        PACKAGE_BUILDER_FILE_SOURCE_INSTALLED, 0U, 0U, NULL, 0U
+    };
+    CHECK(package_service_prepare(&request, &report) ==
+            PACKAGE_SERVICE_STATUS_IMMUTABLE_FILE && !report.prepared &&
+        find_node(PACKAGE_SERVICE_JOURNAL_NEW_PATH) == MOCK_MAX_NODES &&
+        find_node(PACKAGE_SERVICE_JOURNAL_PATH) == MOCK_MAX_NODES &&
+        find_node("pkgstate/gen/00000000/00000003") == MOCK_MAX_NODES &&
+        selected_authority_generation(2U), 241);
+
+    CHECK(repair_workspace(installed_database, workspace, target_database), 242);
+    reset_filesystem();
+    add_new_generation(installed_database);
+    add_file(PACKAGE_SERVICE_AUTHORITY_PATH, installed_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    damaged = find_node("pkgstate/gen/00000000/00000002/root/bin/app");
+    nodes[damaged].bytes[0] ^= UINT8_C(1);
+    CHECK(package_service_prepare(&request, &report) ==
+            PACKAGE_SERVICE_STATUS_OK && report.prepared &&
+        report.generation == 3U && report.files_staged == 2U &&
+        find_node(PACKAGE_SERVICE_JOURNAL_PATH) != MOCK_MAX_NODES, 243);
+    CHECK(package_service_commit(&report) == PACKAGE_SERVICE_STATUS_OK &&
+        report.committed && report.choice == PACKAGE_STATE_RECOVERY_NEW &&
+        report.generation == 3U && report.cleanup_complete &&
+        selected_authority_generation(3U) &&
+        find_node("pkgstate/gen/00000000/00000002") == MOCK_MAX_NODES, 244);
+
+    CHECK(repair_workspace(installed_database, workspace, target_database), 245);
+    reset_filesystem();
+    add_new_generation(installed_database);
+    add_file(PACKAGE_SERVICE_AUTHORITY_PATH, installed_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    damaged = find_node("pkgstate/gen/00000000/00000002/root/bin/app");
+    nodes[damaged].bytes[0] ^= UINT8_C(1);
+    CHECK(package_service_prepare(&request, &report) ==
+            PACKAGE_SERVICE_STATUS_OK && report.prepared, 246);
+    CHECK(package_service_recover(&report) == PACKAGE_SERVICE_STATUS_OK &&
+        report.choice == PACKAGE_STATE_RECOVERY_NEW &&
+        report.generation == 3U && report.authority_replaced &&
+        report.cleanup_complete && selected_authority_generation(3U), 247);
+    CHECK(report_clean(&report), 248);
+    free(workspace);
     return 0;
 }
 
@@ -1549,6 +1692,10 @@ int main(void)
     if (result == 0) {
         result = test_recovery_accepts_persisted_bootstrap_prefixes(
             bootstrap_database, bootstrap_authority);
+    }
+    if (result == 0) {
+        result = test_repair_replaces_damaged_files(new_database,
+            new_authority);
     }
     if (result == 0) {
         result = test_commit_promotes_prepared_generation(old_database,

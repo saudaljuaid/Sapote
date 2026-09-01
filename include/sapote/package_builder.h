@@ -14,6 +14,12 @@ struct package_builder_package_bytes {
     size_t byte_count;
 };
 
+struct package_builder_repair_file {
+    struct package_state_text path;
+    const uint8_t *payload;
+    size_t payload_bytes;
+};
+
 enum package_builder_file_source_kind {
     PACKAGE_BUILDER_FILE_SOURCE_INVALID = 0,
     PACKAGE_BUILDER_FILE_SOURCE_INSTALLED = 1,
@@ -72,6 +78,19 @@ enum package_manager_status package_builder_build(
     uint32_t package_count,
     const struct package_manager_policy *policy,
     const struct package_manager_trust *trust,
+    struct package_builder_workspace *workspace
+);
+
+/*
+ * Rebuilds the next generation from authoritative installed metadata.  The
+ * sorted replacement list supplies already authenticated bytes for damaged
+ * owned paths; every other path remains an individually verified old-generation
+ * copy.  Success performs no filesystem I/O.
+ */
+enum package_manager_status package_builder_repair(
+    const struct package_state_database_view *installed,
+    const struct package_builder_repair_file *replacements,
+    uint32_t replacement_count,
     struct package_builder_workspace *workspace
 );
 

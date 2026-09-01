@@ -664,6 +664,7 @@ static int test_recovery(
     };
     struct package_state_recovery_result result;
     uint8_t changed_authority[PACKAGE_STATE_AUTHORITY_BYTES];
+    uint8_t repair_journal[PACKAGE_STATE_JOURNAL_BYTES];
 
     CHECK(package_state_recovery_decide(old_authority,
         PACKAGE_STATE_AUTHORITY_BYTES, journal, PACKAGE_STATE_JOURNAL_BYTES,
@@ -674,6 +675,24 @@ static int test_recovery(
         PACKAGE_STATE_AUTHORITY_BYTES, journal, PACKAGE_STATE_JOURNAL_BYTES,
         &old_generation, &new_generation, &result) == PACKAGE_STATE_STATUS_OK &&
         result.choice == PACKAGE_STATE_RECOVERY_NEW && result.generation == 2U, 31);
+
+    copy_bytes(repair_journal, journal, sizeof(repair_journal));
+    put_u16(repair_journal + 16U, PACKAGE_STATE_OPERATION_REPAIR);
+    clear_bytes(repair_journal + 160U, 64U);
+    rehash_journal(repair_journal);
+    old_generation.owned_files_complete = false;
+    CHECK(package_state_recovery_decide(old_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, repair_journal,
+        PACKAGE_STATE_JOURNAL_BYTES, &old_generation, &new_generation,
+        &result) == PACKAGE_STATE_STATUS_OK &&
+        result.choice == PACKAGE_STATE_RECOVERY_NEW && result.generation == 2U,
+        61);
+    old_generation.owned_files_complete = true;
+    CHECK(package_state_recovery_decide(old_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, repair_journal,
+        PACKAGE_STATE_JOURNAL_BYTES, &old_generation, &new_generation,
+        &result) == PACKAGE_STATE_STATUS_OK &&
+        result.choice == PACKAGE_STATE_RECOVERY_OLD, 62);
 
     new_generation.owned_files_complete = false;
     CHECK(package_state_recovery_decide(new_authority,

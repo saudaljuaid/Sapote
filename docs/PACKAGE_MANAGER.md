@@ -115,6 +115,8 @@ and the dependency-depth bound.
 result without advancing package authority, and separately commits only a
 revalidated prepared journal through an ordered authority switch. A distinct
 generation-one bootstrap uses only admitted signed payload sources and a durable
-authority receipt rather than inventing a generation-zero database. Fetching,
-signature-provider setup, repair, client commands, Store presentation, and
-writable-ext4 integration remain outside this parser and planner.
+authority receipt rather than inventing a generation-zero database. A bounded
+repair builder preserves the installed graph and metadata while replacing only
+sorted owned paths whose authenticated bytes match the installed length and
+digest. Fetching, signature-provider setup, client commands, Store presentation,
+and writable-ext4 integration remain outside this parser and planner.

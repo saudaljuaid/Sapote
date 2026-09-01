@@ -1519,6 +1519,11 @@ enum package_state_status package_state_recovery_decide(
             select_generation(PACKAGE_STATE_RECOVERY_OLD, &old_view, result);
             return PACKAGE_STATE_STATUS_OK;
         }
+        if (journal_view.operation == PACKAGE_STATE_OPERATION_REPAIR &&
+            new_complete) {
+            select_generation(PACKAGE_STATE_RECOVERY_NEW, &new_view, result);
+            return PACKAGE_STATE_STATUS_OK;
+        }
         return PACKAGE_STATE_STATUS_INCOMPLETE;
     }
     if (old_complete) {

@@ -325,10 +325,12 @@ state.
 
 The separate privileged prepare entry point accepts an exact builder/database
 pair only after the canonical equivalence verifier binds them. It refuses
-fresh-store bootstrap and repair, requires current authority to select the
-builder's base, accounts for all target content against free space, and
-preflights path length, depth, file/descendant conflicts, and the 64-entry
-recovery-list bound before writing.
+fresh-store bootstrap, requires current authority to select the builder's base,
+accounts for all target content against free space, and preflights path length,
+depth, file/descendant conflicts, and the 64-entry recovery-list bound before
+writing. The service also reloads the authoritative on-disk `state.db` and
+requires byte equality with the builder's base rather than trusting a detached
+caller view.
 
 Prepare writes and syncs `txn.new` before creating the target and reads the
 marker back byte-for-byte. It then writes each signed payload or verified
@@ -395,6 +397,23 @@ it accepts a replacement only when its length and SHA-256 match installed
 authenticated metadata. Extra replacement paths are refused. Mutable user data
 is outside both operations.
 
+`package_builder_repair()` implements that bounded C repair construction. It
+re-parses the authoritative installed database, copies every package/provider
+edge/file metadata record into generation `current + 1`, and accepts a strictly
+sorted replacement list. Each replacement must name exactly one owned path and
+match its installed length and SHA-256; unchanged files remain individually
+verified old-generation copy sources. The result passes through the same
+canonical generation encoder and filesystem staging path as install/update.
+
+Repair is the only prepared operation allowed to start with damaged base files;
+the base database itself must still be present, canonical, and selected by
+authority. If the complete repair target is published while the base remains
+incomplete, recovery selects the repair target even before authority replacement
+because rolling back would leave no usable generation. If the base is complete,
+the ordinary pre-authority rollback rule still applies. Commit revalidates this
+operation-specific decision before switching authority. Missing or bad repair
+payloads fail before journal publication and leave the selected base unchanged.
+
 ## Host reference commands and tests
 
 The CLI exposes byte-format construction and inspection only:
@@ -436,12 +455,12 @@ The service host test links the real service against a bounded in-memory VFS and
 heap. It covers no-journal verification, pre-authority rollback,
 post-authority completion, exact file digest tamper, an unowned extra file,
 authority repair ordering, recursive cleanup, no-complete-generation refusal,
-bootstrap/prepare/commit refusal, every bootstrap/prepare/commit durability
+bootstrap/prepare/commit/repair refusal, every bootstrap/prepare/commit durability
 boundary, persisted bootstrap and authority-switch prefixes, journal-last
 cleanup ordering, durability failure with recoverable state, and zero live
 handle/allocation census on every exit.
 
 The transaction service starts from authenticated package bytes and an existing
 valid authenticated builder result. Download, trust-provider provisioning,
-repair, client presentation, and writable-ext4 backend evidence are separate
-integration layers.
+client presentation, and writable-ext4 backend evidence are separate integration
+layers.

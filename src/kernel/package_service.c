@@ -1334,6 +1334,8 @@ static enum package_state_operation plan_operation(
         return PACKAGE_STATE_OPERATION_UPDATE;
     case PACKAGE_MANAGER_PLAN_REMOVE:
         return PACKAGE_STATE_OPERATION_REMOVE;
+    case PACKAGE_MANAGER_PLAN_REPAIR:
+        return PACKAGE_STATE_OPERATION_REPAIR;
     default:
         return PACKAGE_STATE_OPERATION_INVALID;
     }
@@ -1407,6 +1409,7 @@ static enum package_service_status prepare_internal(
     const struct package_builder_workspace *builder = request->builder;
     struct package_state_database_view base;
     struct package_state_database_view target;
+    struct loaded_generation stored_base;
     struct package_state_journal_spec journal_spec;
     uint8_t authority[PACKAGE_STATE_AUTHORITY_BYTES];
     uint8_t journal[PACKAGE_STATE_JOURNAL_BYTES];
@@ -1415,6 +1418,7 @@ static enum package_service_status prepare_internal(
     uint64_t required_space;
     bool authority_present = false;
     bool published = false;
+    bool repair;
     enum package_service_status status;
 
     if (builder == NULL || request->database == NULL ||
@@ -1424,6 +1428,8 @@ static enum package_service_status prepare_internal(
             PACKAGE_STATE_OPERATION_INVALID) {
         return PACKAGE_SERVICE_STATUS_STATE;
     }
+    repair = builder->verified_plan.operation == PACKAGE_MANAGER_PLAN_REPAIR;
+    zero_bytes(&stored_base, sizeof(stored_base));
     context->report->state_status = package_state_database_parse(
         builder->installed.bytes, builder->installed.byte_count, &base);
     if (context->report->state_status != PACKAGE_STATE_STATUS_OK) {
@@ -1451,7 +1457,26 @@ static enum package_service_status prepare_internal(
     }
     status = ensure_entries(context);
     if (status == PACKAGE_SERVICE_STATUS_OK) {
-        status = verify_generation_files(context, &base);
+        status = load_generation(context, base.generation, base.byte_count,
+            &stored_base);
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK &&
+        (stored_base.candidate.database == NULL ||
+        stored_base.view.byte_count != base.byte_count ||
+        !equal_bytes(stored_base.view.bytes, base.bytes, base.byte_count))) {
+        status = PACKAGE_SERVICE_STATUS_STATE;
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK &&
+        !stored_base.candidate.owned_files_complete && !repair) {
+        status = PACKAGE_SERVICE_STATUS_IMMUTABLE_FILE;
+    }
+    {
+        enum package_service_status release_status = release_generation(context,
+            &stored_base);
+
+        if (release_status != PACKAGE_SERVICE_STATUS_OK) {
+            status = release_status;
+        }
     }
     if (status != PACKAGE_SERVICE_STATUS_OK) {
         return status;
@@ -1751,7 +1776,8 @@ static enum package_service_status commit_internal(
     if (status != PACKAGE_SERVICE_STATUS_OK) {
         goto release;
     }
-    if (!old_generation.candidate.owned_files_complete ||
+    bool repair = journal_view.operation == PACKAGE_STATE_OPERATION_REPAIR;
+    if ((!repair && !old_generation.candidate.owned_files_complete) ||
         !new_generation.candidate.owned_files_complete) {
         context->report->state_status = PACKAGE_STATE_STATUS_INCOMPLETE;
         status = PACKAGE_SERVICE_STATUS_INCOMPLETE;
@@ -1765,9 +1791,13 @@ static enum package_service_status commit_internal(
     context->report->state_status = package_state_recovery_decide(authority,
         sizeof(authority), journal, sizeof(journal),
         &old_generation.candidate, &new_generation.candidate, &recovery);
+    enum package_state_recovery_choice expected = repair &&
+        !old_generation.candidate.owned_files_complete ?
+            PACKAGE_STATE_RECOVERY_NEW : PACKAGE_STATE_RECOVERY_OLD;
     if (context->report->state_status != PACKAGE_STATE_STATUS_OK ||
-        recovery.choice != PACKAGE_STATE_RECOVERY_OLD ||
-        recovery.generation != journal_view.base_generation) {
+        recovery.choice != expected ||
+        recovery.generation != (expected == PACKAGE_STATE_RECOVERY_NEW ?
+            journal_view.target_generation : journal_view.base_generation)) {
         status = context->report->state_status ==
             PACKAGE_STATE_STATUS_INCOMPLETE ?
             PACKAGE_SERVICE_STATUS_INCOMPLETE : PACKAGE_SERVICE_STATUS_STATE;

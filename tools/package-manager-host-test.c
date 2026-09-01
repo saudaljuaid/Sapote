@@ -407,6 +407,54 @@ static int test_fresh_builder(
     CHECK(encoded != NULL && package_generation_encode(&workspace->spec,
             encoded, encoded_bytes, &encoded_view) == PACKAGE_STATE_STATUS_OK &&
         encoded_view.generation == 1U && encoded_view.file_count == 2U);
+    {
+        static const uint8_t application_payload[] =
+            "\x7f" "ELFproof-application";
+        static const uint8_t bad_payload[] = "damaged";
+        static const uint8_t application_path[] = "bin/proof-app";
+        static const uint8_t unknown_path[] = "bin/unknown";
+        struct package_builder_repair_file replacement = {
+            { application_path, sizeof(application_path) - 1U },
+            application_payload, sizeof(application_payload) - 1U
+        };
+        struct package_state_database_view repair_view;
+        uint8_t *repair_database;
+
+        CHECK(package_builder_repair(&encoded_view, &replacement, 1U,
+                workspace) == PACKAGE_MANAGER_STATUS_OK &&
+            workspace->has_installed && workspace->verified_plan.operation ==
+                PACKAGE_MANAGER_PLAN_REPAIR &&
+            workspace->spec.generation == 2U &&
+            workspace->spec.package_count == encoded_view.package_count &&
+            workspace->spec.dependency_count == encoded_view.edge_count &&
+            workspace->spec.file_count == encoded_view.file_count &&
+            workspace->file_sources[0].kind ==
+                PACKAGE_BUILDER_FILE_SOURCE_PAYLOAD &&
+            workspace->file_sources[0].payload == application_payload &&
+            workspace->file_sources[1].kind ==
+                PACKAGE_BUILDER_FILE_SOURCE_INSTALLED);
+        repair_database = malloc(encoded_bytes);
+        CHECK(repair_database != NULL && package_generation_encode(
+                &workspace->spec, repair_database, encoded_bytes,
+                &repair_view) == PACKAGE_STATE_STATUS_OK &&
+            repair_view.generation == 2U &&
+            package_generation_verify(&workspace->spec, repair_database,
+                encoded_bytes, &repair_view) == PACKAGE_STATE_STATUS_OK);
+        free(repair_database);
+        replacement.payload = bad_payload;
+        replacement.payload_bytes = sizeof(bad_payload) - 1U;
+        CHECK(package_builder_repair(&encoded_view, &replacement, 1U,
+                workspace) == PACKAGE_MANAGER_STATUS_DIGEST &&
+            workspace->spec.package_count == 0U);
+        replacement.path = (struct package_state_text){
+            unknown_path, sizeof(unknown_path) - 1U
+        };
+        replacement.payload = application_payload;
+        replacement.payload_bytes = sizeof(application_payload) - 1U;
+        CHECK(package_builder_repair(&encoded_view, &replacement, 1U,
+                workspace) == PACKAGE_MANAGER_STATUS_NOT_FOUND &&
+            workspace->spec.package_count == 0U);
+    }
     CHECK(package_manager_plan_install(repository, &encoded_view,
         (const uint8_t *)"org.sapote.lib", 14U, policy, trust,
         &promotion_plan) == PACKAGE_MANAGER_STATUS_OK &&

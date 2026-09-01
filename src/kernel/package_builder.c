@@ -789,3 +789,153 @@ enum package_manager_status package_builder_build(
     }
     return status;
 }
+
+enum package_manager_status package_builder_repair(
+    const struct package_state_database_view *installed,
+    const struct package_builder_repair_file *replacements,
+    uint32_t replacement_count,
+    struct package_builder_workspace *workspace
+)
+{
+    size_t ignored_size;
+    uint32_t replacement_index = 0U;
+    enum package_manager_status status = PACKAGE_MANAGER_STATUS_OK;
+
+    if (installed == NULL || workspace == NULL ||
+        (replacement_count != 0U && replacements == NULL)) {
+        return PACKAGE_MANAGER_STATUS_NULL_ARGUMENT;
+    }
+    clear_workspace(workspace);
+    if (installed->bytes == NULL || package_state_database_parse(
+            installed->bytes, installed->byte_count, &workspace->installed) !=
+                PACKAGE_STATE_STATUS_OK) {
+        return PACKAGE_MANAGER_STATUS_STATE;
+    }
+    if (workspace->installed.generation == UINT64_MAX ||
+        replacement_count > workspace->installed.file_count) {
+        status = workspace->installed.generation == UINT64_MAX ?
+            PACKAGE_MANAGER_STATUS_OVERFLOW : PACKAGE_MANAGER_STATUS_GRAPH_BOUND;
+        goto refuse;
+    }
+    for (uint32_t index = 0U; index < replacement_count; ++index) {
+        if (replacements[index].path.bytes == NULL ||
+            replacements[index].path.length == 0U ||
+            replacements[index].payload == NULL ||
+            (index != 0U && compare_text(replacements[index - 1U].path.bytes,
+                replacements[index - 1U].path.length,
+                replacements[index].path.bytes,
+                replacements[index].path.length) >= 0)) {
+            status = PACKAGE_MANAGER_STATUS_STATE;
+            goto refuse;
+        }
+    }
+    workspace->has_installed = true;
+    workspace->verified_plan.operation = PACKAGE_MANAGER_PLAN_REPAIR;
+    workspace->spec = (struct package_generation_spec){
+        workspace->installed.generation + 1U,
+        workspace->installed.abi,
+        workspace->packages,
+        workspace->installed.package_count,
+        workspace->dependencies,
+        workspace->installed.edge_count,
+        workspace->files,
+        workspace->installed.file_count
+    };
+    for (uint32_t index = 0U; index < workspace->installed.package_count;
+        ++index) {
+        struct package_state_package_view package;
+
+        if (package_state_database_package(&workspace->installed, index,
+                &package) != PACKAGE_STATE_STATUS_OK) {
+            status = PACKAGE_MANAGER_STATUS_STATE;
+            goto refuse;
+        }
+        workspace->packages[index] = (struct package_generation_package){
+            package.identifier, package.version, package.package_sha256,
+            package.publisher_key_id, package.explicit_root,
+            package.dependency_start, package.dependency_count,
+            package.file_count
+        };
+    }
+    for (uint32_t index = 0U; index < workspace->installed.edge_count; ++index) {
+        struct package_state_dependency_view dependency;
+
+        if (package_state_database_dependency(&workspace->installed, index,
+                &dependency) != PACKAGE_STATE_STATUS_OK) {
+            status = PACKAGE_MANAGER_STATUS_STATE;
+            goto refuse;
+        }
+        workspace->dependencies[index] =
+            (struct package_generation_dependency){
+                dependency.requested, dependency.constraint,
+                dependency.provider
+            };
+    }
+    for (uint32_t index = 0U; index < workspace->installed.file_count; ++index) {
+        struct package_state_file_view file;
+        bool replaced = false;
+
+        if (package_state_database_file(&workspace->installed, index, &file) !=
+                PACKAGE_STATE_STATUS_OK) {
+            status = PACKAGE_MANAGER_STATUS_STATE;
+            goto refuse;
+        }
+        workspace->files[index] = (struct package_generation_file){
+            file.path, file.owner_index, file.kind, file.mode, file.length,
+            file.sha256, file.soname
+        };
+        if (replacement_index < replacement_count) {
+            int order = compare_text(replacements[replacement_index].path.bytes,
+                replacements[replacement_index].path.length, file.path.bytes,
+                file.path.length);
+
+            if (order < 0) {
+                status = PACKAGE_MANAGER_STATUS_NOT_FOUND;
+                goto refuse;
+            }
+            if (order == 0) {
+                uint8_t digest[PACKAGE_STATE_SHA256_BYTES];
+
+                if (replacements[replacement_index].payload_bytes !=
+                        file.length ||
+                    package_state_sha256(
+                        replacements[replacement_index].payload,
+                        replacements[replacement_index].payload_bytes,
+                        digest) != PACKAGE_STATE_STATUS_OK ||
+                    !same_bytes(digest, file.sha256, sizeof(digest))) {
+                    status = PACKAGE_MANAGER_STATUS_DIGEST;
+                    goto refuse;
+                }
+                workspace->file_sources[index] =
+                    (struct package_builder_file_source){
+                        PACKAGE_BUILDER_FILE_SOURCE_PAYLOAD, file.owner_index,
+                        index, replacements[replacement_index].payload,
+                        replacements[replacement_index].payload_bytes
+                    };
+                ++replacement_index;
+                replaced = true;
+            }
+        }
+        if (!replaced) {
+            workspace->file_sources[index] =
+                (struct package_builder_file_source){
+                    PACKAGE_BUILDER_FILE_SOURCE_INSTALLED, file.owner_index,
+                    index, NULL, 0U
+                };
+        }
+    }
+    if (replacement_index != replacement_count) {
+        status = PACKAGE_MANAGER_STATUS_NOT_FOUND;
+        goto refuse;
+    }
+    if (package_generation_size(&workspace->spec, &ignored_size) !=
+            PACKAGE_STATE_STATUS_OK) {
+        status = PACKAGE_MANAGER_STATUS_STATE;
+        goto refuse;
+    }
+    return PACKAGE_MANAGER_STATUS_OK;
+
+refuse:
+    clear_workspace(workspace);
+    return status;
+}
