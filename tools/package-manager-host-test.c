@@ -356,6 +356,7 @@ int main(int argc, char **argv)
     struct package_manager_file_view application_file;
     struct package_manager_file_view library_file;
     struct package_manager_relation_view application_dependency;
+    struct package_manager_plan_binding application_binding;
     struct package_manager_search_results search;
     struct package_manager_plan plan;
     struct package_state_database_view installed;
@@ -393,6 +394,26 @@ int main(int argc, char **argv)
         plan.operation == PACKAGE_MANAGER_PLAN_INSTALL && plan.count == 2U &&
         text_is(&plan.items[0].identifier, "org.sapote.lib") &&
         text_is(&plan.items[1].identifier, "org.sapote.app"));
+    CHECK(package_manager_plan_dependency_binding(&repository, &plan, 1U, 0U,
+            &application_binding) == PACKAGE_MANAGER_STATUS_OK &&
+        application_binding.plan == &plan && application_binding.plan_index == 1U &&
+        text_is(&application_binding.requested, "org.sapote.lib") &&
+        text_is(&application_binding.constraint, ">=1.0.0,<2.0.0") &&
+        text_is(&application_binding.provider, "org.sapote.lib") &&
+        package_manager_plan_dependency_binding(&repository, &plan, 0U, 0U,
+            &application_binding) == PACKAGE_MANAGER_STATUS_TABLE &&
+        application_binding.plan == NULL &&
+        package_manager_plan_dependency_binding(&repository, &plan, 1U, 1U,
+            &application_binding) == PACKAGE_MANAGER_STATUS_TABLE);
+    {
+        struct package_manager_plan changed_plan = plan;
+
+        changed_plan.items[1].source_index = plan.items[0].source_index;
+        CHECK(package_manager_plan_dependency_binding(&repository,
+            &changed_plan, 1U, 0U, &application_binding) ==
+                PACKAGE_MANAGER_STATUS_STATE &&
+            application_binding.plan == NULL);
+    }
 
     CHECK(package_manager_package_open(application_bytes.bytes,
         application_bytes.count, &application_entry, &policy, &trust,

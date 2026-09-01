@@ -204,6 +204,19 @@ struct package_manager_plan {
     struct package_manager_plan_item items[PACKAGE_MANAGER_PLAN_MAX_PACKAGES];
 };
 
+/*
+ * One exact dependency edge for an item in an authenticated install/update
+ * plan.  The provider is the unique package identity selected for requested;
+ * it may already be installed and therefore need no plan item of its own.
+ */
+struct package_manager_plan_binding {
+    const struct package_manager_plan *plan;
+    uint32_t plan_index;
+    struct package_manager_text requested;
+    struct package_manager_text constraint;
+    struct package_manager_text provider;
+};
+
 struct package_manager_search_results {
     uint32_t count;
     uint32_t repository_indices[PACKAGE_MANAGER_SEARCH_MAX_RESULTS];
@@ -275,6 +288,19 @@ enum package_manager_status package_manager_plan_install(
     const struct package_manager_policy *policy,
     const struct package_manager_trust *trust,
     struct package_manager_plan *result
+);
+
+/*
+ * Revalidates the selected plan item against repository and exposes one
+ * dependency-to-provider binding.  Both inputs must be the immutable objects
+ * used for and returned by package_manager_plan_install().
+ */
+enum package_manager_status package_manager_plan_dependency_binding(
+    const struct package_manager_repository_view *repository,
+    const struct package_manager_plan *plan,
+    uint32_t plan_index,
+    uint32_t dependency_index,
+    struct package_manager_plan_binding *result
 );
 
 /*

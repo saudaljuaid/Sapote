@@ -76,9 +76,15 @@ views fail closed; no accessor writes a filesystem or reports installation.
 
 These slices are the extraction boundary for a privileged generation builder.
 They remain valid only while the admitted package buffer is live and unchanged.
-The future builder must still prevent path traversal and ownership collisions,
-write a complete next generation, verify it, and commit it through the package
-transaction protocol.
+`package_manager_plan_dependency_binding()` also exposes every planned
+consumer's exact dependency identifier, constraint, and unique provider
+identity. It revalidates the plan item against the authenticated repository and
+uses the resolver's bounded ambiguity rule without adding another large binding
+array to the already stack-sensitive plan. The provider may be an unchanged
+installed package and therefore need no plan item of its own. The future builder
+must still prevent path traversal and ownership collisions, write a complete
+next generation, verify it, and commit it through the package transaction
+protocol.
 
 ## Verification and integration
 

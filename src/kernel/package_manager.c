@@ -1746,6 +1746,91 @@ finish:
     return status;
 }
 
+static bool plan_item_matches(
+    const struct package_manager_plan_item *item,
+    const struct package_manager_catalog_entry *entry
+)
+{
+    return item->source_index == entry->repository_index &&
+        item->identifier.bytes == entry->identifier.bytes &&
+        item->identifier.length == entry->identifier.length &&
+        item->version.bytes == entry->version.bytes &&
+        item->version.length == entry->version.length &&
+        item->download_path.bytes == entry->download_path.bytes &&
+        item->download_path.length == entry->download_path.length &&
+        item->package_bytes == entry->package_bytes &&
+        item->package_sha256 == entry->package_sha256 &&
+        item->publisher_key_id == entry->publisher_key_id;
+}
+
+enum package_manager_status package_manager_plan_dependency_binding(
+    const struct package_manager_repository_view *repository,
+    const struct package_manager_plan *plan,
+    uint32_t plan_index,
+    uint32_t dependency_index,
+    struct package_manager_plan_binding *result
+)
+{
+    struct package_manager_catalog_entry consumer;
+    struct package_manager_text requested;
+    struct package_manager_text constraint;
+    struct package_manager_text provider = { NULL, 0U };
+    uint32_t candidate_count = 0U;
+
+    if (repository == NULL || plan == NULL || result == NULL) {
+        return PACKAGE_MANAGER_STATUS_NULL_ARGUMENT;
+    }
+    *result = (struct package_manager_plan_binding){ 0 };
+    if ((plan->operation != PACKAGE_MANAGER_PLAN_INSTALL &&
+            plan->operation != PACKAGE_MANAGER_PLAN_UPDATE) ||
+        plan->count == 0U || plan->count > PACKAGE_MANAGER_PLAN_MAX_PACKAGES ||
+        plan_index >= plan->count) {
+        return PACKAGE_MANAGER_STATUS_TABLE;
+    }
+    if (package_manager_repository_entry(repository,
+            plan->items[plan_index].source_index, &consumer) !=
+            PACKAGE_MANAGER_STATUS_OK ||
+        !plan_item_matches(&plan->items[plan_index], &consumer)) {
+        return PACKAGE_MANAGER_STATUS_STATE;
+    }
+    if (dependency_index >= consumer.dependency_count) {
+        return PACKAGE_MANAGER_STATUS_TABLE;
+    }
+    if (relation_at(repository, consumer.dependency_start + dependency_index,
+            false, &requested, &constraint) != PACKAGE_MANAGER_STATUS_OK) {
+        return PACKAGE_MANAGER_STATUS_STATE;
+    }
+    for (uint32_t index = 0U; index < repository->package_count; ++index) {
+        struct package_manager_catalog_entry candidate;
+        struct package_manager_text provided_version;
+
+        if (package_manager_repository_entry(repository, index, &candidate) !=
+                PACKAGE_MANAGER_STATUS_OK) {
+            return PACKAGE_MANAGER_STATUS_STATE;
+        }
+        if (!entry_provides(repository, &candidate, &requested,
+                &provided_version) ||
+            !version_satisfies(&provided_version, &constraint)) {
+            continue;
+        }
+        if (provider.bytes == NULL) {
+            provider = candidate.identifier;
+        } else if (!text_equal(&provider, &candidate.identifier)) {
+            return PACKAGE_MANAGER_STATUS_AMBIGUOUS_PROVIDER;
+        }
+        ++candidate_count;
+    }
+    if (candidate_count == 0U) {
+        return PACKAGE_MANAGER_STATUS_DEPENDENCY;
+    }
+    result->plan = plan;
+    result->plan_index = plan_index;
+    result->requested = requested;
+    result->constraint = constraint;
+    result->provider = provider;
+    return PACKAGE_MANAGER_STATUS_OK;
+}
+
 static const uint8_t *installed_record(
     const struct package_state_database_view *installed,
     uint32_t index
