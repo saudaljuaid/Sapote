@@ -60,6 +60,70 @@ static bool equal_bytes(const uint8_t *left, const uint8_t *right, size_t count)
     return difference == 0U;
 }
 
+static void clear_bytes(uint8_t *destination, size_t count)
+{
+    for (size_t index = 0U; index < count; ++index) {
+        destination[index] = 0U;
+    }
+}
+
+static void write_u16(uint8_t *bytes, uint16_t value)
+{
+    bytes[0] = (uint8_t)value;
+    bytes[1] = (uint8_t)(value >> 8U);
+}
+
+static void write_u32(uint8_t *bytes, uint32_t value)
+{
+    for (size_t index = 0U; index < 4U; ++index) {
+        bytes[index] = (uint8_t)(value >> (index * 8U));
+    }
+}
+
+static void write_u64(uint8_t *bytes, uint64_t value)
+{
+    for (size_t index = 0U; index < 8U; ++index) {
+        bytes[index] = (uint8_t)(value >> (index * 8U));
+    }
+}
+
+static bool cleared_table(const struct package_trust_table *table)
+{
+    const uint8_t *bytes = (const uint8_t *)table;
+    for (size_t index = 0U; index < sizeof(*table); ++index) {
+        if (bytes[index] != 0U) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool make_table(uint8_t *table, size_t byte_count)
+{
+    uint8_t digest[PACKAGE_STATE_SHA256_BYTES];
+    if (byte_count != PACKAGE_TRUST_TABLE_HEADER_BYTES +
+        PACKAGE_TRUST_TABLE_RECORD_BYTES) {
+        return false;
+    }
+    clear_bytes(table, byte_count);
+    copy_bytes(table, (const uint8_t *)"SAPKEY01", 8U);
+    write_u16(table + 8U, 1U);
+    write_u16(table + 10U, PACKAGE_TRUST_TABLE_HEADER_BYTES);
+    write_u64(table + 16U, byte_count);
+    write_u32(table + 24U, 1U);
+    write_u32(table + 28U, PACKAGE_TRUST_TABLE_RECORD_BYTES);
+    copy_bytes(table + PACKAGE_TRUST_TABLE_HEADER_BYTES, key_id, sizeof(key_id));
+    copy_bytes(table + PACKAGE_TRUST_TABLE_HEADER_BYTES + 32U,
+        public_key, sizeof(public_key));
+    write_u16(table + PACKAGE_TRUST_TABLE_HEADER_BYTES + 64U, 1U);
+    if (package_state_sha256(table + PACKAGE_TRUST_TABLE_HEADER_BYTES,
+        PACKAGE_TRUST_TABLE_RECORD_BYTES, digest) != PACKAGE_STATE_STATUS_OK) {
+        return false;
+    }
+    copy_bytes(table + 32U, digest, sizeof(digest));
+    return true;
+}
+
 static int package_trust_test(void)
 {
     static const uint8_t scalar_order[32] = {
@@ -71,7 +135,10 @@ static int package_trust_test(void)
     struct package_trust_key key;
     struct package_trust_key duplicate_keys[2];
     struct package_trust_store store;
+    struct package_trust_table table_result;
     struct package_manager_trust trust;
+    uint8_t table[PACKAGE_TRUST_TABLE_HEADER_BYTES +
+        PACKAGE_TRUST_TABLE_RECORD_BYTES];
     uint8_t changed_signature[64];
     uint8_t looked_up[32];
     uint8_t unknown_id[32] = { 0U };
@@ -162,6 +229,55 @@ static int package_trust_test(void)
         package_trust_open(&key, 1U, &store) !=
             PACKAGE_TRUST_STATUS_PUBLIC_KEY) {
         return 13;
+    }
+    if (!make_table(table, sizeof(table)) ||
+        package_trust_table_open(table, sizeof(table), &table_result) !=
+            PACKAGE_TRUST_STATUS_OK || table_result.store.key_count != 1U ||
+        table_result.store.keys != table_result.keys ||
+        package_trust_lookup(&table_result.store, key_id, looked_up) !=
+            PACKAGE_MANAGER_KEY_TRUSTED ||
+        !equal_bytes(looked_up, public_key, sizeof(looked_up))) {
+        return 14;
+    }
+    table[0] ^= UINT8_C(1);
+    if (package_trust_table_open(table, sizeof(table), &table_result) !=
+            PACKAGE_TRUST_STATUS_MAGIC || !cleared_table(&table_result)) {
+        return 15;
+    }
+    table[0] ^= UINT8_C(1);
+    table[12U] = 1U;
+    if (package_trust_table_open(table, sizeof(table), &table_result) !=
+            PACKAGE_TRUST_STATUS_HEADER || !cleared_table(&table_result)) {
+        return 16;
+    }
+    table[12U] = 0U;
+    table[64U] = 1U;
+    if (package_trust_table_open(table, sizeof(table), &table_result) !=
+            PACKAGE_TRUST_STATUS_RESERVED || !cleared_table(&table_result)) {
+        return 17;
+    }
+    table[64U] = 0U;
+    table[PACKAGE_TRUST_TABLE_HEADER_BYTES + 32U] ^= UINT8_C(1);
+    if (package_trust_table_open(table, sizeof(table), &table_result) !=
+            PACKAGE_TRUST_STATUS_DIGEST || !cleared_table(&table_result)) {
+        return 18;
+    }
+    if (!make_table(table, sizeof(table))) {
+        return 19;
+    }
+    write_u16(table + PACKAGE_TRUST_TABLE_HEADER_BYTES + 64U, 3U);
+    if (package_state_sha256(table + PACKAGE_TRUST_TABLE_HEADER_BYTES,
+        PACKAGE_TRUST_TABLE_RECORD_BYTES, table + 32U) !=
+            PACKAGE_STATE_STATUS_OK ||
+        package_trust_table_open(table, sizeof(table), &table_result) !=
+            PACKAGE_TRUST_STATUS_TABLE || !cleared_table(&table_result)) {
+        return 20;
+    }
+    if (package_trust_table_open(NULL, sizeof(table), &table_result) !=
+            PACKAGE_TRUST_STATUS_NULL_ARGUMENT || !cleared_table(&table_result) ||
+        package_trust_table_open(table, sizeof(table) - 1U, &table_result) !=
+            PACKAGE_TRUST_STATUS_HEADER || !cleared_table(&table_result)) {
+        return 21;
     }
     return 0;
 }

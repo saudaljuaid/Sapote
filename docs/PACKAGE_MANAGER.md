@@ -23,12 +23,17 @@ checking the package's publisher signature, identity, version, ABI, dependency
 and conflict records, file layout, per-file digest, mode, kind, and SONAME.
 
 `package_trust.c` supplies the guest Ed25519 verifier and immutable key-table
-lookup. Provisioning still belongs to the privileged caller: the table admits
-only sorted unique keys whose SHA-256 IDs match, rejects non-canonical or pure
-low-order public keys, and preserves explicit trusted/revoked state. Provisioned
-keys must be generated Ed25519 keys. Verification incrementally substitutes the
-64-byte zero range and narrows pinned Monocypher 4.0.3's cofactored profile with
-canonical encoding, negative-zero, pure-low-order, and `S < L` requirements.
+lookup. Its `SAPKEY01` platform boundary copies a canonical, bounded table into
+caller-owned storage, checks the exact version, length, record size, reserved
+bytes, and record-table SHA-256, and then admits only sorted unique keys whose
+SHA-256 IDs match. The digest detects corruption; trust comes from the platform
+supplying these bytes immutably, never from that unkeyed digest. Any refusal
+clears the whole destination table. Key records preserve explicit
+trusted/revoked state and reject non-canonical or pure low-order public keys.
+Provisioned keys must be generated Ed25519 keys. Verification incrementally
+substitutes the 64-byte zero range and narrows pinned Monocypher 4.0.3's
+cofactored profile with canonical encoding, negative-zero, pure-low-order, and
+`S < L` requirements.
 Signature bytes are not a uniqueness identifier. No signing or private key
 enters the guest.
 

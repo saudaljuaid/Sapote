@@ -8,11 +8,22 @@
 #include <sapote/package_manager.h>
 
 #define PACKAGE_TRUST_MAX_KEYS 64U
+#define PACKAGE_TRUST_TABLE_HEADER_BYTES 128U
+#define PACKAGE_TRUST_TABLE_RECORD_BYTES 96U
+#define PACKAGE_TRUST_TABLE_MAX_BYTES \
+    (PACKAGE_TRUST_TABLE_HEADER_BYTES + \
+        PACKAGE_TRUST_MAX_KEYS * PACKAGE_TRUST_TABLE_RECORD_BYTES)
 
 enum package_trust_status {
     PACKAGE_TRUST_STATUS_OK = 0,
     PACKAGE_TRUST_STATUS_NULL_ARGUMENT,
     PACKAGE_TRUST_STATUS_BOUND,
+    PACKAGE_TRUST_STATUS_LENGTH,
+    PACKAGE_TRUST_STATUS_MAGIC,
+    PACKAGE_TRUST_STATUS_HEADER,
+    PACKAGE_TRUST_STATUS_RESERVED,
+    PACKAGE_TRUST_STATUS_DIGEST,
+    PACKAGE_TRUST_STATUS_TABLE,
     PACKAGE_TRUST_STATUS_ORDER,
     PACKAGE_TRUST_STATUS_KEY_ID,
     PACKAGE_TRUST_STATUS_PUBLIC_KEY,
@@ -30,6 +41,23 @@ struct package_trust_store {
     const struct package_trust_key *keys;
     size_t key_count;
 };
+
+/* Caller-owned storage for one admitted immutable platform trust table. */
+struct package_trust_table {
+    struct package_trust_key keys[PACKAGE_TRUST_MAX_KEYS];
+    struct package_trust_store store;
+};
+
+/*
+ * Decode a canonical platform-provisioned table. The input may be released
+ * after this returns; the admitted keys live in result. Result is cleared on
+ * every refusal so malformed platform bytes cannot leave a usable store.
+ */
+enum package_trust_status package_trust_table_open(
+    const uint8_t *bytes,
+    size_t byte_count,
+    struct package_trust_table *result
+);
 
 enum package_trust_status package_trust_open(
     const struct package_trust_key *keys,
