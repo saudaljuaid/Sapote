@@ -607,6 +607,46 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
     assert!(journal.physical_blocks().len() >= 4);
     assert!(journal.physical_blocks().iter().all(|block| *block != 0));
 
+    let empty_ring = vec![filled(0); journal.physical_blocks().len() - 1];
+    let empty_references: Vec<&[u8]> = empty_ring.iter().map(Vec::as_slice).collect();
+    let marker_only = recover_committed_ring(
+        journal.superblock(),
+        true,
+        journal.maximum_block(),
+        &empty_references,
+    )
+    .unwrap();
+    assert_eq!(marker_only.committed_transactions(), 0);
+    assert_eq!(marker_only.consumed_slots(), 0);
+    assert!(marker_only.replay_images().is_empty());
+    assert_eq!(
+        marker_only.checkpoint_plan(0, &recovery_marker),
+        Err(JournalTransactionError::BlockOutOfRange)
+    );
+    assert_eq!(
+        marker_only.checkpoint_plan(journal.physical_blocks()[0], &clean_filesystem_superblock),
+        Err(JournalTransactionError::RecoveryStateMismatch)
+    );
+    let cleanup = marker_only
+        .checkpoint_plan(journal.physical_blocks()[0], &recovery_marker)
+        .unwrap();
+    assert_eq!(cleanup.len(), 5);
+    assert_eq!(cleanup[0], JournalCommitOperation::Flush(JournalFlush::Checkpoint));
+    assert!(matches!(
+        &cleanup[1],
+        JournalCommitOperation::WriteJournalSuperblock { journal_block, image }
+            if *journal_block == journal.physical_blocks()[0]
+                && image == journal.superblock()
+    ));
+    assert_eq!(cleanup[2], JournalCommitOperation::Flush(JournalFlush::JournalState));
+    assert!(matches!(
+        &cleanup[3],
+        JournalCommitOperation::WriteFilesystemSuperblock { start_byte, image }
+            if *start_byte == FILESYSTEM_SUPERBLOCK_START_BYTE
+                && image == &clean_filesystem_superblock
+    ));
+    assert_eq!(cleanup[4], JournalCommitOperation::Flush(JournalFlush::FilesystemState));
+
     let physical = Vec::from(journal.physical_blocks());
     let mut ring = journal.into_clean_ring().unwrap();
     let marker_plan = ring.prepare_recovery_marker_plan().unwrap();
@@ -714,10 +754,12 @@ fn dirty_ring_recovery_wraps_replays_revokes_and_discards_an_uncommitted_tail() 
     );
 
     let clean = superblock.with_state(84, 0).unwrap();
-    assert_eq!(
-        recover_committed_ring(&clean, true, MAXIMUM_BLOCK, &references),
-        Err(JournalTransactionError::RecoveryStateMismatch)
-    );
+    let marker_only =
+        recover_committed_ring(&clean, true, MAXIMUM_BLOCK, &references).unwrap();
+    assert_eq!(marker_only.committed_transactions(), 0);
+    assert_eq!(marker_only.consumed_slots(), 0);
+    assert!(marker_only.replay_images().is_empty());
+    assert_eq!(marker_only.clean_superblock(), &clean);
     assert_eq!(
         recover_committed_ring(&dirty, false, MAXIMUM_BLOCK, &references),
         Err(JournalTransactionError::RecoveryStateMismatch)

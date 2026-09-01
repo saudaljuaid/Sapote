@@ -10,7 +10,10 @@ use core::fmt::{self, Display, Formatter};
 use ext4plus::error::Ext4Error;
 use ext4plus::path::Path;
 use ext4plus::{
-    Ext4, Ext4Read, FileType, FollowSymlinks, JournalInodeMapError, load_journal_inode_map,
+    Ext4, Ext4Read, FileType, FollowSymlinks, JOURNAL_BLOCK_BYTES,
+    JournalExecutionError, JournalFlush, JournalInodeMap, JournalInodeMapError,
+    JournalStorage, execute_commit_operations, load_journal_inode_map,
+    recover_committed_ring,
 };
 
 const SUPERBLOCK_BYTES: usize = 1024;
@@ -18,6 +21,7 @@ const SUPERBLOCK_START: u64 = 1024;
 const BLOCK_BYTES: u64 = 4096;
 const COMPAT_FEATURES: u32 = 0x002c;
 const INCOMPAT_FEATURES: u32 = 0x20c2;
+const INCOMPAT_RECOVERY_FEATURE: u32 = 0x0004;
 const READ_ONLY_FEATURES: u32 = 0x046b;
 const MAX_VALIDATED_ENTRIES: usize = 8_192;
 const MAX_PENDING_DIRECTORIES: usize = 512;
@@ -81,6 +85,17 @@ impl Display for BlockReadError {
 
 impl Error for BlockReadError {}
 
+#[derive(Debug)]
+struct BlockStorageError;
+
+impl Display for BlockStorageError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str("Sapote block write or flush failed")
+    }
+}
+
+impl Error for BlockStorageError {}
+
 struct SapoteReader {
     context: usize,
 }
@@ -95,6 +110,30 @@ impl Ext4Read for SapoteReader {
             Ok(())
         } else {
             Err(Box::new(BlockReadError))
+        }
+    }
+}
+
+struct SapoteJournalStorage {
+    context: usize,
+}
+
+impl JournalStorage for SapoteJournalStorage {
+    type Error = BlockStorageError;
+
+    fn write(&mut self, start_byte: u64, bytes: &[u8]) -> Result<(), Self::Error> {
+        if crate::abi::ext4_block_write(self.context, start_byte, bytes) {
+            Ok(())
+        } else {
+            Err(BlockStorageError)
+        }
+    }
+
+    fn flush(&mut self, _boundary: JournalFlush) -> Result<(), Self::Error> {
+        if crate::abi::ext4_block_flush(self.context) {
+            Ok(())
+        } else {
+            Err(BlockStorageError)
         }
     }
 }
@@ -137,7 +176,7 @@ fn validate_profile(context: usize, media_bytes: u64) -> Result<(), Status> {
         || descriptor_size != 64
         || read_u32(&superblock, 0x14) != Some(0)
         || compat != COMPAT_FEATURES
-        || incompat != INCOMPAT_FEATURES
+        || incompat & !INCOMPAT_RECOVERY_FEATURE != INCOMPAT_FEATURES
         || read_only != READ_ONLY_FEATURES
         || blocks == 0
         || image_bytes > media_bytes
@@ -216,6 +255,60 @@ fn map_journal_error(error: JournalInodeMapError) -> Status {
     }
 }
 
+fn recover_dirty_journal(context: usize, journal: &JournalInodeMap) -> Result<(), Status> {
+    let physical_blocks = journal.physical_blocks();
+    let slot_count = physical_blocks.len().checked_sub(1).ok_or(Status::Invalid)?;
+    let ring_bytes = slot_count
+        .checked_mul(JOURNAL_BLOCK_BYTES)
+        .ok_or(Status::Range)?;
+    let mut storage_bytes = Vec::new();
+    storage_bytes
+        .try_reserve_exact(ring_bytes)
+        .map_err(|_| Status::Range)?;
+    storage_bytes.resize(ring_bytes, 0);
+    for (index, block) in physical_blocks[1..].iter().enumerate() {
+        let start_byte = block.checked_mul(BLOCK_BYTES).ok_or(Status::Range)?;
+        let start = index.checked_mul(JOURNAL_BLOCK_BYTES).ok_or(Status::Range)?;
+        let end = start
+            .checked_add(JOURNAL_BLOCK_BYTES)
+            .ok_or(Status::Range)?;
+        if !crate::abi::ext4_block_read(
+            context,
+            start_byte,
+            storage_bytes.get_mut(start..end).ok_or(Status::Range)?,
+        ) {
+            return Err(Status::Io);
+        }
+    }
+    let mut references = Vec::new();
+    references
+        .try_reserve_exact(slot_count)
+        .map_err(|_| Status::Range)?;
+    references.extend(storage_bytes.chunks_exact(JOURNAL_BLOCK_BYTES));
+    if references.len() != slot_count {
+        return Err(Status::Invalid);
+    }
+    let recovery = recover_committed_ring(
+        journal.superblock(),
+        true,
+        journal.maximum_block(),
+        &references,
+    )
+    .map_err(|_| Status::Invalid)?;
+    let journal_superblock_block = *physical_blocks.first().ok_or(Status::Invalid)?;
+    let operations = recovery
+        .checkpoint_plan(journal_superblock_block, journal.filesystem_superblock())
+        .map_err(|_| Status::Invalid)?;
+    execute_commit_operations(
+        &mut SapoteJournalStorage { context },
+        &operations,
+    )
+    .map_err(|error| match error {
+        JournalExecutionError::AddressOverflow => Status::Range,
+        JournalExecutionError::Storage(_) => Status::Io,
+    })
+}
+
 fn validate_xattrs(filesystem: &Ext4, path: &[u8]) -> Result<(), Status> {
     let xattrs = filesystem.list_xattrs(path).map_err(map_error)?;
     for name in xattrs {
@@ -286,9 +379,20 @@ fn validate_namespace(filesystem: &Ext4) -> Result<(), Status> {
 /// Load and validate the exact Sapote ext4 profile and reachable namespace.
 pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, Identity), Status> {
     validate_profile(context, media_bytes)?;
-    let filesystem = Ext4::load(Box::new(SapoteReader { context })).map_err(map_error)?;
-    let journal = load_journal_inode_map(&filesystem).map_err(map_journal_error)?;
-    if !journal.filesystem_needs_recovery() {
+    let mut filesystem = Ext4::load(Box::new(SapoteReader { context })).map_err(map_error)?;
+    let mut journal = load_journal_inode_map(&filesystem).map_err(map_journal_error)?;
+    if journal.filesystem_needs_recovery() {
+        recover_dirty_journal(context, &journal)?;
+        drop(journal);
+        drop(filesystem);
+        validate_profile(context, media_bytes)?;
+        filesystem = Ext4::load(Box::new(SapoteReader { context })).map_err(map_error)?;
+        journal = load_journal_inode_map(&filesystem).map_err(map_journal_error)?;
+        if journal.filesystem_needs_recovery() {
+            return Err(Status::Invalid);
+        }
+        let _clean_ring = journal.into_clean_ring().map_err(|_| Status::Invalid)?;
+    } else {
         let _clean_ring = journal.into_clean_ring().map_err(|_| Status::Invalid)?;
     }
     validate_namespace(&filesystem)?;

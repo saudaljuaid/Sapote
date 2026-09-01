@@ -49,13 +49,20 @@ struct sapote_ext4_identity {
     uint8_t uuid[16];
 };
 
-/* Private Rust/C reader callback; valid only during a backend operation. */
+/* Private Rust/C storage callbacks; valid only during a backend operation. */
 int32_t sapote_ext4_block_read(
     uintptr_t context,
     uint64_t start_byte,
     uint8_t *destination,
     size_t length
 );
+int32_t sapote_ext4_block_write(
+    uintptr_t context,
+    uint64_t start_byte,
+    const uint8_t *source,
+    size_t length
+);
+int32_t sapote_ext4_block_flush(uintptr_t context);
 
 void ext4_backend_initialize(void);
 enum sapfs_status ext4_backend_mount(enum sapfs_volume volume);

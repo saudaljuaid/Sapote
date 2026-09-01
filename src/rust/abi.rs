@@ -105,6 +105,35 @@ pub(crate) fn ext4_block_read(
     }
 }
 
+/// Write one checked byte range through the active C-owned ext4 session.
+pub(crate) fn ext4_block_write(context: usize, start_byte: u64, source: &[u8]) -> bool {
+    unsafe extern "C" {
+        fn sapote_ext4_block_write(
+            context: usize,
+            start_byte: u64,
+            source: *const u8,
+            length: usize,
+        ) -> i32;
+    }
+
+    // SAFETY: the slice supplies a live readable region for its exact length;
+    // C authenticates the writable session and checks the media bounds.
+    unsafe {
+        sapote_ext4_block_write(context, start_byte, source.as_ptr(), source.len()) == 0
+    }
+}
+
+/// Flush every preceding write through the active C-owned ext4 session.
+pub(crate) fn ext4_block_flush(context: usize) -> bool {
+    unsafe extern "C" {
+        fn sapote_ext4_block_flush(context: usize) -> i32;
+    }
+
+    // SAFETY: `context` is the authenticated token installed by the C mount
+    // operation; C rejects inactive and read-only sessions.
+    unsafe { sapote_ext4_block_flush(context) == 0 }
+}
+
 const _: () = {
     assert!(core::mem::size_of::<ext4::Identity>() == 32);
     assert!(core::mem::size_of::<ext4::Metadata>() == 40);

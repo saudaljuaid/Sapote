@@ -138,7 +138,10 @@ static enum sapfs_status map_status(int32_t status)
     }
 }
 
-static enum sapfs_status begin_operation(struct ext4_mount_state *mount)
+static enum sapfs_status begin_operation(
+    struct ext4_mount_state *mount,
+    bool writable
+)
 {
     enum nvme_status status;
 
@@ -151,7 +154,8 @@ static enum sapfs_status begin_operation(struct ext4_mount_state *mount)
     if (mount->operation_active) {
         return SAPFS_STATUS_BUSY;
     }
-    status = nvme_volume_open(&mount->session, mount->controller_index, false);
+    status = nvme_volume_open(&mount->session, mount->controller_index,
+        writable);
     if (status != NVME_STATUS_OK) {
         return SAPFS_STATUS_IO;
     }
@@ -193,7 +197,7 @@ static enum sapfs_status end_operation(struct ext4_mount_state *mount)
     return SAPFS_STATUS_OK;
 }
 
-/* Rust may read only through the lease installed by begin_operation(). */
+/* Rust may access storage only through the lease installed by begin_operation(). */
 int32_t sapote_ext4_block_read(
     uintptr_t context,
     uint64_t start_byte,
@@ -237,6 +241,78 @@ int32_t sapote_ext4_block_read(
     return 0;
 }
 
+/* Write one checked byte range during an explicitly writable operation. */
+int32_t sapote_ext4_block_write(
+    uintptr_t context,
+    uint64_t start_byte,
+    const uint8_t *source,
+    size_t length
+)
+{
+    struct ext4_mount_state *mount = (struct ext4_mount_state *)context;
+    struct nvme_volume_session *session;
+    uint8_t block[NVME_BLOCK_BYTES];
+    uint64_t position = start_byte;
+    size_t remaining = length;
+
+    if (mount == NULL || source == NULL || !mount->operation_active) {
+        return -1;
+    }
+    session = &mount->session;
+    if (!session->active || !session->writable ||
+        session->logical_block_bytes == 0U ||
+        session->logical_block_bytes > sizeof(block) ||
+        start_byte > mount->media_bytes ||
+        length > mount->media_bytes - start_byte) {
+        return -1;
+    }
+    while (remaining != 0U) {
+        const uint64_t lba = position / session->logical_block_bytes;
+        const size_t within = (size_t)(position % session->logical_block_bytes);
+        size_t chunk = session->logical_block_bytes - within;
+
+        if (chunk > remaining) {
+            chunk = remaining;
+        }
+        if (within == 0U && chunk == session->logical_block_bytes) {
+            if (nvme_volume_write(session, lba, source, chunk) !=
+                    NVME_STATUS_OK) {
+                return -1;
+            }
+        } else {
+            if (nvme_volume_read(session, lba, block,
+                    session->logical_block_bytes) != NVME_STATUS_OK) {
+                return -1;
+            }
+            copy_bytes(&block[within], source, chunk);
+            if (nvme_volume_write(session, lba, block,
+                    session->logical_block_bytes) != NVME_STATUS_OK) {
+                return -1;
+            }
+        }
+        source += chunk;
+        position += chunk;
+        remaining -= chunk;
+    }
+    return 0;
+}
+
+/* Establish one real NVMe durability boundary for the Rust journal executor. */
+int32_t sapote_ext4_block_flush(uintptr_t context)
+{
+    struct ext4_mount_state *mount = (struct ext4_mount_state *)context;
+    struct nvme_volume_session *session;
+
+    if (mount == NULL || !mount->operation_active) {
+        return -1;
+    }
+    session = &mount->session;
+    if (!session->active || !session->writable) {
+        return -1;
+    }
+    return nvme_volume_flush(session) == NVME_STATUS_OK ? 0 : -1;
+}
+
 static enum sapfs_status checked_stat(
     struct ext4_mount_state *mount,
     const char *path,
@@ -251,7 +327,7 @@ static enum sapfs_status checked_stat(
         return SAPFS_STATUS_INVALID_ARGUMENT;
     }
     zero_bytes(metadata, sizeof(*metadata));
-    status = begin_operation(mount);
+    status = begin_operation(mount, false);
     if (status != SAPFS_STATUS_OK) {
         return status;
     }
@@ -358,7 +434,7 @@ enum sapfs_status ext4_backend_mount(enum sapfs_volume volume)
         EXT4_CONTROLLER_SYSTEM : EXT4_CONTROLLER_DATA;
     mount->mounting = true;
     mount->healthy = true;
-    status = begin_operation(mount);
+    status = begin_operation(mount, true);
     if (status != SAPFS_STATUS_OK) {
         zero_bytes(mount, sizeof(*mount));
         return status;
@@ -496,7 +572,7 @@ enum sapfs_status ext4_backend_pread(sapfs_handle handle,
         return SAPFS_STATUS_OK;
     }
     mount = &ext4_mounts[state->volume];
-    status = begin_operation(mount);
+    status = begin_operation(mount, false);
     if (status != SAPFS_STATUS_OK) {
         return status;
     }
@@ -613,7 +689,7 @@ static enum sapfs_status indexed_entry(struct ext4_handle_state *state,
 {
     struct sapote_ext4_directory_entry raw;
     struct ext4_mount_state *mount = &ext4_mounts[state->volume];
-    enum sapfs_status status = begin_operation(mount);
+    enum sapfs_status status = begin_operation(mount, false);
     enum sapfs_status close_status;
 
     if (status != SAPFS_STATUS_OK) {

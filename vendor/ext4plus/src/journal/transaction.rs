@@ -432,7 +432,7 @@ impl FilesystemSuperblockImage {
         self.needs_recovery
     }
 
-    /// Produce the opposite recovery state while preserving every other byte.
+    /// Produce the requested recovery state while preserving every other byte.
     #[must_use]
     pub fn with_recovery_state(&self, needs_recovery: bool) -> Self {
         let mut bytes = self.bytes;
@@ -526,6 +526,7 @@ pub struct JournalRecovery {
     consumed_slots: usize,
     replay_images: Vec<JournalBlockImage>,
     clean_superblock: JournalSuperblockImage,
+    maximum_block: u64,
 }
 
 impl JournalRecovery {
@@ -552,6 +553,52 @@ impl JournalRecovery {
     pub fn clean_superblock(&self) -> &JournalSuperblockImage {
         &self.clean_superblock
     }
+
+    /// Build the ordered mount-recovery checkpoint and cleanup plan.
+    ///
+    /// Home metadata is flushed before the clean journal state is written.
+    /// The journal state is then flushed before ext4's recovery marker is
+    /// cleared and independently flushed. This mirrors the separation Linux
+    /// keeps between recovery replay, journal cleanup, and marking ext4 clean.
+    pub fn checkpoint_plan(
+        &self,
+        journal_superblock_block: u64,
+        filesystem_superblock: &FilesystemSuperblockImage,
+    ) -> Result<Vec<JournalCommitOperation>, JournalTransactionError> {
+        if !filesystem_superblock.needs_recovery() {
+            return Err(JournalTransactionError::RecoveryStateMismatch);
+        }
+        if journal_superblock_block == 0 || journal_superblock_block > self.maximum_block {
+            return Err(JournalTransactionError::BlockOutOfRange);
+        }
+        let capacity = self
+            .replay_images
+            .len()
+            .checked_add(5)
+            .ok_or(JournalTransactionError::TooManyBlocks)?;
+        let mut operations = Vec::new();
+        operations
+            .try_reserve_exact(capacity)
+            .map_err(|_| JournalTransactionError::TooManyBlocks)?;
+        operations.extend(
+            self.replay_images
+                .iter()
+                .cloned()
+                .map(JournalCommitOperation::WriteHomeMetadata),
+        );
+        operations.push(JournalCommitOperation::Flush(JournalFlush::Checkpoint));
+        operations.push(JournalCommitOperation::WriteJournalSuperblock {
+            journal_block: journal_superblock_block,
+            image: self.clean_superblock.clone(),
+        });
+        operations.push(JournalCommitOperation::Flush(JournalFlush::JournalState));
+        operations.push(JournalCommitOperation::WriteFilesystemSuperblock {
+            start_byte: FILESYSTEM_SUPERBLOCK_START_BYTE,
+            image: filesystem_superblock.with_recovery_state(false),
+        });
+        operations.push(JournalCommitOperation::Flush(JournalFlush::FilesystemState));
+        Ok(operations)
+    }
 }
 
 impl JournalInodeMap {
@@ -577,6 +624,12 @@ impl JournalInodeMap {
     #[must_use]
     pub fn filesystem_needs_recovery(&self) -> bool {
         self.filesystem_needs_recovery
+    }
+
+    /// Return the greatest valid absolute filesystem block index.
+    #[must_use]
+    pub fn maximum_block(&self) -> u64 {
+        self.maximum_block
     }
 
     /// Admit the discovered map only when ext4 and JBD2 both prove it clean.
@@ -1715,8 +1768,10 @@ impl JournalRing {
 /// corrupt commit, descriptor, data image, or revocation record is refused.
 /// Later revocations suppress earlier pending home-block images. The caller
 /// must pass the ext4 incompat-recovery feature state; a disagreement with the
-/// JBD2 start field is refused because a zero JBD2 start alone does not prove a
-/// clean journal.
+/// JBD2 start field is refused when ext4 claims to be clean. A durable ext4
+/// recovery marker with a zero JBD2 start is the valid crash state between the
+/// marker flush and the first live journal-superblock write; it replays no
+/// blocks but still requires the ordered cleanup plan before the marker clears.
 pub fn recover_committed_ring(
     superblock: &JournalSuperblockImage,
     filesystem_needs_recovery: bool,
@@ -1746,10 +1801,17 @@ pub fn recover_committed_ring(
             consumed_slots: 0,
             replay_images: Vec::new(),
             clean_superblock: superblock.clone(),
+            maximum_block,
         });
     }
     if superblock.start_block == 0 {
-        return Err(JournalTransactionError::RecoveryStateMismatch);
+        return Ok(JournalRecovery {
+            committed_transactions: 0,
+            consumed_slots: 0,
+            replay_images: Vec::new(),
+            clean_superblock: superblock.clone(),
+            maximum_block,
+        });
     }
 
     let mut cursor = usize::try_from(superblock.start_block - 1)
@@ -1876,6 +1938,7 @@ pub fn recover_committed_ring(
         consumed_slots,
         replay_images: replay.into_values().collect(),
         clean_superblock: superblock.with_state(sequence, 0)?,
+        maximum_block,
     })
 }
 

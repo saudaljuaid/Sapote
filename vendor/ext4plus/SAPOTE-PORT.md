@@ -65,13 +65,23 @@ the Rust handoff.
 profile from the validated live start across at most one wrap. It validates
 every record, discards an uncommitted tail, applies later revocations to older
 pending images, and returns a collapsed checkpoint set plus the checksummed
-clean superblock state. The ext4 recovery bit must agree with the JBD2 state;
-ambiguous or inconsistent combinations are refused.
+clean superblock state. A clear ext4 recovery bit cannot accompany a nonzero
+JBD2 start. A set recovery bit may accompany a zero start because it is the
+durable crash state between the marker flush and the first live JBD2
+superblock; that state yields an empty replay and still requires cleanup.
 
-This planner does not issue home or superblock writes, bind its marker or JBD2
-barriers to platform I/O, clear the recovery marker after replay, or redirect
-ext4 mutation methods away from their upstream home-block writes. Those gaps
-keep the Sapote backend read-only.
+The public `JournalStorage` executor maps every ordered operation to a checked
+absolute byte write and passes every named flush through without coalescing it.
+Sapote's mount adapter implements that boundary with native NVMe writes and
+`nvme_volume_flush()`. Dirty mounts checkpoint the validated replay set, flush
+home metadata, persist and flush the clean JBD2 superblock, clear and flush the
+checksummed ext4 recovery marker, then reload and re-admit the clean image.
+
+Ext4 mutation methods are not yet redirected away from upstream direct home
+writes. Allocation rollback, partial-block coalescing, failure injection,
+clean-unmount/fsync semantics, and deliberate recovery power-cut QEMU evidence
+are also incomplete. Those gaps keep every user-facing Sapote ext4 operation
+read-only even though the private mount recovery lease is writable.
 
 Sapote also tightens upstream writer admission: an image carrying ext4's
 `RO_COMPAT_READONLY` feature now discards the supplied writer just as an image
