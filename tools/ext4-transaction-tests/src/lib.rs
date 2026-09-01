@@ -943,6 +943,129 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
         .unwrap();
     assert_eq!(restored.read_bytes_at(&mut overlaid, 0).unwrap(), 1);
     assert_eq!(overlaid, original);
+    drop(restored);
+    drop(restored_filesystem);
+
+    let commit_bytes = std::fs::read(&path).unwrap();
+    let commit_filesystem = Ext4::load(Box::new(commit_bytes.clone())).unwrap();
+    let mut commit_ring = load_journal_inode_map(&commit_filesystem)
+        .unwrap()
+        .into_clean_ring()
+        .unwrap();
+    let marker_plan = commit_ring.prepare_recovery_marker_plan().unwrap();
+    let mut commit_storage = VectorStorage {
+        bytes: commit_bytes,
+        flushes: Vec::new(),
+    };
+    execute_commit_operations(&mut commit_storage, &marker_plan).unwrap();
+    commit_ring.mark_recovery_marker_durable().unwrap();
+
+    let marker_backing = Rc::new(commit_storage.bytes.clone());
+    let commit_stage = Rc::new(
+        JournalMutationStage::new(
+            Box::new(marker_backing.clone()),
+            u64::try_from(marker_backing.len()).unwrap(),
+        )
+        .unwrap(),
+    );
+    let mutating_filesystem = Ext4::load_with_writer(
+        Box::new(commit_stage.clone()),
+        Some(Box::new(commit_stage.clone())),
+    )
+    .unwrap();
+    assert!(
+        load_journal_inode_map(&mutating_filesystem)
+            .unwrap()
+            .filesystem_needs_recovery()
+    );
+    let mut mutating_file = mutating_filesystem.open(b"/system/README.TXT").unwrap();
+    let original_size = mutating_file.inode().size_in_bytes();
+    let append_offset = original_size
+        .div_ceil(JOURNAL_BLOCK_BYTES as u64)
+        .checked_mul(JOURNAL_BLOCK_BYTES as u64)
+        .unwrap();
+    assert_eq!(mutating_file.write_bytes_at(b"X", append_offset).unwrap(), 1);
+    let appended_data_block = mutating_file
+        .filesystem_block_at_offset(append_offset)
+        .unwrap()
+        .unwrap();
+    let staged_superblock = commit_stage
+        .staged_images()
+        .into_iter()
+        .find(|image| image.block_index() == 0)
+        .expect("allocation must stage the 4 KiB block containing the primary superblock");
+    let superblock = &staged_superblock.bytes()[1024..2048];
+    assert_eq!(
+        u32::from_le_bytes(superblock[0x60..0x64].try_into().unwrap()) & 0x4,
+        0x4
+    );
+    assert_eq!(
+        u32::from_le_bytes(superblock[0x3fc..0x400].try_into().unwrap()),
+        ext4_crc32c(&superblock[..0x3fc])
+    );
+
+    let transaction = commit_stage
+        .build_transaction(
+            &commit_ring.begin_transaction().unwrap(),
+            &[appended_data_block],
+        )
+        .unwrap();
+    let prepared = commit_ring.prepare(&transaction).unwrap();
+    let commit_plan = commit_ring.prepare_commit_plan(&prepared).unwrap();
+    execute_commit_operations(&mut commit_storage, &commit_plan).unwrap();
+    commit_ring.mark_commit_durable(prepared.ticket()).unwrap();
+    let checkpoint_plan = commit_ring
+        .prepare_checkpoint_plan(prepared.ticket())
+        .unwrap();
+    execute_commit_operations(&mut commit_storage, &checkpoint_plan).unwrap();
+    commit_ring.checkpoint_durable(prepared.ticket()).unwrap();
+    let clean_plan = commit_ring.prepare_filesystem_clean_plan().unwrap();
+    execute_commit_operations(&mut commit_storage, &clean_plan).unwrap();
+    commit_ring.mark_filesystem_clean_durable().unwrap();
+    assert_eq!(commit_ring.filesystem_is_clean(), Ok(true));
+    assert_eq!(
+        commit_storage.flushes,
+        vec![
+            JournalFlush::FilesystemState,
+            JournalFlush::OrderedData,
+            JournalFlush::JournalPayload,
+            JournalFlush::Commit,
+            JournalFlush::Checkpoint,
+            JournalFlush::JournalState,
+            JournalFlush::FilesystemState,
+        ]
+    );
+
+    let final_filesystem = Ext4::load(Box::new(commit_storage.bytes.clone())).unwrap();
+    let final_journal = load_journal_inode_map(&final_filesystem).unwrap();
+    assert!(!final_journal.filesystem_needs_recovery());
+    assert_eq!(final_journal.superblock().start_block(), 0);
+    final_journal.into_clean_ring().unwrap();
+    let mut final_file = final_filesystem.open(b"/system/README.TXT").unwrap();
+    let mut appended = [0u8; 1];
+    assert_eq!(
+        final_file
+            .read_bytes_at(&mut appended, append_offset)
+            .unwrap(),
+        1
+    );
+    assert_eq!(appended, *b"X");
+    assert_eq!(final_file.inode().size_in_bytes(), append_offset + 1);
+
+    let committed_path = std::path::Path::new(&path).with_extension("committed.img");
+    std::fs::write(&committed_path, &commit_storage.bytes).unwrap();
+    let fsck = std::process::Command::new("e2fsck")
+        .args(["-fn"])
+        .arg(&committed_path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&committed_path);
+    assert!(
+        fsck.status.success(),
+        "e2fsck rejected committed image:\n{}\n{}",
+        String::from_utf8_lossy(&fsck.stdout),
+        String::from_utf8_lossy(&fsck.stderr)
+    );
 }
 
 #[test]

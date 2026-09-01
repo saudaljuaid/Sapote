@@ -228,6 +228,14 @@ mutated ext4plus object to be discarded.
 An open regular file exposes its initialized physical block at a byte offset so
 the eventual mutation adapter can derive that ordered-data set after the
 upstream write; holes and uninitialized extents are never misclassified.
+The deterministic Linux fixture now drives one real upstream sparse-extending
+file write through that classifier after persisting the recovery marker. It
+proves the allocation-updated block-zero superblock image retains a valid
+metadata checksum and the recovery bit, executes the ordered commit,
+checkpoint, journal-tail cleanup, and final marker clear into the image, then
+reopens the appended byte and requires read-only `e2fsck` acceptance. This is a
+host integration proof over the operation executor, not yet a VFS or QEMU
+writable-volume claim.
 
 The stage is retained for the full Rust mount lifetime and both unmount phases
 refuse a nonempty overlay, so no unclassified upstream mutation can be silently

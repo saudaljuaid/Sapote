@@ -100,6 +100,12 @@ upstream write. Refused classification leaves the stage open; rollback clears
 and reopens it, but the mutated filesystem object must still be discarded. An open file can
 report the initialized physical block at a byte offset so Sapote can derive the
 ordered-data set after a staged regular-file write without exposing a writer.
+The real Linux fixture persists the checksummed recovery marker, reloads the
+upstream filesystem on that dirty-marker backing, performs an allocation-bearing
+sparse extension, and verifies that its staged block-zero image cannot clear the
+marker. It then executes the complete ordered commit, checkpoint, tail cleanup,
+and final marker clear against a copied image, reopens the appended byte, and
+requires read-only `e2fsck` acceptance. Platform VFS writes remain gated.
 
 The stage is not yet connected to VFS mutations, which do not yet collect their
 touched offset range and revocation set for the classifier. The retry-safe
