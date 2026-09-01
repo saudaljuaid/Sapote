@@ -337,6 +337,12 @@ the freed physical block to appear in the prepared JBD2 revocation set, commits
 and cleans it, and appends again to prove that a post-sync mutation durably
 re-arms the recovery marker. Because every current transaction checkpoints
 synchronously, a clean sync needs no extra write or flush.
+The same non-power-cut scenario then creates and unlinks an empty file under
+`/data/user`, synchronizing after each transaction and requiring the namespace
+to disappear before the final clean remount. This exercises inode allocation,
+inode and directory bitmaps, group descriptors, directory checksums, link
+counts, and their primary-superblock counters through platform storage while
+the public create/unlink table entries remain read-only.
 The recovery-marker activation plan is equally retry-stable: its exact
 checksummed write and filesystem-state flush are re-emitted after an I/O refusal
 and acknowledged only after the flush completes. Started commit plans and
@@ -345,5 +351,6 @@ their final flushes are acknowledged; slots remain reserved throughout. The
 lease is closed before the separate Rust release, and either failure leaves the
 mount live. The private QEMU probe can now arm the marker, sync it clean, and
 then unmount without another write. Its truncate path is likewise private and
-does not expose mutation entry points to VFS callers. All VFS mutation
-operations therefore continue to return `EROFS`.
+its namespace round trip is removed before unmount; neither exposes mutation
+entry points to VFS callers. All VFS mutation operations therefore continue to
+return `EROFS`.

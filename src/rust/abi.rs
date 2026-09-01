@@ -484,6 +484,60 @@ pub(crate) unsafe extern "C" fn sapote_ext4_truncate_probe(
     }
 }
 
+/// Execute or retry one private empty-file creation acceptance probe.
+///
+/// # Safety
+/// The mount and path range must be live, readable, and non-overlapping. C must
+/// hold a writable storage lease.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn sapote_ext4_create_file_probe(
+    mounted: usize,
+    path: *const u8,
+    path_length: usize,
+) -> i32 {
+    if mounted == 0 || path.is_null() {
+        return ext4::Status::NullArgument as i32;
+    }
+    // SAFETY: the complete, non-overlapping inputs are the caller's contract.
+    let (mounted, path) = unsafe {
+        (
+            &mut *(mounted as *mut ext4::Mounted),
+            core::slice::from_raw_parts(path, path_length),
+        )
+    };
+    match ext4::create_file_probe(mounted, path) {
+        Ok(()) => ext4::Status::Ok as i32,
+        Err(status) => status as i32,
+    }
+}
+
+/// Execute or retry one private empty-file removal acceptance probe.
+///
+/// # Safety
+/// The mount and path range must be live, readable, and non-overlapping. C must
+/// hold a writable storage lease.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn sapote_ext4_unlink_file_probe(
+    mounted: usize,
+    path: *const u8,
+    path_length: usize,
+) -> i32 {
+    if mounted == 0 || path.is_null() {
+        return ext4::Status::NullArgument as i32;
+    }
+    // SAFETY: the complete, non-overlapping inputs are the caller's contract.
+    let (mounted, path) = unsafe {
+        (
+            &mut *(mounted as *mut ext4::Mounted),
+            core::slice::from_raw_parts(path, path_length),
+        )
+    };
+    match ext4::unlink_file_probe(mounted, path) {
+        Ok(()) => ext4::Status::Ok as i32,
+        Err(status) => status as i32,
+    }
+}
+
 /// Return one directory entry by stable enumeration index.
 ///
 /// # Safety

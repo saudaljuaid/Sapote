@@ -4956,6 +4956,18 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
                 SAPFS_STATUS_OK || stat.size != UINT64_C(4097)) {
             kernel_test_fail("ext4 post-truncate marker re-arm failed");
         }
+        if (ext4_backend_create_file_probe(SAPFS_VOLUME_SYSTEM,
+                "data/user/JRNLPROBE.TMP") != SAPFS_STATUS_OK ||
+            sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.TMP",
+                &stat) != SAPFS_STATUS_OK || stat.directory || stat.size != 0U ||
+            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
+            ext4_backend_unlink_file_probe(SAPFS_VOLUME_SYSTEM,
+                "data/user/JRNLPROBE.TMP") != SAPFS_STATUS_OK ||
+            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
+            sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.TMP",
+                &stat) != SAPFS_STATUS_NOT_FOUND) {
+            kernel_test_fail("ext4 private namespace journal probe failed");
+        }
     }
     if (sapfs_unmount(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
         sapfs_drive(SAPFS_VOLUME_SYSTEM).mounted ||
@@ -5014,7 +5026,7 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
         kernel_test_fail("clean ext4 remount changed the resource census");
     }
     console_write("ST EXT4 RECOVERY marker cleared transaction committed ");
-    console_write("appended exact truncate revoke rearm journal clean ");
+    console_write("appended exact truncate revoke rearm create unlink journal clean ");
     console_write("transactions 0 replay 0 slots 0 ");
     console_write("VFS read-only remount clean resources exact\n");
     kernel_test_pass();

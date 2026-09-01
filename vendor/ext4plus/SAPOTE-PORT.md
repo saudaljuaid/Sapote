@@ -167,7 +167,9 @@ failure and an injected ordered-data flush failure, including retry through VFS
 sync, then retries injected final-clean marker-write and flush failures. Its
 non-power-cut path commits a one-block truncate, requires the freed physical
 block in the JBD2 revocation set, cleans, and re-appends to prove recovery-marker
-re-arming after sync. A separate Linux target
+re-arming after sync. It also creates and unlinks an empty file through staged
+inode/directory allocation metadata, synchronizing both transactions and
+requiring the namespace to be absent before remount. A separate Linux target
 cuts ten independent VMs immediately after every named durability barrier,
 reboots each disk, and requires namespace, data, resource, and read-only
 `e2fsck` acceptance. The real fixture separately pins pre-commit allocation
