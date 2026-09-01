@@ -2226,6 +2226,108 @@ enum package_service_status package_service_recover(
     return status;
 }
 
+enum package_service_status package_service_snapshot(
+    uint8_t *database,
+    size_t capacity,
+    size_t *output_bytes,
+    struct package_service_report *report
+)
+{
+    struct service_context context;
+    uint8_t authority[PACKAGE_STATE_AUTHORITY_BYTES];
+    struct package_state_authority_view authority_view;
+    struct package_state_database_view database_view;
+    size_t copied = 0U;
+    bool present = false;
+    enum package_service_status status;
+
+    if (database == NULL || output_bytes == NULL || report == NULL) {
+        return PACKAGE_SERVICE_STATUS_NULL_ARGUMENT;
+    }
+    *output_bytes = 0U;
+    zero_bytes(report, sizeof(*report));
+    report->filesystem_status = SAPFS_STATUS_OK;
+    report->state_status = PACKAGE_STATE_STATUS_OK;
+    if (servicing) {
+        report->status = PACKAGE_SERVICE_STATUS_BUSY;
+        return report->status;
+    }
+    struct sapfs_drive_info drive = sapfs_drive(SAPFS_VOLUME_DATA);
+    if (!drive.present || !drive.mounted || !drive.healthy ||
+        !heap_is_active()) {
+        report->status = PACKAGE_SERVICE_STATUS_UNAVAILABLE;
+        return report->status;
+    }
+    zero_bytes(&context, sizeof(context));
+    context.report = report;
+    servicing = true;
+    status = recover_internal(&context);
+    if (status != PACKAGE_SERVICE_STATUS_OK) {
+        goto release;
+    }
+    status = read_exact_path(&context, PACKAGE_SERVICE_AUTHORITY_PATH,
+        authority, sizeof(authority), false, &present);
+    if (status != PACKAGE_SERVICE_STATUS_OK || !present) {
+        if (status == PACKAGE_SERVICE_STATUS_OK) {
+            status = PACKAGE_SERVICE_STATUS_STATE;
+        }
+        goto release;
+    }
+    report->state_status = package_state_authority_parse(authority,
+        sizeof(authority), &authority_view);
+    if (report->state_status != PACKAGE_STATE_STATUS_OK ||
+        authority_view.database_bytes == 0U ||
+        authority_view.database_bytes > PACKAGE_SERVICE_MAX_DATABASE_BYTES ||
+        authority_view.database_bytes > capacity) {
+        status = report->state_status == PACKAGE_STATE_STATUS_OK ?
+            PACKAGE_SERVICE_STATUS_RESOURCE : PACKAGE_SERVICE_STATUS_STATE;
+        goto release;
+    }
+    char path[SAPFS_MAX_PATH];
+    if (!generation_path(authority_view.generation,
+            GENERATION_DATABASE_SUFFIX, path)) {
+        status = PACKAGE_SERVICE_STATUS_NAMESPACE;
+        goto release;
+    }
+    copied = (size_t)authority_view.database_bytes;
+    status = read_exact_path(&context, path, database, copied, false, &present);
+    if (status != PACKAGE_SERVICE_STATUS_OK || !present) {
+        if (status == PACKAGE_SERVICE_STATUS_OK) {
+            status = PACKAGE_SERVICE_STATUS_STATE;
+        }
+        goto release;
+    }
+    report->state_status = package_state_database_parse(database, copied,
+        &database_view);
+    if (report->state_status != PACKAGE_STATE_STATUS_OK ||
+        !authority_selects(authority, &database_view)) {
+        status = PACKAGE_SERVICE_STATUS_STATE;
+        goto release;
+    }
+    report->generation = database_view.generation;
+    *output_bytes = copied;
+    status = PACKAGE_SERVICE_STATUS_OK;
+
+release:
+    if (status != PACKAGE_SERVICE_STATUS_OK && copied != 0U) {
+        zero_bytes(database, copied);
+    }
+    {
+        enum package_service_status entries_release = release_bytes(&context,
+            (void **)&context.entries);
+
+        if (entries_release != PACKAGE_SERVICE_STATUS_OK) {
+            status = entries_release;
+        }
+    }
+    if (report->live_file_handles != 0U || report->live_allocations != 0U) {
+        status = PACKAGE_SERVICE_STATUS_RESOURCE;
+    }
+    servicing = false;
+    report->status = status;
+    return status;
+}
+
 enum package_service_status package_service_prepare(
     const struct package_service_prepare_request *request,
     struct package_service_report *report

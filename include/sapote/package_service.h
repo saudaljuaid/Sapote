@@ -72,6 +72,18 @@ enum package_service_status package_service_recover(
     struct package_service_report *report
 );
 
+/*
+ * Recovers first, then copies the complete authority-selected canonical
+ * database into caller-owned privileged memory. output_bytes remains zero and
+ * the copied span is cleared on every refusal.
+ */
+enum package_service_status package_service_snapshot(
+    uint8_t *database,
+    size_t capacity,
+    size_t *output_bytes,
+    struct package_service_report *report
+);
+
 struct package_service_prepare_request {
     const struct package_builder_workspace *builder;
     const uint8_t *database;

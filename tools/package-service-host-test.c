@@ -733,6 +733,35 @@ static int test_prepare_is_recoverable_not_authoritative(
     return 0;
 }
 
+static int test_authoritative_snapshot(
+    const uint8_t old_database[OLD_DATABASE_BYTES],
+    const uint8_t old_authority[PACKAGE_STATE_AUTHORITY_BYTES]
+)
+{
+    uint8_t snapshot[OLD_DATABASE_BYTES];
+    size_t snapshot_bytes = 99U;
+    struct package_service_report report;
+
+    reset_filesystem();
+    add_old_generation(old_database);
+    add_file(PACKAGE_SERVICE_AUTHORITY_PATH, old_authority,
+        PACKAGE_STATE_AUTHORITY_BYTES, UINT16_C(0444));
+    memset(snapshot, UINT8_C(0xa5), sizeof(snapshot));
+    CHECK(package_service_snapshot(snapshot, sizeof(snapshot), &snapshot_bytes,
+            &report) == PACKAGE_SERVICE_STATUS_OK &&
+        snapshot_bytes == sizeof(snapshot) &&
+        memcmp(snapshot, old_database, sizeof(snapshot)) == 0 &&
+        report.generation == 1U && report_clean(&report), 174);
+
+    memset(snapshot, UINT8_C(0xa5), sizeof(snapshot));
+    snapshot_bytes = 99U;
+    CHECK(package_service_snapshot(snapshot, sizeof(snapshot) - 1U,
+            &snapshot_bytes, &report) == PACKAGE_SERVICE_STATUS_RESOURCE &&
+        snapshot_bytes == 0U && snapshot[0] == UINT8_C(0xa5) &&
+        report.live_file_handles == 0U && report.live_allocations == 0U, 175);
+    return 0;
+}
+
 static int test_prepare_sync_failure_cleans_unpublished_state(
     const uint8_t old_database[OLD_DATABASE_BYTES],
     const uint8_t new_database[NEW_DATABASE_BYTES],
@@ -1664,6 +1693,9 @@ int main(void)
     if (result == 0) {
         result = test_prepare_is_recoverable_not_authoritative(old_database,
             new_database, old_authority);
+    }
+    if (result == 0) {
+        result = test_authoritative_snapshot(old_database, old_authority);
     }
     if (result == 0) {
         result = test_prepare_sync_failure_cleans_unpublished_state(
