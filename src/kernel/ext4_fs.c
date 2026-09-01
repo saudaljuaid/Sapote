@@ -10,6 +10,7 @@
 #define EXT4_MAX_HANDLES SAPFS_MAX_HANDLES
 #define EXT4_CONTROLLER_SYSTEM 0U
 #define EXT4_CONTROLLER_DATA 1U
+#define EXT4_TRANSACTION_PROBE_MAX_BYTES (64U * 4096U)
 
 struct ext4_mount_state {
     struct nvme_volume_session session;
@@ -54,6 +55,9 @@ extern int32_t sapote_ext4_stat(uintptr_t mounted, const uint8_t *path,
 extern int32_t sapote_ext4_pread(uintptr_t mounted, const uint8_t *path,
     size_t path_length, uint64_t offset, uint8_t *destination,
     size_t capacity, size_t *read_out);
+extern int32_t sapote_ext4_transaction_probe(uintptr_t mounted,
+    const uint8_t *path, size_t path_length, uint64_t offset,
+    const uint8_t *source, size_t source_length, size_t *written_out);
 extern int32_t sapote_ext4_directory_entry(uintptr_t mounted,
     const uint8_t *path, size_t path_length, uint64_t index,
     struct sapote_ext4_directory_entry *entry, bool *present);
@@ -695,6 +699,34 @@ enum sapfs_status ext4_backend_read(sapfs_handle handle,
         state->offset += *read_bytes;
     }
     return status;
+}
+
+enum sapfs_status ext4_backend_transaction_probe(enum sapfs_volume volume,
+    const char *path, uint64_t offset, const uint8_t *source,
+    size_t source_bytes, size_t *written_bytes)
+{
+    struct ext4_mount_state *mount;
+    const size_t length = path_length(path);
+    enum sapfs_status status;
+    enum sapfs_status close_status;
+
+    if (!valid_volume(volume) || length == 0U ||
+        length >= SAPFS_MAX_PATH || source == NULL || source_bytes == 0U ||
+        source_bytes > EXT4_TRANSACTION_PROBE_MAX_BYTES ||
+        written_bytes == NULL) {
+        return SAPFS_STATUS_INVALID_ARGUMENT;
+    }
+    *written_bytes = 0U;
+    mount = &ext4_mounts[volume];
+    status = begin_operation(mount, true);
+    if (status != SAPFS_STATUS_OK) {
+        return status;
+    }
+    status = map_status(sapote_ext4_transaction_probe(mount->rust_mount,
+        (const uint8_t *)path, length, offset, source, source_bytes,
+        written_bytes));
+    close_status = end_operation(mount, NULL);
+    return status != SAPFS_STATUS_OK ? status : close_status;
 }
 
 enum sapfs_status ext4_backend_write(sapfs_handle handle,

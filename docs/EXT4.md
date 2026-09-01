@@ -15,6 +15,10 @@ lookup, open, read, offset-preserving pread, 64-bit seek/stat, and directory
 enumeration. Hard-linked paths report the same inode identity to the vnode
 table. Symlinks are resolved by ext4plus for lookup and open.
 
+A kernel-only transaction probe exists for the ext4 QEMU acceptance scenario.
+It is deliberately absent from the VFS operation table and does not change the
+drive's read-only flag or any public mutation result.
+
 C never leaves an NVMe filesystem session open. Ordinary VFS calls acquire a
 read-only session around one synchronous Rust operation. Mount acquires a
 writable session solely so validated JBD2 recovery can checkpoint before the
@@ -60,12 +64,15 @@ order applies to the current single-core execution model.
 ## Read-write admission gate
 
 Upstream reads an existing JBD2 journal but does not journal new mutations, so
-Sapote never gives ext4plus a writer that reaches platform storage. A clean
-mount is reloaded with the bounded `JournalMutationStage` as both its reader and
-its only writer; that overlay cannot write through to its immutable NVMe-backed
-reader. `sync`, create, write, truncate, mkdir, rename, unlink, rmdir, and link
-still return `EROFS`. Enabling the VFS write path requires all of the following
-in one implementation:
+Sapote never gives an ext4plus mutation object a writer that reaches platform
+storage. A clean mount is reloaded with the bounded `JournalMutationStage` as
+both its reader and its only writer; that overlay cannot write through to its
+immutable NVMe-backed reader. After Sapote has durably set the recovery marker,
+an explicit coordinator-only loader preserves that same overlay writer while
+continuing to refuse permanent or unsupported read-only conditions. The
+ordered journal executor remains the only platform writer. `sync`, create,
+write, truncate, mkdir, rename, unlink, rmdir, and link still return `EROFS`.
+Enabling the VFS write path requires all of the following in one implementation:
 
 1. ordered-data JBD2 descriptor, data, revoke, and checksummed commit records;
 2. an NVMe Flush after journal data and before acknowledging the commit;
@@ -154,10 +161,13 @@ ext4/JBD2 state disagreement.
 
 `qemu-test-ext4-recovery` builds that exact marker-only crash image from the
 deterministic fixture, boots it as a writable 4 KiB NVMe namespace, and requires
-the guest to report that the marker was cleared with a clean journal and zero
-replayed transactions. The guest verifies the known namespace and all mutation
-entry points remain read-only. After QEMU closes the disk, the host independently
-runs the strict fixture inspector and read-only e2fsck over the resulting bytes.
+the guest to recover it, then drives one allocation-bearing sparse extension
+through the private transaction probe. The guest reopens the appended byte,
+proves every VFS mutation entry point remains read-only, cleanly unmounts,
+remounts with zero replay, and revalidates the byte and resource census. After
+QEMU closes the disk, the host independently runs the strict fixture inspector
+and read-only e2fsck over the resulting bytes. This expanded scenario remains
+pending exact-head Linux execution and is not writable-VFS evidence.
 
 The caller must supply a distinct physical journal block for the descriptor,
 each metadata image, and the commit. The resulting operation list has one legal
@@ -190,6 +200,17 @@ checksummed ext4 primary-superblock write (clear incompat-recovery)
 Flush(FilesystemState)
 ```
 
+This ordering was checked against Linux's primary JBD2/ext4 paths: JBD2 waits
+for journal payload before the commit record and places a preflush/FUA fence on
+that record; checkpoint cleanup flushes filesystem home writes before advancing
+the journal tail; recovery synchronizes replayed home blocks before journal
+cleanup; and ext4 flushes the journal before clearing and committing its
+needs-recovery feature. See Linux
+[`commit.c`](https://github.com/torvalds/linux/blob/master/fs/jbd2/commit.c),
+[`checkpoint.c`](https://github.com/torvalds/linux/blob/master/fs/jbd2/checkpoint.c),
+[`recovery.c`](https://github.com/torvalds/linux/blob/master/fs/jbd2/recovery.c),
+and [`super.c`](https://github.com/torvalds/linux/blob/master/fs/ext4/super.c).
+
 Metadata home blocks appear only after `Flush(Commit)`, and slots are reused
 only after `Flush(JournalState)`. A ring discovered from a real clean ext4
 image refuses its first mapped commit plan until the caller acknowledges the
@@ -210,8 +231,15 @@ checkpoint, recovery-cleanup, and tail-state operations. A shared executor maps
 every operation to checked absolute byte writes and preserves every flush. The
 kernel mount adapter binds those writes to `nvme_volume_write()` and each
 barrier to `nvme_volume_flush()` for recovery and final clean-plan execution.
-Writable namespace methods are still not redirected into the planner. A
-bounded `JournalMutationStage`
+The private acceptance probe now uses the same adapter: it makes the recovery
+marker durable, reloads the overlay through the recovery-only writer admission,
+runs one upstream regular-file write, classifies initialized touched blocks as
+ordered data and every other staged block as journaled metadata, then executes
+and acknowledges commit, checkpoint, and tail-state durability before reloading
+the checkpointed view. A failed platform write or flush retains the exact
+pending phase and request bytes for an identical retry; a different request is
+refused. Writable namespace methods are still not redirected into the planner.
+A bounded `JournalMutationStage`
 now gives synchronous ext4plus mutations an immutable backing reader and a
 copy-on-write overlay: the first partial write reads a complete 4 KiB home
 block, later writes coalesce into it, reads see the overlay, and at most 64
@@ -239,10 +267,13 @@ writable-volume claim.
 
 The stage is retained for the full Rust mount lifetime and both unmount phases
 refuse a nonempty overlay, so no unclassified upstream mutation can be silently
-dropped. VFS mutations do not yet collect the touched offset range and
-revocation set needed to use that classifier. Allocation rollback, fsync
-binding, write-failure injection, and the deliberate power-cut matrix at every
-commit and recovery durability boundary are not complete. The admitted
+dropped. Setup failures before a prepared commit discard the overlay and reload
+ext4plus so in-memory allocation counters cannot escape, but allocation rollback
+under injected storage failures is not yet proven. VFS mutations do not collect
+the touched offset range and revocation set needed to use that classifier.
+Revocation derivation, fsync binding, close-failure semantics, write-failure
+injection, and the deliberate power-cut matrix at every commit and recovery
+durability boundary are not complete. The admitted
 `JournalRing` is also retained for the full Rust mount lifetime. C opens a
 writable NVMe lease before unmount preparation; Rust
 re-emits the same pending clean plan after a failed write or flush, acknowledges
@@ -253,8 +284,8 @@ The recovery-marker activation plan is equally retry-stable: its exact
 checksummed write and filesystem-state flush are re-emitted after an I/O refusal
 and acknowledged only after the flush completes. Started commit plans and
 pending journal-tail writes likewise re-emit byte-identical operations until
-their final flushes are acknowledged; slots remain reserved throughout. The lease is
-closed before the separate Rust release, and either failure leaves the mount
-live. Because VFS mutations cannot arm the marker yet, the QEMU recovery proof
-exercises the already-clean unmount branch rather than a dirty-to-clean
-unmount. All VFS mutation operations therefore continue to return `EROFS`.
+their final flushes are acknowledged; slots remain reserved throughout. The
+lease is closed before the separate Rust release, and either failure leaves the
+mount live. The private QEMU probe can now arm the marker and reach the
+dirty-to-clean unmount branch; that does not expose it to VFS callers. All VFS
+mutation operations therefore continue to return `EROFS`.

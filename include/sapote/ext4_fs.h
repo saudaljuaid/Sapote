@@ -104,6 +104,10 @@ enum sapfs_status ext4_backend_read(sapfs_handle handle,
 enum sapfs_status ext4_backend_pread(sapfs_handle handle,
     uint8_t *destination, size_t capacity, uint64_t offset,
     size_t *read_bytes);
+/* Private kernel acceptance probe; this is not installed in the VFS table. */
+enum sapfs_status ext4_backend_transaction_probe(enum sapfs_volume volume,
+    const char *path, uint64_t offset, const uint8_t *source,
+    size_t source_bytes, size_t *written_bytes);
 enum sapfs_status ext4_backend_write(sapfs_handle handle,
     const uint8_t *source, size_t source_bytes, size_t *written_bytes);
 enum sapfs_status ext4_backend_seek(sapfs_handle handle, int64_t offset,

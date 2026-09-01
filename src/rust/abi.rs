@@ -392,6 +392,47 @@ pub(crate) unsafe extern "C" fn sapote_ext4_pread(
     }
 }
 
+/// Execute or retry one private ext4 journal transaction acceptance probe.
+///
+/// This bypasses the still-read-only VFS mutation table and exists only for a
+/// kernel QEMU acceptance scenario. C must hold a writable storage lease.
+///
+/// # Safety
+/// The mount and input ranges must be live and readable, and `written_out`
+/// must name one writable `usize`. The ranges must not overlap.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn sapote_ext4_transaction_probe(
+    mounted: usize,
+    path: *const u8,
+    path_length: usize,
+    offset: u64,
+    source: *const u8,
+    source_length: usize,
+    written_out: *mut usize,
+) -> i32 {
+    if mounted == 0 || path.is_null() || source.is_null() || written_out.is_null() {
+        return ext4::Status::NullArgument as i32;
+    }
+    // SAFETY: the complete, non-overlapping ranges are the caller's contract.
+    let (mounted, path, source) = unsafe {
+        (
+            &mut *(mounted as *mut ext4::Mounted),
+            core::slice::from_raw_parts(path, path_length),
+            core::slice::from_raw_parts(source, source_length),
+        )
+    };
+    // SAFETY: the caller supplied one writable result.
+    unsafe { *written_out = 0 };
+    match ext4::transaction_probe(mounted, path, offset, source) {
+        Ok(written) => {
+            // SAFETY: the result remains writable for this call.
+            unsafe { *written_out = written };
+            ext4::Status::Ok as i32
+        }
+        Err(status) => status as i32,
+    }
+}
+
 /// Return one directory entry by stable enumeration index.
 ///
 /// # Safety

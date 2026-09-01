@@ -13,8 +13,8 @@ use ext4plus::path::Path;
 use ext4plus::{
     Ext4, Ext4Read, FileType, FollowSymlinks, JOURNAL_BLOCK_BYTES, JournalCommitOperation,
     JournalExecutionError, JournalFlush, JournalInodeMap, JournalInodeMapError,
-    JournalMutationStage, JournalRing, JournalStorage, execute_commit_operations,
-    load_journal_inode_map, recover_committed_ring,
+    JournalMutationStage, JournalPreparedTransaction, JournalRing, JournalStorage,
+    execute_commit_operations, load_journal_inode_map, recover_committed_ring,
 };
 
 const SUPERBLOCK_BYTES: usize = 1024;
@@ -26,6 +26,7 @@ const INCOMPAT_RECOVERY_FEATURE: u32 = 0x0004;
 const READ_ONLY_FEATURES: u32 = 0x046b;
 const MAX_VALIDATED_ENTRIES: usize = 8_192;
 const MAX_PENDING_DIRECTORIES: usize = 512;
+const MAX_PROBE_WRITE_BYTES: usize = 64 * JOURNAL_BLOCK_BYTES;
 
 /// A pointer-free identity copied from a validated ext4 superblock.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -81,7 +82,23 @@ pub(crate) struct Mounted {
     filesystem: Ext4,
     journal: JournalRing,
     stage: Rc<JournalMutationStage>,
+    pending_mutation: Option<PendingMutation>,
     context: usize,
+    image_bytes: u64,
+}
+
+enum PendingMutationPhase {
+    Commit(JournalPreparedTransaction),
+    Checkpoint(u64),
+    Reload,
+}
+
+struct PendingMutation {
+    path: Vec<u8>,
+    source: Vec<u8>,
+    offset: u64,
+    written: usize,
+    phase: PendingMutationPhase,
 }
 
 #[derive(Debug)]
@@ -152,12 +169,51 @@ fn execute_storage_plan(
     context: usize,
     operations: &[JournalCommitOperation],
 ) -> Result<(), Status> {
-    execute_commit_operations(&mut SapoteJournalStorage { context }, operations).map_err(
-        |error| match error {
+    execute_commit_operations(&mut SapoteJournalStorage { context }, operations).map_err(|error| {
+        match error {
             JournalExecutionError::AddressOverflow => Status::Range,
             JournalExecutionError::Storage(_) => Status::Io,
-        },
-    )
+        }
+    })
+}
+
+fn load_staged_view(
+    context: usize,
+    image_bytes: u64,
+    needs_recovery: bool,
+) -> Result<(Ext4, Rc<JournalMutationStage>), Status> {
+    let stage = Rc::new(
+        JournalMutationStage::new(Box::new(SapoteReader { context }), image_bytes)
+            .map_err(|_| Status::Invalid)?,
+    );
+    let filesystem = if needs_recovery {
+        Ext4::load_with_recovery_writer(Box::new(stage.clone()), Some(Box::new(stage.clone())))
+    } else {
+        Ext4::load_with_writer(Box::new(stage.clone()), Some(Box::new(stage.clone())))
+    }
+    .map_err(map_error)?;
+    let journal = load_journal_inode_map(&filesystem).map_err(map_journal_error)?;
+    if journal.filesystem_needs_recovery() != needs_recovery
+        || stage.staged_block_count() != 0
+        || stage.is_sealed()
+    {
+        return Err(Status::Invalid);
+    }
+    validate_namespace(&filesystem)?;
+    Ok((filesystem, stage))
+}
+
+fn replace_staged_view(mounted: &mut Mounted, needs_recovery: bool) -> Result<(), Status> {
+    let (filesystem, stage) =
+        load_staged_view(mounted.context, mounted.image_bytes, needs_recovery)?;
+    mounted.filesystem = filesystem;
+    mounted.stage = stage;
+    Ok(())
+}
+
+fn discard_uncommitted_stage(mounted: &mut Mounted, needs_recovery: bool) -> Result<(), Status> {
+    mounted.stage.rollback();
+    replace_staged_view(mounted, needs_recovery)
 }
 
 fn read_u16(bytes: &[u8], offset: usize) -> Option<u16> {
@@ -289,7 +345,10 @@ fn recover_dirty_journal(
     journal: &JournalInodeMap,
 ) -> Result<RecoveryReport, Status> {
     let physical_blocks = journal.physical_blocks();
-    let slot_count = physical_blocks.len().checked_sub(1).ok_or(Status::Invalid)?;
+    let slot_count = physical_blocks
+        .len()
+        .checked_sub(1)
+        .ok_or(Status::Invalid)?;
     let ring_bytes = slot_count
         .checked_mul(JOURNAL_BLOCK_BYTES)
         .ok_or(Status::Range)?;
@@ -300,7 +359,9 @@ fn recover_dirty_journal(
     storage_bytes.resize(ring_bytes, 0);
     for (index, block) in physical_blocks[1..].iter().enumerate() {
         let start_byte = block.checked_mul(BLOCK_BYTES).ok_or(Status::Range)?;
-        let start = index.checked_mul(JOURNAL_BLOCK_BYTES).ok_or(Status::Range)?;
+        let start = index
+            .checked_mul(JOURNAL_BLOCK_BYTES)
+            .ok_or(Status::Range)?;
         let end = start
             .checked_add(JOURNAL_BLOCK_BYTES)
             .ok_or(Status::Range)?;
@@ -332,8 +393,7 @@ fn recover_dirty_journal(
             .map_err(|_| Status::Range)?,
         replayed_blocks: u32::try_from(recovery.replay_images().len())
             .map_err(|_| Status::Range)?,
-        consumed_slots: u32::try_from(recovery.consumed_slots())
-            .map_err(|_| Status::Range)?,
+        consumed_slots: u32::try_from(recovery.consumed_slots()).map_err(|_| Status::Range)?,
     };
     let journal_superblock_block = *physical_blocks.first().ok_or(Status::Invalid)?;
     let operations = recovery
@@ -457,15 +517,294 @@ pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, I
             filesystem,
             journal: clean_ring,
             stage,
+            pending_mutation: None,
             context,
+            image_bytes,
         }),
         identity,
     ))
 }
 
+fn arm_recovery_marker(mounted: &mut Mounted) -> Result<(), Status> {
+    let durable = mounted
+        .journal
+        .filesystem_recovery_marker_is_durable()
+        .map_err(|_| Status::Invalid)?;
+    let view_needs_recovery = load_journal_inode_map(&mounted.filesystem)
+        .map_err(map_journal_error)?
+        .filesystem_needs_recovery();
+    if durable {
+        if !view_needs_recovery {
+            replace_staged_view(mounted, true)?;
+        }
+        return Ok(());
+    }
+    if view_needs_recovery || mounted.stage.staged_block_count() != 0 || mounted.stage.is_sealed() {
+        return Err(Status::Invalid);
+    }
+    let operations = mounted
+        .journal
+        .prepare_recovery_marker_plan()
+        .map_err(|_| Status::Invalid)?;
+    execute_storage_plan(mounted.context, &operations)?;
+    mounted
+        .journal
+        .mark_recovery_marker_durable()
+        .map_err(|_| Status::Invalid)?;
+    replace_staged_view(mounted, true)
+}
+
+fn resume_pending_mutation(
+    mounted: &mut Mounted,
+    path: &[u8],
+    offset: u64,
+    source: &[u8],
+) -> Result<usize, Status> {
+    let pending = mounted.pending_mutation.as_ref().ok_or(Status::Invalid)?;
+    if pending.path != path || pending.offset != offset || pending.source != source {
+        return Err(Status::Invalid);
+    }
+    resume_pending_mutation_inner(mounted)
+}
+
+fn resume_pending_mutation_inner(mounted: &mut Mounted) -> Result<usize, Status> {
+    loop {
+        if matches!(
+            mounted
+                .pending_mutation
+                .as_ref()
+                .map(|pending| &pending.phase),
+            Some(PendingMutationPhase::Commit(_))
+        ) {
+            let (ticket, operations) = {
+                let prepared = match &mounted
+                    .pending_mutation
+                    .as_ref()
+                    .ok_or(Status::Invalid)?
+                    .phase
+                {
+                    PendingMutationPhase::Commit(prepared) => prepared,
+                    PendingMutationPhase::Checkpoint(_) | PendingMutationPhase::Reload => {
+                        return Err(Status::Invalid);
+                    }
+                };
+                let ticket = prepared.ticket();
+                let operations = match mounted.journal.prepare_commit_plan(prepared) {
+                    Ok(operations) => operations,
+                    Err(_) => {
+                        mounted
+                            .journal
+                            .abort_precommit(ticket)
+                            .map_err(|_| Status::Invalid)?;
+                        mounted.pending_mutation = None;
+                        discard_uncommitted_stage(mounted, true)?;
+                        return Err(Status::Invalid);
+                    }
+                };
+                (ticket, operations)
+            };
+            execute_storage_plan(mounted.context, &operations)?;
+            mounted
+                .journal
+                .mark_commit_durable(ticket)
+                .map_err(|_| Status::Invalid)?;
+            mounted
+                .pending_mutation
+                .as_mut()
+                .ok_or(Status::Invalid)?
+                .phase = PendingMutationPhase::Checkpoint(ticket);
+            continue;
+        }
+        if let Some(PendingMutationPhase::Checkpoint(ticket)) = mounted
+            .pending_mutation
+            .as_ref()
+            .map(|pending| &pending.phase)
+        {
+            let ticket = *ticket;
+            let operations = mounted
+                .journal
+                .prepare_checkpoint_plan(ticket)
+                .map_err(|_| Status::Invalid)?;
+            execute_storage_plan(mounted.context, &operations)?;
+            mounted
+                .journal
+                .checkpoint_durable(ticket)
+                .map_err(|_| Status::Invalid)?;
+            mounted
+                .pending_mutation
+                .as_mut()
+                .ok_or(Status::Invalid)?
+                .phase = PendingMutationPhase::Reload;
+            continue;
+        }
+        if matches!(
+            mounted
+                .pending_mutation
+                .as_ref()
+                .map(|pending| &pending.phase),
+            Some(PendingMutationPhase::Reload)
+        ) {
+            let written = mounted
+                .pending_mutation
+                .as_ref()
+                .ok_or(Status::Invalid)?
+                .written;
+            replace_staged_view(mounted, true)?;
+            mounted.pending_mutation = None;
+            return Ok(written);
+        }
+        return Err(Status::Invalid);
+    }
+}
+
+/// Execute one controlled staged write through the native journal executor.
+///
+/// This is a private kernel acceptance probe, not a VFS mutation entry point.
+/// The same request retries a retained commit/checkpoint plan after storage I/O
+/// refusal; different input is rejected while a request remains pending.
+pub(crate) fn transaction_probe(
+    mounted: &mut Mounted,
+    path: &[u8],
+    offset: u64,
+    source: &[u8],
+) -> Result<usize, Status> {
+    if source.is_empty() || source.len() > MAX_PROBE_WRITE_BYTES {
+        return Err(Status::Range);
+    }
+    let absolute = absolute_path(path)?;
+    if mounted.pending_mutation.is_some() {
+        return resume_pending_mutation(mounted, &absolute, offset, source);
+    }
+    if mounted.stage.staged_block_count() != 0 || mounted.stage.is_sealed() {
+        let recovery = mounted
+            .journal
+            .filesystem_recovery_marker_is_durable()
+            .map_err(|_| Status::Invalid)?;
+        discard_uncommitted_stage(mounted, recovery)?;
+    }
+    let mut source_copy = Vec::new();
+    source_copy
+        .try_reserve_exact(source.len())
+        .map_err(|_| Status::Range)?;
+    source_copy.extend_from_slice(source);
+    arm_recovery_marker(mounted)?;
+
+    let mut file = match mounted.filesystem.open(absolute.as_slice()) {
+        Ok(file) => file,
+        Err(error) => return Err(map_error(error)),
+    };
+    let written = match file.write_bytes_at(source, offset) {
+        Ok(0) => {
+            discard_uncommitted_stage(mounted, true)?;
+            return Err(Status::Invalid);
+        }
+        Ok(written) => written,
+        Err(error) => {
+            discard_uncommitted_stage(mounted, true)?;
+            return Err(map_error(error));
+        }
+    };
+    let written_u64 = match u64::try_from(written) {
+        Ok(written) => written,
+        Err(_) => {
+            discard_uncommitted_stage(mounted, true)?;
+            return Err(Status::Range);
+        }
+    };
+    let end = match offset.checked_add(written_u64) {
+        Some(end) => end,
+        None => {
+            discard_uncommitted_stage(mounted, true)?;
+            return Err(Status::Range);
+        }
+    };
+    let mut ordered_data = Vec::new();
+    let first_block = offset / BLOCK_BYTES;
+    let block_count = match end
+        .div_ceil(BLOCK_BYTES)
+        .checked_sub(first_block)
+        .and_then(|count| usize::try_from(count).ok())
+    {
+        Some(count) => count,
+        None => {
+            discard_uncommitted_stage(mounted, true)?;
+            return Err(Status::Range);
+        }
+    };
+    if ordered_data.try_reserve_exact(block_count).is_err() {
+        discard_uncommitted_stage(mounted, true)?;
+        return Err(Status::Range);
+    }
+    let mut position = offset;
+    while position < end {
+        let block = match file.filesystem_block_at_offset(position) {
+            Ok(Some(block)) => block,
+            Ok(None) => {
+                discard_uncommitted_stage(mounted, true)?;
+                return Err(Status::Invalid);
+            }
+            Err(error) => {
+                discard_uncommitted_stage(mounted, true)?;
+                return Err(map_error(error));
+            }
+        };
+        if ordered_data.contains(&block) {
+            discard_uncommitted_stage(mounted, true)?;
+            return Err(Status::Invalid);
+        }
+        ordered_data.push(block);
+        let next = match position
+            .checked_div(BLOCK_BYTES)
+            .and_then(|block| block.checked_add(1))
+            .and_then(|block| block.checked_mul(BLOCK_BYTES))
+        {
+            Some(next) => next,
+            None => {
+                discard_uncommitted_stage(mounted, true)?;
+                return Err(Status::Range);
+            }
+        };
+        position = next.min(end);
+    }
+    drop(file);
+
+    let transaction = match mounted.journal.begin_transaction() {
+        Ok(transaction) => transaction,
+        Err(_) => {
+            discard_uncommitted_stage(mounted, true)?;
+            return Err(Status::Invalid);
+        }
+    };
+    let transaction = match mounted.stage.build_transaction(&transaction, &ordered_data) {
+        Ok(transaction) => transaction,
+        Err(_) => {
+            discard_uncommitted_stage(mounted, true)?;
+            return Err(Status::Invalid);
+        }
+    };
+    let prepared = match mounted.journal.prepare(&transaction) {
+        Ok(prepared) => prepared,
+        Err(_) => {
+            discard_uncommitted_stage(mounted, true)?;
+            return Err(Status::Invalid);
+        }
+    };
+    mounted.pending_mutation = Some(PendingMutation {
+        path: absolute,
+        source: source_copy,
+        offset,
+        written,
+        phase: PendingMutationPhase::Commit(prepared),
+    });
+    resume_pending_mutation_inner(mounted)
+}
+
 /// Retry and durably execute the final clean plan while C holds a write lease.
 pub(crate) fn prepare_unmount(mounted: &mut Mounted) -> Result<(), Status> {
-    if mounted.stage.staged_block_count() != 0 {
+    if mounted.pending_mutation.is_some()
+        || mounted.stage.staged_block_count() != 0
+        || mounted.stage.is_sealed()
+    {
         return Err(Status::Invalid);
     }
     match mounted.journal.filesystem_is_clean() {
@@ -487,7 +826,10 @@ pub(crate) fn prepare_unmount(mounted: &mut Mounted) -> Result<(), Status> {
 
 /// Refuse to release a mount unless its retained journal state is idle and clean.
 pub(crate) fn unmount(mounted: &Mounted) -> Result<(), Status> {
-    if mounted.stage.staged_block_count() != 0 {
+    if mounted.pending_mutation.is_some()
+        || mounted.stage.staged_block_count() != 0
+        || mounted.stage.is_sealed()
+    {
         return Err(Status::Invalid);
     }
     match mounted.journal.filesystem_is_clean() {
