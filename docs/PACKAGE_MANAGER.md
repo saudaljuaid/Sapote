@@ -37,6 +37,15 @@ cofactored profile with canonical encoding, negative-zero, pure-low-order, and
 Signature bytes are not a uniqueness identifier. No signing or private key
 enters the guest.
 
+`platform/package-trust.json` is the default development/CI provisioning
+source. `tools/make-package-trust.py` derives key IDs, sorts records, emits the
+canonical table, audits it independently, and generates a const C array linked
+into kernel read-only data. Boot admits that asset before any package state is
+recovered; an invalid or empty platform table stops boot. Production builds
+must set `PACKAGE_TRUST_SPEC` to their own public-key-only specification. The
+default roots deliberately match the deterministic signed lifecycle fixtures
+and are not a production release trust policy.
+
 ## Bounds and resolver behavior
 
 The binary bounds match the canonical host formats:

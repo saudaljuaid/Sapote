@@ -140,6 +140,10 @@ UI_FONT_METRICS := assets/fonts/inter-ui-metrics.txt
 UI_FONT_LICENSE := assets/fonts/Inter-LICENSE.txt
 UI_FONT_TTF := assets/fonts/InterVariable.ttf
 UI_FONT_BLOB := $(BUILD_DIR)/ui-font.suf
+PACKAGE_TRUST_SPEC ?= platform/package-trust.json
+PACKAGE_TRUST_BLOB := $(BUILD_DIR)/package-trust.skt
+PACKAGE_TRUST_ASSET_C := $(BUILD_DIR)/package-trust-asset.c
+PACKAGE_TRUST_ASSET_OBJECT := $(BUILD_DIR)/package-trust-asset.o
 REDWOOD_PROOF_IMAGE := assets/sapote-v2-redwood-proof.png
 REDWOOD_PROOF_FOCUS_IMAGE := assets/sapote-v2-redwood-proof-focus.png
 REDWOOD_PROOF_TERMINAL_IMAGE := assets/sapote-v2-redwood-proof-terminal.png
@@ -350,7 +354,8 @@ MONOCYPHER_HOST_OBJECTS := $(TEST_BUILD_DIR)/monocypher/monocypher.o \
 	$(TEST_BUILD_DIR)/monocypher/monocypher-ed25519.o
 ASM_SOURCES := $(wildcard src/arch/x86_64/*.S)
 ASM_OBJECTS := $(patsubst src/arch/x86_64/%.S,$(BUILD_DIR)/arch_%.o,$(ASM_SOURCES))
-OBJECTS := $(ASM_OBJECTS) $(C_OBJECTS) $(MONOCYPHER_OBJECTS)
+OBJECTS := $(ASM_OBJECTS) $(C_OBJECTS) $(MONOCYPHER_OBJECTS) \
+	$(PACKAGE_TRUST_ASSET_OBJECT)
 
 MONOCYPHER_CFLAGS := $(COMMON_FLAGS) -std=c11 -O2 -mno-red-zone \
 	-mno-mmx -mno-sse -mno-sse2 -msoft-float -fno-tree-vectorize \
@@ -370,15 +375,15 @@ RUSTFLAGS := -C panic=abort -C relocation-model=static \
 	-C llvm-args=-max-store-memcpy=1024 \
 	-C llvm-args=-max-store-memset=1024
 DEPENDENCIES := $(C_OBJECTS:.o=.d) $(MONOCYPHER_OBJECTS:.o=.d) \
-	$(SDL2_OBJECTS:.o=.d)
+	$(PACKAGE_TRUST_ASSET_OBJECT:.o=.d) $(SDL2_OBJECTS:.o=.d)
 
 # The qemu-test-% scenarios are deliberately absent from .PHONY. GNU Make skips
 # implicit and pattern rule search for a phony target, so declaring them phony
 # makes every scenario resolve to "nothing to be done" and pass without booting.
 # They never create a file of their own name, so they rerun regardless.
-.PHONY: all audio-wav-tests capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios dynamic-elf-tests ext4-images ext4-tests fat32-images hooks https-tests \
+.PHONY: all audio-wav-tests capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios dynamic-elf-tests ext4-images ext4-tests fat32-images force-package-trust hooks https-tests \
 	iso kernel lint native-apps native-audio-proof native-dynamic-proof native-https-proof native-sdl-proof port-tests qemu-port-tests reproducible-sdk run \
-	package-manager-tests package-repository-tests package-service-tests package-state-tests package-transaction-tests package-trust-tests qemu-test-ext4-powercuts screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests zlib-tests
+	package-manager-tests package-repository-tests package-service-tests package-state-tests package-transaction-tests package-trust-asset-tests package-trust-tests qemu-test-ext4-powercuts screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests zlib-tests
 
 all: kernel
 
@@ -857,6 +862,22 @@ $(BUILD_DIR)/package_trust.o: CPPFLAGS += -Ivendor/monocypher/src \
 $(BUILD_DIR)/package_trust.o: vendor/monocypher/src/monocypher.h \
 	vendor/monocypher/src/optional/monocypher-ed25519.h
 
+force-package-trust:
+
+$(PACKAGE_TRUST_BLOB): force-package-trust $(PACKAGE_TRUST_SPEC) \
+		tools/make-package-trust.py | $(BUILD_DIR)
+	$(PYTHON) tools/make-package-trust.py build $(PACKAGE_TRUST_SPEC) $@
+
+$(PACKAGE_TRUST_ASSET_C): $(PACKAGE_TRUST_BLOB) tools/make-package-trust.py
+	$(PYTHON) tools/make-package-trust.py emit-c $< $@
+
+$(PACKAGE_TRUST_ASSET_OBJECT): $(PACKAGE_TRUST_ASSET_C) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
+
+package-trust-asset-tests: $(PACKAGE_TRUST_BLOB) $(PACKAGE_TRUST_ASSET_C)
+	$(PYTHON) tools/make-package-trust.py self-test
+	$(PYTHON) tools/make-package-trust.py audit $(PACKAGE_TRUST_BLOB)
+
 $(BUILD_DIR)/monocypher/monocypher.o: vendor/monocypher/src/monocypher.c
 	mkdir -p $(dir $@)
 	$(CC) $(MONOCYPHER_CFLAGS) -MMD -MP -c $< -o $@
@@ -1147,14 +1168,17 @@ $(TEST_BUILD_DIR)/monocypher/monocypher-ed25519.o: \
 		-c $< -o $@
 
 $(PACKAGE_TRUST_HOST_TEST): tools/package-trust-host-test.c \
-		src/kernel/package_trust.c src/kernel/package_state.c \
+		src/kernel/package_platform_trust.c src/kernel/package_trust.c \
+		src/kernel/package_state.c $(PACKAGE_TRUST_ASSET_C) \
+		include/sapote/package_platform_trust.h \
 		include/sapote/package_trust.h include/sapote/package_manager.h \
 		include/sapote/package_state.h $(MONOCYPHER_HOST_OBJECTS)
 	mkdir -p $(dir $@)
 	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -Wshadow \
 		-Wundef -Wstrict-prototypes -Wmissing-prototypes -Iinclude \
 		-Ivendor/monocypher/src -Ivendor/monocypher/src/optional \
-		tools/package-trust-host-test.c src/kernel/package_trust.c \
+		tools/package-trust-host-test.c src/kernel/package_platform_trust.c \
+		src/kernel/package_trust.c $(PACKAGE_TRUST_ASSET_C) \
 		src/kernel/package_state.c $(MONOCYPHER_HOST_OBJECTS) -o $@
 
 package-trust-tests: $(PACKAGE_TRUST_HOST_TEST)
@@ -1261,7 +1285,7 @@ verify: toolchain lint
 	$(MAKE) kernel
 	$(MAKE) wall-clock-tests ext4-tests package-repository-tests \
 		package-transaction-tests package-state-tests package-service-tests \
-		package-trust-tests package-manager-tests \
+		package-trust-asset-tests package-trust-tests package-manager-tests \
 		dynamic-elf-tests \
 		https-tests tls-tests zlib-tests
 	$(PYTHON) tools/verify-ui-assets.py

@@ -4,6 +4,7 @@
 #endif
 
 #include <sapote/package_trust.h>
+#include <sapote/package_platform_trust.h>
 
 /*
  * Python cryptography Ed25519 key from seed 00..1f, signing
@@ -22,6 +23,20 @@ static const uint8_t key_id[32] = {
     0x02U, 0x85U, 0xdfU, 0x5dU, 0xbfU, 0x2bU, 0xcaU, 0xb7U,
     0x3dU, 0xa6U, 0x51U, 0x35U, 0x88U, 0x39U, 0xe9U, 0xb7U,
     0x74U, 0x81U, 0xb2U, 0xeaU, 0xb1U, 0x07U, 0x70U, 0x8cU
+};
+
+static const uint8_t publisher_key_id[32] = {
+    0x24U, 0xf6U, 0xedU, 0x6aU, 0xcbU, 0xfeU, 0x10U, 0x09U,
+    0xc0U, 0x30U, 0xd7U, 0xcaU, 0x56U, 0x7cU, 0x33U, 0xcaU,
+    0x48U, 0x30U, 0x91U, 0x14U, 0x98U, 0x23U, 0x6bU, 0x55U,
+    0x61U, 0xa6U, 0xc8U, 0x2aU, 0xbeU, 0xc5U, 0xdeU, 0x28U
+};
+
+static const uint8_t publisher_public_key[32] = {
+    0x29U, 0xacU, 0xbaU, 0xe1U, 0x41U, 0xbcU, 0xcaU, 0xf0U,
+    0xb2U, 0x2eU, 0x1aU, 0x94U, 0xd3U, 0x4dU, 0x0bU, 0xc7U,
+    0x36U, 0x1eU, 0x52U, 0x6dU, 0x0bU, 0xfeU, 0x12U, 0xc8U,
+    0x97U, 0x94U, 0xbcU, 0x93U, 0x22U, 0x96U, 0x6dU, 0xd7U
 };
 
 static const uint8_t signature[64] = {
@@ -142,6 +157,24 @@ static int package_trust_test(void)
     uint8_t changed_signature[64];
     uint8_t looked_up[32];
     uint8_t unknown_id[32] = { 0U };
+    if (package_platform_trust_key_count() != 0U ||
+        package_platform_trust_manager(&trust) || trust.lookup != NULL ||
+        trust.verify != NULL || trust.context != NULL) {
+        return 22;
+    }
+    if (package_platform_trust_initialize() != PACKAGE_TRUST_STATUS_OK ||
+        package_platform_trust_initialize() != PACKAGE_TRUST_STATUS_OK ||
+        package_platform_trust_key_count() != 2U ||
+        !package_platform_trust_manager(&trust) || trust.lookup == NULL ||
+        trust.verify == NULL || trust.context == NULL ||
+        trust.lookup(trust.context, key_id, looked_up) !=
+            PACKAGE_MANAGER_KEY_TRUSTED ||
+        !equal_bytes(looked_up, public_key, sizeof(looked_up)) ||
+        trust.lookup(trust.context, publisher_key_id, looked_up) !=
+            PACKAGE_MANAGER_KEY_TRUSTED ||
+        !equal_bytes(looked_up, publisher_public_key, sizeof(looked_up))) {
+        return 23;
+    }
     if (package_trust_open(NULL, 0U, &store) != PACKAGE_TRUST_STATUS_OK) {
         return 1;
     }

@@ -12,6 +12,7 @@
 #include <sapote/ext4_fs.h>
 #include <sapote/fat32_fs.h>
 #include <sapote/native_process.h>
+#include <sapote/package_platform_trust.h>
 #include <sapote/package_service.h>
 #include <sapote/shell.h>
 #include <sapote/test.h>
@@ -26,6 +27,15 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information);
  */
 static struct boot_context installed_context;
 static struct boot_ledger installed_ledger;
+
+static void initialize_package_trust(void)
+{
+    enum package_trust_status status = package_platform_trust_initialize();
+    if (status != PACKAGE_TRUST_STATUS_OK ||
+        package_platform_trust_key_count() == 0U) {
+        console_panic("immutable package trust table refused");
+    }
+}
 
 static void recover_package_state(void)
 {
@@ -96,6 +106,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 
     /* Reversible bootstrap: named planner refusals need somewhere to speak. */
     console_initialize();
+    initialize_package_trust();
     boot_context_initialize(&installed_context, magic, boot_information);
 
     /* Pure and bounded; runs before PAT, WBINVD or CR3 replacement. */
