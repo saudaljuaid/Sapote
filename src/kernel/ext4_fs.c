@@ -189,7 +189,10 @@ static enum sapfs_status begin_operation(
     return SAPFS_STATUS_OK;
 }
 
-static enum sapfs_status end_operation(struct ext4_mount_state *mount)
+static enum sapfs_status end_operation(
+    struct ext4_mount_state *mount,
+    struct sapote_ext4_mount_diagnostic *diagnostic
+)
 {
     enum nvme_status status;
 
@@ -197,6 +200,13 @@ static enum sapfs_status end_operation(struct ext4_mount_state *mount)
         return SAPFS_STATUS_CORRUPT;
     }
     status = nvme_volume_close(&mount->session);
+    if (diagnostic != NULL) {
+        diagnostic->nvme_close_status = (int32_t)status;
+        diagnostic->nvme_teardown_status =
+            (int32_t)mount->session.close_teardown_status;
+        diagnostic->nvme_resource_mismatches =
+            mount->session.close_resource_mismatches;
+    }
     mount->operation_active = false;
     zero_bytes(&mount->session, sizeof(mount->session));
     if (status != NVME_STATUS_OK) {
@@ -343,7 +353,7 @@ static enum sapfs_status checked_stat(
     }
     status = map_status(sapote_ext4_stat(mount->rust_mount,
         (const uint8_t *)path, length, metadata));
-    close_status = end_operation(mount);
+    close_status = end_operation(mount, NULL);
     return status != SAPFS_STATUS_OK ? status : close_status;
 }
 
@@ -429,6 +439,10 @@ void ext4_backend_initialize(void)
         ext4_mount_diagnostics[volume].begin_status = SAPFS_STATUS_NOT_MOUNTED;
         ext4_mount_diagnostics[volume].rust_status = SAPOTE_EXT4_STATUS_COUNT;
         ext4_mount_diagnostics[volume].close_status = SAPFS_STATUS_NOT_MOUNTED;
+        ext4_mount_diagnostics[volume].nvme_close_status = NVME_STATUS_COUNT;
+        ext4_mount_diagnostics[volume].nvme_teardown_status =
+            NVME_STATUS_COUNT;
+        ext4_mount_diagnostics[volume].nvme_resource_mismatches = 0U;
     }
 }
 
@@ -455,6 +469,9 @@ enum sapfs_status ext4_backend_mount(enum sapfs_volume volume)
     ext4_mount_diagnostics[volume].begin_status = SAPFS_STATUS_NOT_MOUNTED;
     ext4_mount_diagnostics[volume].rust_status = SAPOTE_EXT4_STATUS_COUNT;
     ext4_mount_diagnostics[volume].close_status = SAPFS_STATUS_NOT_MOUNTED;
+    ext4_mount_diagnostics[volume].nvme_close_status = NVME_STATUS_COUNT;
+    ext4_mount_diagnostics[volume].nvme_teardown_status = NVME_STATUS_COUNT;
+    ext4_mount_diagnostics[volume].nvme_resource_mismatches = 0U;
     status = begin_operation(mount, true);
     ext4_mount_diagnostics[volume].begin_status = status;
     if (status != SAPFS_STATUS_OK) {
@@ -465,7 +482,7 @@ enum sapfs_status ext4_backend_mount(enum sapfs_volume volume)
     rust_status = sapote_ext4_mount((uintptr_t)mount, mount->media_bytes,
         &mount->identity, &mount->rust_mount);
     ext4_mount_diagnostics[volume].rust_status = rust_status;
-    close_status = end_operation(mount);
+    close_status = end_operation(mount, &ext4_mount_diagnostics[volume]);
     ext4_mount_diagnostics[volume].close_status = close_status;
     status = map_status(rust_status);
     if (status != SAPFS_STATUS_OK || close_status != SAPFS_STATUS_OK) {
@@ -642,7 +659,7 @@ enum sapfs_status ext4_backend_pread(sapfs_handle handle,
     status = map_status(sapote_ext4_pread(mount->rust_mount,
         (const uint8_t *)state->path, path_length(state->path), offset,
         destination, capacity, read_bytes));
-    close_status = end_operation(mount);
+    close_status = end_operation(mount, NULL);
     return status != SAPFS_STATUS_OK ? status : close_status;
 }
 
@@ -762,7 +779,7 @@ static enum sapfs_status indexed_entry(struct ext4_handle_state *state,
     status = map_status(sapote_ext4_directory_entry(mount->rust_mount,
         (const uint8_t *)state->path, path_length(state->path), index, &raw,
         present));
-    close_status = end_operation(mount);
+    close_status = end_operation(mount, NULL);
     if (status == SAPFS_STATUS_OK && *present) {
         if (raw.name_length == 0U || raw.name_length >=
                 SAPFS_MAX_COMPONENT_BYTES) {

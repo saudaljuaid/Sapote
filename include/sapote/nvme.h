@@ -134,6 +134,14 @@ enum nvme_status {
     NVME_STATUS_COUNT
 };
 
+enum nvme_volume_resource_mismatch {
+    NVME_VOLUME_RESOURCE_MISMATCH_PCI = 1U << 0,
+    NVME_VOLUME_RESOURCE_MISMATCH_DMA = 1U << 1,
+    NVME_VOLUME_RESOURCE_MISMATCH_VECTOR = 1U << 2,
+    NVME_VOLUME_RESOURCE_MISMATCH_MSIX = 1U << 3,
+    NVME_VOLUME_RESOURCE_MISMATCH_FRAMES = 1U << 4
+};
+
 struct nvme_register_span {
     uint64_t offset;
     uint64_t length;
@@ -268,7 +276,9 @@ struct nvme_volume_session {
     uint32_t logical_block_bytes;
     uint32_t controller_index;
     uint32_t command_ordinal;
+    uint32_t close_resource_mismatches;
     enum nvme_filesystem_session_state state;
+    enum nvme_status close_teardown_status;
     bool writable;
     bool active;
 };

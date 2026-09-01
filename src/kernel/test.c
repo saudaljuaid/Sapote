@@ -4817,6 +4817,15 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
         console_write_u64((uint64_t)(uint32_t)mount_diagnostic.rust_status);
         console_write(" close ");
         console_write_u64((uint64_t)mount_diagnostic.close_status);
+        console_write(" nvme ");
+        console_write_u64((uint64_t)(uint32_t)
+            mount_diagnostic.nvme_close_status);
+        console_write(" teardown ");
+        console_write_u64((uint64_t)(uint32_t)
+            mount_diagnostic.nvme_teardown_status);
+        console_write(" resources ");
+        console_write_u64((uint64_t)
+            mount_diagnostic.nvme_resource_mismatches);
         console_putc('\n');
         kernel_test_fail("ext4 recovered drive state is invalid");
     }

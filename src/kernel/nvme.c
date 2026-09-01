@@ -1871,7 +1871,7 @@ static enum nvme_status validate_read_data(struct nvme_runtime *controller)
     return NVME_STATUS_OK;
 }
 
-static bool resource_state_matches(
+static uint32_t resource_state_mismatches(
     struct pci_resource_state pci_before,
     struct dma_state dma_before,
     struct interrupt_vector_state vectors_before,
@@ -1886,33 +1886,56 @@ static bool resource_state_matches(
     const struct msix_state msix_after = msix_get_state();
     const struct frame_allocator_stats frames_after =
         frame_allocator_get_stats();
+    uint32_t mismatches = 0U;
 
-    return pci_after.active_claims == pci_before.active_claims &&
-        pci_after.active_mappings == pci_before.active_mappings &&
-        pci_after.arena_pages == pci_before.arena_pages &&
-        pci_after.mapped_pages == pci_before.mapped_pages &&
-        pci_after.bus_masters == pci_before.bus_masters &&
-        pci_after.active == pci_before.active &&
-        dma_after.active_allocations == dma_before.active_allocations &&
-        dma_after.cpu_owned_allocations == dma_before.cpu_owned_allocations &&
-        dma_after.device_owned_allocations ==
-            dma_before.device_owned_allocations &&
-        dma_after.active == dma_before.active &&
-        vectors_after.capacity == vectors_before.capacity &&
-        vectors_after.allocated == vectors_before.allocated &&
-        vectors_after.free == vectors_before.free &&
-        vectors_after.active == vectors_before.active &&
-        msix_after.active_bindings == msix_before.active_bindings &&
-        !msix_after.failure_injection_armed &&
-        !msix_before.failure_injection_armed &&
-        frames_after.addressable_frames == frames_before.addressable_frames &&
-        frames_after.allocatable_frames ==
-            frames_before.allocatable_frames &&
-        frames_after.free_frames == frames_before.free_frames &&
-        frames_after.allocated_frames == frames_before.allocated_frames &&
-        frames_after.reserved_frames == frames_before.reserved_frames &&
-        frames_after.highest_allocatable_address ==
-            frames_before.highest_allocatable_address;
+    if (pci_after.active_claims != pci_before.active_claims ||
+        pci_after.active_mappings != pci_before.active_mappings ||
+        pci_after.arena_pages != pci_before.arena_pages ||
+        pci_after.mapped_pages != pci_before.mapped_pages ||
+        pci_after.bus_masters != pci_before.bus_masters ||
+        pci_after.active != pci_before.active) {
+        mismatches |= NVME_VOLUME_RESOURCE_MISMATCH_PCI;
+    }
+    if (dma_after.active_allocations != dma_before.active_allocations ||
+        dma_after.cpu_owned_allocations != dma_before.cpu_owned_allocations ||
+        dma_after.device_owned_allocations !=
+            dma_before.device_owned_allocations ||
+        dma_after.active != dma_before.active) {
+        mismatches |= NVME_VOLUME_RESOURCE_MISMATCH_DMA;
+    }
+    if (vectors_after.capacity != vectors_before.capacity ||
+        vectors_after.allocated != vectors_before.allocated ||
+        vectors_after.free != vectors_before.free ||
+        vectors_after.active != vectors_before.active) {
+        mismatches |= NVME_VOLUME_RESOURCE_MISMATCH_VECTOR;
+    }
+    if (msix_after.active_bindings != msix_before.active_bindings ||
+        msix_after.failure_injection_armed ||
+        msix_before.failure_injection_armed) {
+        mismatches |= NVME_VOLUME_RESOURCE_MISMATCH_MSIX;
+    }
+    if (frames_after.addressable_frames != frames_before.addressable_frames ||
+        frames_after.allocatable_frames != frames_before.allocatable_frames ||
+        frames_after.free_frames != frames_before.free_frames ||
+        frames_after.allocated_frames != frames_before.allocated_frames ||
+        frames_after.reserved_frames != frames_before.reserved_frames ||
+        frames_after.highest_allocatable_address !=
+            frames_before.highest_allocatable_address) {
+        mismatches |= NVME_VOLUME_RESOURCE_MISMATCH_FRAMES;
+    }
+    return mismatches;
+}
+
+static bool resource_state_matches(
+    struct pci_resource_state pci_before,
+    struct dma_state dma_before,
+    struct interrupt_vector_state vectors_before,
+    struct msix_state msix_before,
+    struct frame_allocator_stats frames_before
+)
+{
+    return resource_state_mismatches(pci_before, dma_before, vectors_before,
+        msix_before, frames_before) == 0U;
 }
 
 static enum nvme_status reclaim_all(struct nvme_runtime *controller)
@@ -3165,12 +3188,13 @@ enum nvme_status nvme_volume_close(struct nvme_volume_session *session)
     }
     session->state = NVME_FILESYSTEM_SESSION_STOPPING;
     result = teardown_controller(&filesystem_runtime.controller);
+    session->close_teardown_status = result;
+    session->close_resource_mismatches = resource_state_mismatches(
+        filesystem_runtime.pci_before, filesystem_runtime.dma_before,
+        filesystem_runtime.vectors_before, filesystem_runtime.msix_before,
+        filesystem_runtime.frames_before);
     if (result == NVME_STATUS_OK &&
-        !resource_state_matches(filesystem_runtime.pci_before,
-            filesystem_runtime.dma_before,
-            filesystem_runtime.vectors_before,
-            filesystem_runtime.msix_before,
-            filesystem_runtime.frames_before)) {
+        session->close_resource_mismatches != 0U) {
         result = NVME_STATUS_TEARDOWN_FAILURE;
     }
     if (result != NVME_STATUS_OK) {

@@ -65,6 +65,9 @@ struct sapote_ext4_mount_diagnostic {
     enum sapfs_status begin_status;
     int32_t rust_status;
     enum sapfs_status close_status;
+    int32_t nvme_close_status;
+    int32_t nvme_teardown_status;
+    uint32_t nvme_resource_mismatches;
 };
 
 /* Private Rust/C storage callbacks; valid only during a backend operation. */
