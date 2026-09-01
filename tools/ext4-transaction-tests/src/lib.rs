@@ -22,9 +22,13 @@ fn filled(value: u8) -> Vec<u8> {
 }
 
 fn ext4_crc32c(bytes: &[u8]) -> u32 {
+    ext4_crc32c_with_seed(bytes, u32::MAX)
+}
+
+fn ext4_crc32c_with_seed(bytes: &[u8], seed: u32) -> u32 {
     const REFLECTED_CRC32C_POLYNOMIAL: u32 = 0x82f6_3b78;
 
-    let mut checksum = u32::MAX;
+    let mut checksum = seed;
     for byte in bytes {
         checksum ^= u32::from(*byte);
         for _ in 0..8 {
@@ -1040,7 +1044,14 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
         )
         .unwrap();
     let prepared = commit_ring.prepare(&transaction).unwrap();
+    let checkpointed_superblock = commit_ring
+        .admit_checkpointed_filesystem_superblock(&prepared, &staged_superblock)
+        .unwrap();
     let commit_plan = commit_ring.prepare_commit_plan(&prepared).unwrap();
+    assert_eq!(
+        commit_ring.admit_checkpointed_filesystem_superblock(&prepared, &staged_superblock),
+        Err(JournalTransactionError::RingTransactionMismatch)
+    );
     execute_commit_operations(&mut commit_storage, &commit_plan).unwrap();
     commit_ring.mark_commit_durable(prepared.ticket()).unwrap();
     let checkpoint_plan = commit_ring
@@ -1053,7 +1064,13 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
         checkpoint_plan
     );
     execute_commit_operations(&mut commit_storage, &checkpoint_plan).unwrap();
-    commit_ring.checkpoint_durable(prepared.ticket()).unwrap();
+    assert_eq!(
+        commit_ring.checkpoint_durable(prepared.ticket()),
+        Err(JournalTransactionError::RecoveryStateMismatch)
+    );
+    commit_ring
+        .checkpoint_durable_with_filesystem_superblock(&checkpointed_superblock)
+        .unwrap();
     let clean_plan = commit_ring.prepare_filesystem_clean_plan().unwrap();
     execute_commit_operations(&mut commit_storage, &clean_plan).unwrap();
     commit_ring.mark_filesystem_clean_durable().unwrap();
@@ -1086,6 +1103,42 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
     );
     assert_eq!(appended, *b"X");
     assert_eq!(final_file.inode().size_in_bytes(), append_offset + 1);
+
+    let final_superblock = &commit_storage.bytes[1024..2048];
+    let initial_free_blocks = u64::from(u32::from_le_bytes(
+        marker_backing[1024 + 0x0c..1024 + 0x10]
+            .try_into()
+            .unwrap(),
+    )) | (u64::from(u32::from_le_bytes(
+        marker_backing[1024 + 0x158..1024 + 0x15c]
+            .try_into()
+            .unwrap(),
+    )) << 32);
+    let final_free_blocks = u64::from(u32::from_le_bytes(
+        final_superblock[0x0c..0x10].try_into().unwrap(),
+    )) | (u64::from(u32::from_le_bytes(
+        final_superblock[0x158..0x15c].try_into().unwrap(),
+    )) << 32);
+    assert_eq!(final_free_blocks + 1, initial_free_blocks);
+
+    let descriptor = &commit_storage.bytes[JOURNAL_BLOCK_BYTES..JOURNAL_BLOCK_BYTES + 64];
+    let bitmap_block = u64::from(u32::from_le_bytes(descriptor[0..4].try_into().unwrap()))
+        | (u64::from(u32::from_le_bytes(descriptor[0x20..0x24].try_into().unwrap())) << 32);
+    let bitmap_start = usize::try_from(bitmap_block).unwrap() * JOURNAL_BLOCK_BYTES;
+    let blocks_per_group =
+        usize::try_from(u32::from_le_bytes(final_superblock[0x20..0x24].try_into().unwrap()))
+            .unwrap();
+    let seed = u32::from_le_bytes(final_superblock[0x270..0x274].try_into().unwrap());
+    let calculated_bitmap_checksum = ext4_crc32c_with_seed(
+        &commit_storage.bytes[bitmap_start..bitmap_start + blocks_per_group / 8],
+        seed,
+    );
+    let stored_bitmap_checksum =
+        u32::from(u16::from_le_bytes(descriptor[0x18..0x1a].try_into().unwrap()))
+            | (u32::from(u16::from_le_bytes(
+                descriptor[0x38..0x3a].try_into().unwrap(),
+            )) << 16);
+    assert_eq!(stored_bitmap_checksum, calculated_bitmap_checksum);
 
     let committed_path = std::path::Path::new(&path).with_extension("committed.img");
     std::fs::write(&committed_path, &commit_storage.bytes).unwrap();

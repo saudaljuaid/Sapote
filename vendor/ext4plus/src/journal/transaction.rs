@@ -59,6 +59,7 @@ pub const FILESYSTEM_SUPERBLOCK_BYTES: usize = 1024;
 /// The byte offset of the ext4 primary superblock on a 4 KiB filesystem.
 pub const FILESYSTEM_SUPERBLOCK_START_BYTE: u64 = 1024;
 
+const FILESYSTEM_SUPERBLOCK_OFFSET_IN_BLOCK: usize = 1024;
 const JOURNAL_SUPERBLOCK_BLOCK_SIZE_OFFSET: usize = 0x0c;
 const JOURNAL_SUPERBLOCK_MAX_LENGTH_OFFSET: usize = 0x10;
 const JOURNAL_SUPERBLOCK_FIRST_BLOCK_OFFSET: usize = 0x14;
@@ -469,6 +470,79 @@ impl FilesystemSuperblockImage {
             bytes,
             needs_recovery,
         }
+    }
+
+    fn from_checkpointed_home_block(
+        current: &Self,
+        image: &JournalBlockImage,
+    ) -> Result<Self, JournalTransactionError> {
+        if image.block_index() != 0 || image.bytes().len() != JOURNAL_BLOCK_BYTES {
+            return Err(JournalTransactionError::IncorrectBlockLength);
+        }
+        if !current.needs_recovery() {
+            return Err(JournalTransactionError::RecoveryStateMismatch);
+        }
+        let bytes: [u8; FILESYSTEM_SUPERBLOCK_BYTES] = image.bytes()
+            [FILESYSTEM_SUPERBLOCK_OFFSET_IN_BLOCK
+                ..FILESYSTEM_SUPERBLOCK_OFFSET_IN_BLOCK + FILESYSTEM_SUPERBLOCK_BYTES]
+            .try_into()
+            .map_err(|_| JournalTransactionError::IncorrectBlockLength)?;
+        let needs_recovery = read_u32le(&bytes, FILESYSTEM_INCOMPAT_FEATURES_OFFSET)
+            & FILESYSTEM_RECOVERY_FEATURE
+            != 0;
+        let candidate = Self {
+            bytes,
+            needs_recovery,
+        };
+        current.validate_checkpointed_successor(&candidate)?;
+        Ok(candidate)
+    }
+
+    fn validate_checkpointed_successor(
+        &self,
+        candidate: &Self,
+    ) -> Result<(), JournalTransactionError> {
+        if !self.needs_recovery() || !candidate.needs_recovery() {
+            return Err(JournalTransactionError::RecoveryStateMismatch);
+        }
+
+        // ext4plus mutations currently change only the allocation counters.
+        // Require every other byte to match the admitted, recovery-marked
+        // image so a staged metadata block cannot silently replace filesystem
+        // identity, geometry, features, or policy fields.
+        for (index, (before, after)) in self
+            .bytes
+            .iter()
+            .zip(candidate.bytes.iter())
+            .enumerate()
+        {
+            let mutable_counter = (0x0c..0x14).contains(&index) || (0x158..0x15c).contains(&index);
+            let checksum = (FILESYSTEM_CHECKSUM_OFFSET..FILESYSTEM_SUPERBLOCK_BYTES)
+                .contains(&index);
+            if !mutable_counter && !checksum && before != after {
+                return Err(JournalTransactionError::RecoveryStateMismatch);
+            }
+        }
+        if read_u32le(&candidate.bytes, FILESYSTEM_READ_ONLY_FEATURES_OFFSET)
+            & FILESYSTEM_METADATA_CHECKSUM_FEATURE
+            != 0
+        {
+            let mut checksum = Checksum::new();
+            checksum.update(&candidate.bytes[..FILESYSTEM_CHECKSUM_OFFSET]);
+            if read_u32le(&candidate.bytes, FILESYSTEM_CHECKSUM_OFFSET) != checksum.finalize() {
+                return Err(JournalTransactionError::RecoveryStateMismatch);
+            }
+        }
+        let blocks = u64::from(read_u32le(&candidate.bytes, 0x04))
+            | (u64::from(read_u32le(&candidate.bytes, 0x150)) << 32);
+        let free_blocks = u64::from(read_u32le(&candidate.bytes, 0x0c))
+            | (u64::from(read_u32le(&candidate.bytes, 0x158)) << 32);
+        let inodes = read_u32le(&candidate.bytes, 0x00);
+        let free_inodes = read_u32le(&candidate.bytes, 0x10);
+        if free_blocks > blocks || free_inodes > inodes {
+            return Err(JournalTransactionError::RecoveryStateMismatch);
+        }
+        Ok(())
     }
 }
 
@@ -1254,6 +1328,7 @@ struct ActiveReservation {
     sequence: u32,
     start: usize,
     slot_count: usize,
+    updates_filesystem_superblock: bool,
     state: ReservationState,
 }
 
@@ -1264,6 +1339,13 @@ pub struct JournalPreparedTransaction {
     sequence: u32,
     journal_blocks: Vec<u64>,
     operations: Vec<JournalCommitOperation>,
+}
+
+/// A validated block-zero image bound to one prepared ring reservation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FilesystemSuperblockCheckpoint {
+    ticket: u64,
+    image: FilesystemSuperblockImage,
 }
 
 impl JournalPreparedTransaction {
@@ -1486,6 +1568,43 @@ impl JournalRing {
         Ok(())
     }
 
+    /// Validate a staged primary-superblock home image before committing it.
+    ///
+    /// The admitted image must preserve the mounted filesystem identity and
+    /// geometry, retain the durable incompat-recovery marker, and carry a
+    /// correct metadata checksum. The returned value is safe to retain until
+    /// the corresponding checkpoint becomes durable.
+    pub fn admit_checkpointed_filesystem_superblock(
+        &self,
+        prepared: &JournalPreparedTransaction,
+        image: &JournalBlockImage,
+    ) -> Result<FilesystemSuperblockCheckpoint, JournalTransactionError> {
+        if self.filesystem_recovery_state != Some(FilesystemRecoveryState::Durable) {
+            return Err(JournalTransactionError::RecoveryMarkerNotDurable);
+        }
+        let reservation = self
+            .active
+            .iter()
+            .find(|reservation| reservation.ticket == prepared.ticket())
+            .ok_or(JournalTransactionError::ReservationUnknown)?;
+        if reservation.state != ReservationState::Prepared
+            || !reservation.updates_filesystem_superblock
+            || !prepared.operations().iter().any(|operation| {
+                matches!(operation, JournalCommitOperation::WriteHomeMetadata(home) if home == image)
+            })
+        {
+            return Err(JournalTransactionError::RingTransactionMismatch);
+        }
+        let current = self
+            .filesystem_superblock
+            .as_ref()
+            .ok_or(JournalTransactionError::FilesystemStateUnavailable)?;
+        Ok(FilesystemSuperblockCheckpoint {
+            ticket: prepared.ticket(),
+            image: FilesystemSuperblockImage::from_checkpointed_home_block(current, image)?,
+        })
+    }
+
     /// Build the final write and flush that mark an idle filesystem clean.
     ///
     /// The recovery marker may clear only after every committed transaction
@@ -1580,6 +1699,27 @@ impl JournalRing {
         if !self.block_revocations && !transaction.revoked_blocks.is_empty() {
             return Err(JournalTransactionError::RevocationsUnsupported);
         }
+        if self.filesystem_superblock.is_some()
+            && transaction
+                .ordered_data
+                .iter()
+                .any(|image| image.block_index() == 0)
+        {
+            return Err(JournalTransactionError::RingTransactionMismatch);
+        }
+        let updates_filesystem_superblock = self.filesystem_superblock.is_some()
+            && transaction
+                .metadata
+                .iter()
+                .any(|image| image.block_index() == 0);
+        if updates_filesystem_superblock
+            && self
+                .active
+                .iter()
+                .any(|reservation| reservation.updates_filesystem_superblock)
+        {
+            return Err(JournalTransactionError::ReservationState);
+        }
         if self.superblock_block.is_some_and(|superblock_block| {
             transaction
                 .ordered_data
@@ -1644,6 +1784,7 @@ impl JournalRing {
             sequence: transaction.sequence,
             start,
             slot_count: required,
+            updates_filesystem_superblock,
             state: ReservationState::Prepared,
         });
         Ok(JournalPreparedTransaction {
@@ -1866,7 +2007,11 @@ impl JournalRing {
     }
 
     /// Reclaim the oldest reservation after its journal-tail state is durable.
-    pub fn checkpoint_durable(&mut self, ticket: u64) -> Result<(), JournalTransactionError> {
+    fn checkpoint_durable_inner(
+        &mut self,
+        ticket: u64,
+        adopts_filesystem_superblock: bool,
+    ) -> Result<(), JournalTransactionError> {
         let reservation = self
             .active
             .front()
@@ -1877,6 +2022,9 @@ impl JournalRing {
         }
         if reservation.state != ReservationState::TailStatePrepared {
             return Err(JournalTransactionError::ReservationState);
+        }
+        if reservation.updates_filesystem_superblock != adopts_filesystem_superblock {
+            return Err(JournalTransactionError::RecoveryStateMismatch);
         }
         let superblock = self
             .superblock
@@ -1904,6 +2052,31 @@ impl JournalRing {
             .ok_or(JournalTransactionError::ReservationState)?;
         self.superblock = Some(durable_state);
         let _ = self.active.pop_front();
+        Ok(())
+    }
+
+    /// Reclaim the oldest reservation after its journal-tail state is durable.
+    pub fn checkpoint_durable(&mut self, ticket: u64) -> Result<(), JournalTransactionError> {
+        self.checkpoint_durable_inner(ticket, false)
+    }
+
+    /// Reclaim a durable checkpoint and retain its updated ext4 superblock.
+    ///
+    /// Validation happens before any ring state changes. This prevents the
+    /// eventual clean-marker write from restoring allocation counters from the
+    /// mount-time snapshot after block-zero metadata has been checkpointed.
+    pub fn checkpoint_durable_with_filesystem_superblock(
+        &mut self,
+        checkpoint: &FilesystemSuperblockCheckpoint,
+    ) -> Result<(), JournalTransactionError> {
+        let current = self
+            .filesystem_superblock
+            .as_ref()
+            .ok_or(JournalTransactionError::FilesystemStateUnavailable)?;
+        current.validate_checkpointed_successor(&checkpoint.image)?;
+        let admitted = checkpoint.image.clone();
+        self.checkpoint_durable_inner(checkpoint.ticket, true)?;
+        self.filesystem_superblock = Some(admitted);
         Ok(())
     }
 

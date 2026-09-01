@@ -46,6 +46,18 @@ superblock's fixed all-ones seed. A ring discovered from a real clean filesystem
 emits that marker write followed by `Flush(FilesystemState)` and refuses its
 first mapped JBD2 commit plan until the caller acknowledges the flush. Synthetic
 journal-only rings retain their existing host-test boundary.
+An allocation transaction may journal the 4 KiB home block that contains this
+primary superblock. The ring admits that updated image only when it retains the
+recovery marker, has a valid metadata checksum, changes only the currently
+supported allocation-counter fields, and occurs in the matching prepared
+transaction's home-checkpoint operations. Durable acknowledgement atomically
+reclaims that reservation and adopts its image, preventing the later clean
+plan from restoring stale mount-time counters.
+
+Block-bitmap checksums follow Linux `ext4_block_bitmap_csum_set()`: with
+bigalloc excluded, exactly `blocks_per_group / 8` bytes are hashed at the
+filesystem checksum seed. Padding to ext4plus's 4 KiB I/O block is deliberately
+excluded.
 
 Ordinary `load_with_writer` admission still discards a supplied writer whenever
 the recovery marker is present. The explicit `load_with_recovery_writer` entry
@@ -117,9 +129,11 @@ ordered-data set after a staged regular-file write without exposing a writer.
 The real Linux fixture persists the checksummed recovery marker, reloads the
 upstream filesystem on that dirty-marker backing, performs an allocation-bearing
 sparse extension, and verifies that its staged block-zero image cannot clear the
-marker. It then executes the complete ordered commit, checkpoint, tail cleanup,
-and final marker clear against a copied image, reopens the appended byte, and
-requires read-only `e2fsck` acceptance. Platform VFS writes remain gated.
+marker. It then binds that image to the prepared reservation, executes the
+complete ordered commit, checkpoint, tail cleanup, and final marker clear
+against a copied image, verifies the allocation counter and group-zero bitmap
+checksum independently, reopens the appended byte, and requires read-only
+`e2fsck` acceptance. Platform VFS writes remain gated.
 
 The stage is not yet connected to VFS mutations, which do not yet collect their
 touched offset range and revocation set for the classifier. The retry-safe

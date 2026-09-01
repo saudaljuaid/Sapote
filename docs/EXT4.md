@@ -210,6 +210,13 @@ needs-recovery feature. See Linux
 [`checkpoint.c`](https://github.com/torvalds/linux/blob/master/fs/jbd2/checkpoint.c),
 [`recovery.c`](https://github.com/torvalds/linux/blob/master/fs/jbd2/recovery.c),
 and [`super.c`](https://github.com/torvalds/linux/blob/master/fs/ext4/super.c).
+Allocation checksum handling is pinned to Linux
+[`bitmap.c`](https://github.com/torvalds/linux/blob/master/fs/ext4/bitmap.c)
+and e2fsprogs
+[`csum.c`](https://github.com/tytso/e2fsprogs/blob/master/lib/ext2fs/csum.c):
+the block-bitmap CRC32C covers `clusters_per_group / 8` bytes, not the padded
+remainder of the bitmap's 4 KiB home block. Sapote rejects bigalloc, so this is
+`blocks_per_group / 8` at the retained filesystem checksum seed.
 
 Metadata home blocks appear only after `Flush(Commit)`, and slots are reused
 only after `Flush(JournalState)`. A ring discovered from a real clean ext4
@@ -236,7 +243,12 @@ marker durable, reloads the overlay through the recovery-only writer admission,
 runs one upstream regular-file write, classifies initialized touched blocks as
 ordered data and every other staged block as journaled metadata, then executes
 and acknowledges commit, checkpoint, and tail-state durability before reloading
-the checkpointed view. A failed platform write or flush retains the exact
+the checkpointed view. When a transaction journals the primary-superblock home
+block, the ring binds its recovery-marked, checksummed image to that exact
+prepared reservation. Only the matching durable checkpoint can replace the
+ring's retained superblock state, so the later clean-marker write preserves the
+checkpointed free-block and free-inode counters instead of restoring the
+mount-time snapshot. A failed platform write or flush retains the exact
 pending phase and request bytes for an identical retry; a different request is
 refused. Writable namespace methods are still not redirected into the planner.
 A bounded `JournalMutationStage`
@@ -259,9 +271,11 @@ upstream write; holes and uninitialized extents are never misclassified.
 The deterministic Linux fixture now drives one real upstream sparse-extending
 file write through that classifier after persisting the recovery marker. It
 proves the allocation-updated block-zero superblock image retains a valid
-metadata checksum and the recovery bit, executes the ordered commit,
+metadata checksum and the recovery bit, independently checks the block-bitmap
+CRC over the non-padding bytes, executes the ordered commit,
 checkpoint, journal-tail cleanup, and final marker clear into the image, then
-reopens the appended byte and requires read-only `e2fsck` acceptance. This is a
+proves the persisted free-block count changed once, reopens the appended byte,
+and requires read-only `e2fsck` acceptance. This is a
 host integration proof over the operation executor, not yet a VFS or QEMU
 writable-volume claim.
 

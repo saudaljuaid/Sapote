@@ -11,10 +11,11 @@ use core::fmt::{self, Display, Formatter};
 use ext4plus::error::Ext4Error;
 use ext4plus::path::Path;
 use ext4plus::{
-    Ext4, Ext4Read, FileType, FollowSymlinks, JOURNAL_BLOCK_BYTES, JournalCommitOperation,
-    JournalExecutionError, JournalFlush, JournalInodeMap, JournalInodeMapError,
-    JournalMutationStage, JournalPreparedTransaction, JournalRing, JournalStorage,
-    execute_commit_operations, load_journal_inode_map, recover_committed_ring,
+    Ext4, Ext4Read, FileType, FilesystemSuperblockCheckpoint, FollowSymlinks,
+    JOURNAL_BLOCK_BYTES, JournalCommitOperation, JournalExecutionError, JournalFlush,
+    JournalInodeMap, JournalInodeMapError, JournalMutationStage, JournalPreparedTransaction,
+    JournalRing, JournalStorage, execute_commit_operations, load_journal_inode_map,
+    recover_committed_ring,
 };
 
 const SUPERBLOCK_BYTES: usize = 1024;
@@ -98,6 +99,7 @@ struct PendingMutation {
     source: Vec<u8>,
     offset: u64,
     written: usize,
+    checkpointed_superblock: Option<FilesystemSuperblockCheckpoint>,
     phase: PendingMutationPhase,
 }
 
@@ -626,10 +628,23 @@ fn resume_pending_mutation_inner(mounted: &mut Mounted) -> Result<usize, Status>
                 .prepare_checkpoint_plan(ticket)
                 .map_err(|_| Status::Invalid)?;
             execute_storage_plan(mounted.context, &operations)?;
-            mounted
-                .journal
-                .checkpoint_durable(ticket)
-                .map_err(|_| Status::Invalid)?;
+            let checkpointed_superblock = mounted
+                .pending_mutation
+                .as_ref()
+                .ok_or(Status::Invalid)?
+                .checkpointed_superblock
+                .clone();
+            if let Some(superblock) = checkpointed_superblock.as_ref() {
+                mounted
+                    .journal
+                    .checkpoint_durable_with_filesystem_superblock(superblock)
+                    .map_err(|_| Status::Invalid)?;
+            } else {
+                mounted
+                    .journal
+                    .checkpoint_durable(ticket)
+                    .map_err(|_| Status::Invalid)?;
+            }
             mounted
                 .pending_mutation
                 .as_mut()
@@ -789,11 +804,34 @@ pub(crate) fn transaction_probe(
             return Err(Status::Invalid);
         }
     };
+    let checkpointed_superblock = match mounted
+        .stage
+        .staged_images()
+        .into_iter()
+        .find(|image| image.block_index() == 0)
+        .map(|image| {
+            mounted
+                .journal
+                .admit_checkpointed_filesystem_superblock(&prepared, &image)
+        })
+        .transpose()
+    {
+        Ok(superblock) => superblock,
+        Err(_) => {
+            mounted
+                .journal
+                .abort_precommit(prepared.ticket())
+                .map_err(|_| Status::Invalid)?;
+            discard_uncommitted_stage(mounted, true)?;
+            return Err(Status::Invalid);
+        }
+    };
     mounted.pending_mutation = Some(PendingMutation {
         path: absolute,
         source: source_copy,
         offset,
         written,
+        checkpointed_superblock,
         phase: PendingMutationPhase::Commit(prepared),
     });
     resume_pending_mutation_inner(mounted)

@@ -186,12 +186,12 @@ pub use journal::transaction::{
     JOURNAL_BLOCK_BYTES, JOURNAL_RING_MAX_SLOTS, JOURNAL_SUPERBLOCK_BYTES,
     JOURNAL_TRANSACTION_MAX_METADATA_BLOCKS,
     JOURNAL_TRANSACTION_MAX_REVOKED_BLOCKS,
-    FilesystemSuperblockImage, JournalBlockImage, JournalCommitOperation,
-    JournalExecutionError, JournalFlush, JournalInodeMap, JournalInodeMapError,
-    JournalPreparedTransaction, JournalRecordKind, JournalRecovery, JournalRing,
-    JournalStorage, JournalSuperblockImage, JournalTransaction, JournalTransactionError,
-    execute_commit_operations, load_journal_inode_map, recover_committed_ring,
-    replay_committed_transaction,
+    FilesystemSuperblockCheckpoint, FilesystemSuperblockImage, JournalBlockImage,
+    JournalCommitOperation, JournalExecutionError, JournalFlush, JournalInodeMap,
+    JournalInodeMapError, JournalPreparedTransaction, JournalRecordKind,
+    JournalRecovery, JournalRing, JournalStorage, JournalSuperblockImage,
+    JournalTransaction, JournalTransactionError, execute_commit_operations,
+    load_journal_inode_map, recover_committed_ring, replay_committed_transaction,
 };
 #[cfg(feature = "sync")]
 pub use journal::staging::{

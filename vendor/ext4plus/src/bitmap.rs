@@ -155,7 +155,7 @@ impl BitmapHandle {
     pub(crate) async fn calc_checksum(
         &self,
         ext4: &Ext4,
-        block_group_index: u32,
+        _block_group_index: u32,
     ) -> Result<u32, Ext4Error> {
         let mut dst = vec![0; ext4.0.superblock.block_size().to_usize()];
         ext4.read_from_block(self.block, 0, &mut dst).await?;
@@ -167,7 +167,11 @@ impl BitmapHandle {
                 ext4.0.superblock.inodes_per_block_group().get();
             (usize_from_u32(inodes_per_group).checked_add(7).unwrap()) / 8
         } else {
-            ext4.0.superblock.block_size().to_usize()
+            // Linux ext4_block_bitmap_csum_set() hashes exactly
+            // EXT4_CLUSTERS_PER_GROUP / 8 bytes. Sapote rejects bigalloc,
+            // so one cluster is one block and the remaining bitmap-block
+            // padding must not contribute to this checksum.
+            usize_from_u32(ext4.0.superblock.blocks_per_group().get()) / 8
         };
 
         checksum.update(&dst[..bytes_to_hash]);
