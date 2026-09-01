@@ -85,18 +85,21 @@ the next commit cycle must make the recovery marker durable again.
 ext4plus mutations. It accepts only an immutable backing reader, coalesces
 partial writes into bounded complete 4 KiB copy-on-write images, serves reads
 from that overlay, and can discard the entire stage without issuing a home
-write. A focused public test crosses a block boundary, proves coalescing and
-rollback, reaches the 64-block transaction bound, and proves the backing bytes
-never change. The Linux fixture additionally runs a real upstream file write
-through the stage and observes the overlay while the source image remains
-unchanged.
+write. Sapote reloads every clean admitted mount with the retained stage as
+ext4plus's reader and only writer; both unmount phases refuse a nonempty stage,
+so an unclassified mutation cannot be silently dropped. A focused public test
+crosses a block boundary, proves coalescing and rollback, reaches the 64-block
+transaction bound, and proves the backing bytes never change. The Linux fixture
+additionally runs a real upstream file write through the stage and observes the
+overlay while the source image remains unchanged.
 
 The stage is not yet connected to VFS mutations or classified into ordered
-file data versus journaled metadata. The final-clean plan is not yet bound to a
-VFS unmount path. Allocation rollback and revocations, failure injection, fsync
-semantics, and the complete deliberate recovery power-cut QEMU matrix are also
-incomplete. Those gaps keep every user-facing Sapote ext4 operation read-only
-even though the private mount recovery lease is writable.
+file data versus journaled metadata. The retry-safe final-clean plan is bound to
+VFS unmount through a writable NVMe lease, but the VFS cannot make a dirty mount
+yet. Allocation rollback and revocations, failure injection, fsync semantics,
+and the complete deliberate recovery power-cut QEMU matrix are also incomplete.
+Those gaps keep every user-facing Sapote ext4 operation read-only even though
+the private recovery and unmount leases are writable.
 
 Sapote also tightens upstream writer admission: an image carrying ext4's
 `RO_COMPAT_READONLY` feature now discards the supplied writer just as an image

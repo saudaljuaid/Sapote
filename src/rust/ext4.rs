@@ -4,15 +4,16 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use alloc::rc::Rc;
 use alloc::vec::Vec;
 use core::error::Error;
 use core::fmt::{self, Display, Formatter};
 use ext4plus::error::Ext4Error;
 use ext4plus::path::Path;
 use ext4plus::{
-    Ext4, Ext4Read, FileType, FollowSymlinks, JOURNAL_BLOCK_BYTES,
-    JournalCommitOperation, JournalExecutionError, JournalFlush, JournalInodeMap,
-    JournalInodeMapError, JournalRing, JournalStorage, execute_commit_operations,
+    Ext4, Ext4Read, FileType, FollowSymlinks, JOURNAL_BLOCK_BYTES, JournalCommitOperation,
+    JournalExecutionError, JournalFlush, JournalInodeMap, JournalInodeMapError,
+    JournalMutationStage, JournalRing, JournalStorage, execute_commit_operations,
     load_journal_inode_map, recover_committed_ring,
 };
 
@@ -74,10 +75,12 @@ impl Default for DirectoryEntry {
     }
 }
 
-/// A loaded read-only filesystem. C installs a short NVMe lease per call.
+/// A VFS-read-only filesystem whose only upstream writer is an in-memory stage.
+/// C installs a short NVMe lease per operation.
 pub(crate) struct Mounted {
     filesystem: Ext4,
     journal: JournalRing,
+    stage: Rc<JournalMutationStage>,
     context: usize,
 }
 
@@ -169,7 +172,7 @@ fn read_u32(bytes: &[u8], offset: usize) -> Option<u32> {
     ))
 }
 
-fn validate_profile(context: usize, media_bytes: u64) -> Result<(), Status> {
+fn validate_profile(context: usize, media_bytes: u64) -> Result<u64, Status> {
     let mut superblock = [0u8; SUPERBLOCK_BYTES];
     if !crate::abi::ext4_block_read(context, SUPERBLOCK_START, &mut superblock) {
         return Err(Status::Io);
@@ -207,7 +210,7 @@ fn validate_profile(context: usize, media_bytes: u64) -> Result<(), Status> {
     {
         return Err(Status::Invalid);
     }
-    Ok(())
+    Ok(image_bytes)
 }
 
 fn absolute_path(path: &[u8]) -> Result<Vec<u8>, Status> {
@@ -409,7 +412,7 @@ fn validate_namespace(filesystem: &Ext4) -> Result<(), Status> {
 
 /// Load and validate the exact Sapote ext4 profile and reachable namespace.
 pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, Identity), Status> {
-    validate_profile(context, media_bytes)?;
+    let mut image_bytes = validate_profile(context, media_bytes)?;
     let mut filesystem = Ext4::load(Box::new(SapoteReader { context })).map_err(map_error)?;
     let mut journal = load_journal_inode_map(&filesystem).map_err(map_journal_error)?;
     let mut recovery = RecoveryReport::default();
@@ -419,12 +422,24 @@ pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, I
         recovery_performed = 1;
         drop(journal);
         drop(filesystem);
-        validate_profile(context, media_bytes)?;
+        image_bytes = validate_profile(context, media_bytes)?;
         filesystem = Ext4::load(Box::new(SapoteReader { context })).map_err(map_error)?;
         journal = load_journal_inode_map(&filesystem).map_err(map_journal_error)?;
         if journal.filesystem_needs_recovery() {
             return Err(Status::Invalid);
         }
+    }
+    drop(journal);
+    drop(filesystem);
+    let stage = Rc::new(
+        JournalMutationStage::new(Box::new(SapoteReader { context }), image_bytes)
+            .map_err(|_| Status::Invalid)?,
+    );
+    let filesystem = Ext4::load_with_writer(Box::new(stage.clone()), Some(Box::new(stage.clone())))
+        .map_err(map_error)?;
+    let journal = load_journal_inode_map(&filesystem).map_err(map_journal_error)?;
+    if journal.filesystem_needs_recovery() || stage.staged_block_count() != 0 {
+        return Err(Status::Invalid);
     }
     let clean_ring = journal.into_clean_ring().map_err(|_| Status::Invalid)?;
     validate_namespace(&filesystem)?;
@@ -441,6 +456,7 @@ pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, I
         Box::new(Mounted {
             filesystem,
             journal: clean_ring,
+            stage,
             context,
         }),
         identity,
@@ -449,6 +465,9 @@ pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, I
 
 /// Retry and durably execute the final clean plan while C holds a write lease.
 pub(crate) fn prepare_unmount(mounted: &mut Mounted) -> Result<(), Status> {
+    if mounted.stage.staged_block_count() != 0 {
+        return Err(Status::Invalid);
+    }
     match mounted.journal.filesystem_is_clean() {
         Ok(true) => return Ok(()),
         Ok(false) => {}
@@ -468,6 +487,9 @@ pub(crate) fn prepare_unmount(mounted: &mut Mounted) -> Result<(), Status> {
 
 /// Refuse to release a mount unless its retained journal state is idle and clean.
 pub(crate) fn unmount(mounted: &Mounted) -> Result<(), Status> {
+    if mounted.stage.staged_block_count() != 0 {
+        return Err(Status::Invalid);
+    }
     match mounted.journal.filesystem_is_clean() {
         Ok(true) => Ok(()),
         Ok(false) | Err(_) => Err(Status::Invalid),

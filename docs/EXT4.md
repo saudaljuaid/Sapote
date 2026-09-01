@@ -60,9 +60,12 @@ order applies to the current single-core execution model.
 ## Read-write admission gate
 
 Upstream reads an existing JBD2 journal but does not journal new mutations, so
-Sapote does not pass a writer into ext4plus. `sync`, create, write, truncate,
-mkdir, rename, unlink, rmdir, and link return `EROFS`. Enabling the write path
-requires all of the following in one implementation:
+Sapote never gives ext4plus a writer that reaches platform storage. A clean
+mount is reloaded with the bounded `JournalMutationStage` as both its reader and
+its only writer; that overlay cannot write through to its immutable NVMe-backed
+reader. `sync`, create, write, truncate, mkdir, rename, unlink, rmdir, and link
+still return `EROFS`. Enabling the VFS write path requires all of the following
+in one implementation:
 
 1. ordered-data JBD2 descriptor, data, revoke, and checksummed commit records;
 2. an NVMe Flush after journal data and before acknowledging the commit;
@@ -215,12 +218,14 @@ block, later writes coalesce into it, reads see the overlay, and at most 64
 complete images can be exported without any home write. Rollback clears the
 overlay and requires discarding the mutated ext4plus object as well.
 
-The staging layer is not yet connected to VFS mutations or classified into
-ordered file data versus journaled metadata. Allocation rollback and
-revocations, fsync binding, write-failure injection, and the deliberate
-power-cut matrix at every commit and recovery durability boundary are not
-complete. The admitted `JournalRing` is retained for the full Rust mount
-lifetime. C opens a writable NVMe lease before unmount preparation; Rust
+The stage is retained for the full Rust mount lifetime and both unmount phases
+refuse a nonempty overlay, so no unclassified upstream mutation can be silently
+dropped. It is not yet connected to VFS mutations or classified into ordered
+file data versus journaled metadata. Allocation rollback and revocations,
+fsync binding, write-failure injection, and the deliberate power-cut matrix at
+every commit and recovery durability boundary are not complete. The admitted
+`JournalRing` is also retained for the full Rust mount lifetime. C opens a
+writable NVMe lease before unmount preparation; Rust
 re-emits the same pending clean plan after a failed write or flush, acknowledges
 the checksummed marker clear only after `Flush(FilesystemState)`, and refuses to
 drop the mount unless the marker, JBD2 start block, reservations, and used-slot
