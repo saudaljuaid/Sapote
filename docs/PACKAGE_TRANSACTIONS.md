@@ -218,6 +218,12 @@ and clear the entire output on refusal. Recovery uses the public authority
 encoder too, so repair and installation cannot drift into different record
 encodings.
 
+Typed immutable accessors expose each admitted package, dependency edge, and
+owned-file record without making downstream staging code repeat fixed offsets.
+They validate the view's complete table shape and the selected record before
+returning slices; the parsed database buffer remains caller-owned and must stay
+live and unchanged.
+
 The SHA-256 context API is public so the filesystem service can hash immutable
 files in bounded chunks; update-after-finish, finish-twice, and counter overflow
 are refused.

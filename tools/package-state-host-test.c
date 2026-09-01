@@ -100,6 +100,20 @@ static bool all_zero(const uint8_t *bytes, size_t count)
     return combined == 0U;
 }
 
+static bool state_text_is(
+    const struct package_state_text *text,
+    const char *expected
+)
+{
+    size_t length = 0U;
+
+    while (expected[length] != '\0') {
+        ++length;
+    }
+    return text->length == length &&
+        same_bytes(text->bytes, (const uint8_t *)expected, length);
+}
+
 static void digest_text(const char *text, uint8_t output[PACKAGE_STATE_SHA256_BYTES])
 {
     size_t length = 0U;
@@ -318,6 +332,9 @@ static int test_parsers_and_mutations(
         0x68U, 0x32U, 0x12U, 0x5dU, 0xafU, 0x60U, 0x1dU, 0x33U
     };
     struct package_state_database_view database_view;
+    struct package_state_package_view package_view;
+    struct package_state_dependency_view dependency_view;
+    struct package_state_file_view file_view;
     struct package_state_authority_view authority_view;
     struct package_state_journal_view journal_view;
     uint8_t changed[NEW_DATABASE_BYTES];
@@ -332,6 +349,37 @@ static int test_parsers_and_mutations(
         &database_view) == PACKAGE_STATE_STATUS_OK &&
         database_view.generation == 2U && database_view.package_count == 2U &&
         database_view.edge_count == 1U && database_view.file_count == 2U, 11);
+    CHECK(package_state_database_package(&database_view, 0U, &package_view) ==
+            PACKAGE_STATE_STATUS_OK && package_view.database == &database_view &&
+        package_view.package_index == 0U && package_view.explicit_root &&
+        package_view.dependency_start == 0U && package_view.dependency_count == 1U &&
+        package_view.file_count == 1U &&
+        state_text_is(&package_view.identifier, "org.sapote.app") &&
+        state_text_is(&package_view.version, "1.0.0") &&
+        package_state_database_package(&database_view, 2U, &package_view) ==
+            PACKAGE_STATE_STATUS_TABLE && package_view.database == NULL, 46);
+    CHECK(package_state_database_dependency(&database_view, 0U,
+            &dependency_view) == PACKAGE_STATE_STATUS_OK &&
+        dependency_view.database == &database_view &&
+        dependency_view.dependency_index == 0U &&
+        state_text_is(&dependency_view.requested, "org.sapote.lib") &&
+        state_text_is(&dependency_view.constraint, "^1.0.0") &&
+        state_text_is(&dependency_view.provider, "org.sapote.lib") &&
+        package_state_database_dependency(&database_view, 1U,
+            &dependency_view) == PACKAGE_STATE_STATUS_TABLE &&
+        dependency_view.database == NULL, 47);
+    CHECK(package_state_database_file(&database_view, 0U, &file_view) ==
+            PACKAGE_STATE_STATUS_OK && file_view.database == &database_view &&
+        file_view.file_index == 0U && file_view.owner_index == 0U &&
+        file_view.kind == 1U && file_view.mode == 0555U && file_view.length == 3U &&
+        state_text_is(&file_view.path, "bin/app") && file_view.soname.length == 0U &&
+        package_state_database_file(&database_view, 1U, &file_view) ==
+            PACKAGE_STATE_STATUS_OK && file_view.owner_index == 1U &&
+        file_view.kind == 2U && file_view.mode == 0444U &&
+        state_text_is(&file_view.path, "lib/libx.so.1") &&
+        state_text_is(&file_view.soname, "libx.so.1") &&
+        package_state_database_file(&database_view, 2U, &file_view) ==
+            PACKAGE_STATE_STATUS_TABLE && file_view.database == NULL, 48);
     CHECK(package_state_sha256(new_database, NEW_DATABASE_BYTES, digest) ==
         PACKAGE_STATE_STATUS_OK && same_bytes(digest,
             canonical_database_sha256, sizeof(digest)), 25);

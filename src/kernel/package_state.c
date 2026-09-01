@@ -953,6 +953,190 @@ enum package_state_status package_state_database_parse(
     return status;
 }
 
+static bool database_view_shape(
+    const struct package_state_database_view *database
+)
+{
+    size_t package_bytes;
+    size_t edge_bytes;
+    size_t file_bytes;
+    size_t expected_edge;
+    size_t expected_file;
+    size_t expected_total;
+
+    return database != NULL && database->bytes != NULL &&
+        database->byte_count >= PACKAGE_STATE_DATABASE_HEADER_BYTES &&
+        database->byte_count <= PACKAGE_STATE_DATABASE_MAX_BYTES &&
+        database->package_count <= PACKAGE_STATE_DATABASE_MAX_PACKAGES &&
+        database->edge_count <= PACKAGE_STATE_DATABASE_MAX_EDGES &&
+        database->file_count <= PACKAGE_STATE_DATABASE_MAX_FILES &&
+        checked_multiply(database->package_count,
+            PACKAGE_STATE_DATABASE_PACKAGE_RECORD_BYTES, &package_bytes) &&
+        checked_multiply(database->edge_count,
+            PACKAGE_STATE_DATABASE_EDGE_RECORD_BYTES, &edge_bytes) &&
+        checked_multiply(database->file_count,
+            PACKAGE_STATE_DATABASE_FILE_RECORD_BYTES, &file_bytes) &&
+        checked_add(PACKAGE_STATE_DATABASE_HEADER_BYTES, package_bytes,
+            &expected_edge) &&
+        checked_add(expected_edge, edge_bytes, &expected_file) &&
+        checked_add(expected_file, file_bytes, &expected_total) &&
+        database->package_offset == PACKAGE_STATE_DATABASE_HEADER_BYTES &&
+        database->edge_offset == expected_edge &&
+        database->file_offset == expected_file &&
+        database->byte_count == expected_total;
+}
+
+enum package_state_status package_state_database_package(
+    const struct package_state_database_view *database,
+    uint32_t index,
+    struct package_state_package_view *result
+)
+{
+    struct byte_field identifier;
+    struct byte_field version;
+    const uint8_t *record;
+    uint32_t flags;
+    uint32_t dependency_start;
+    uint32_t dependency_count;
+    uint32_t file_count;
+
+    if (database == NULL || result == NULL) {
+        return PACKAGE_STATE_STATUS_NULL_ARGUMENT;
+    }
+    *result = (struct package_state_package_view){ 0 };
+    if (!database_view_shape(database) || index >= database->package_count) {
+        return PACKAGE_STATE_STATUS_TABLE;
+    }
+    record = package_record(database, index);
+    flags = read_u32(record + 192U);
+    dependency_start = read_u32(record + 196U);
+    dependency_count = read_u32(record + 200U);
+    file_count = read_u32(record + 204U);
+    if (fixed_text(record, 64U, false, &identifier) !=
+            PACKAGE_STATE_STATUS_OK || !package_identifier(&identifier) ||
+        fixed_text(record + 64U, 64U, false, &version) !=
+            PACKAGE_STATE_STATUS_OK ||
+        !semantic_version(version.bytes, version.length) ||
+        flags > DATABASE_FLAG_EXPLICIT ||
+        dependency_start > database->edge_count ||
+        dependency_count > database->edge_count - dependency_start ||
+        dependency_count > PACKAGE_MAX_DEPENDENCIES ||
+        file_count > PACKAGE_MAX_FILES || !zero_bytes(record + 208U, 48U)) {
+        return PACKAGE_STATE_STATUS_PACKAGE;
+    }
+    result->database = database;
+    result->package_index = index;
+    result->identifier = (struct package_state_text){
+        identifier.bytes, identifier.length
+    };
+    result->version = (struct package_state_text){
+        version.bytes, version.length
+    };
+    result->package_sha256 = record + 128U;
+    result->publisher_key_id = record + 160U;
+    result->explicit_root = flags == DATABASE_FLAG_EXPLICIT;
+    result->dependency_start = dependency_start;
+    result->dependency_count = dependency_count;
+    result->file_count = file_count;
+    return PACKAGE_STATE_STATUS_OK;
+}
+
+enum package_state_status package_state_database_dependency(
+    const struct package_state_database_view *database,
+    uint32_t index,
+    struct package_state_dependency_view *result
+)
+{
+    struct byte_field requested;
+    struct byte_field constraint;
+    struct byte_field provider;
+    const uint8_t *record;
+
+    if (database == NULL || result == NULL) {
+        return PACKAGE_STATE_STATUS_NULL_ARGUMENT;
+    }
+    *result = (struct package_state_dependency_view){ 0 };
+    if (!database_view_shape(database) || index >= database->edge_count) {
+        return PACKAGE_STATE_STATUS_TABLE;
+    }
+    record = edge_record(database, index);
+    if (fixed_text(record, 64U, false, &requested) !=
+            PACKAGE_STATE_STATUS_OK || !package_identifier(&requested) ||
+        fixed_text(record + 64U, 56U, false, &constraint) !=
+            PACKAGE_STATE_STATUS_OK || !version_constraint(&constraint) ||
+        fixed_text(record + 120U, 64U, false, &provider) !=
+            PACKAGE_STATE_STATUS_OK || !package_identifier(&provider) ||
+        !zero_bytes(record + 184U, 8U)) {
+        return PACKAGE_STATE_STATUS_DEPENDENCY;
+    }
+    result->database = database;
+    result->dependency_index = index;
+    result->requested = (struct package_state_text){
+        requested.bytes, requested.length
+    };
+    result->constraint = (struct package_state_text){
+        constraint.bytes, constraint.length
+    };
+    result->provider = (struct package_state_text){
+        provider.bytes, provider.length
+    };
+    return PACKAGE_STATE_STATUS_OK;
+}
+
+enum package_state_status package_state_database_file(
+    const struct package_state_database_view *database,
+    uint32_t index,
+    struct package_state_file_view *result
+)
+{
+    struct byte_field path;
+    struct byte_field soname;
+    const uint8_t *record;
+    uint32_t owner;
+    uint16_t kind;
+    uint16_t flags;
+    uint32_t mode;
+    uint64_t length;
+
+    if (database == NULL || result == NULL) {
+        return PACKAGE_STATE_STATUS_NULL_ARGUMENT;
+    }
+    *result = (struct package_state_file_view){ 0 };
+    if (!database_view_shape(database) || index >= database->file_count) {
+        return PACKAGE_STATE_STATUS_TABLE;
+    }
+    record = database->bytes + database->file_offset +
+        (size_t)index * PACKAGE_STATE_DATABASE_FILE_RECORD_BYTES;
+    owner = read_u32(record + 128U);
+    kind = read_u16(record + 132U);
+    flags = read_u16(record + 134U);
+    mode = read_u32(record + 136U);
+    length = read_u64(record + 144U);
+    if (fixed_text(record, 128U, false, &path) != PACKAGE_STATE_STATUS_OK ||
+        !package_path(&path) || owner >= database->package_count || kind == 0U ||
+        kind > 4U || flags != 0U || read_u32(record + 140U) != 0U ||
+        (mode != UINT32_C(0444) && mode != UINT32_C(0555)) ||
+        (kind == 1U && mode != UINT32_C(0555)) || length == 0U ||
+        length > PACKAGE_MAX_FILE_BYTES ||
+        fixed_text(record + 184U, 64U, kind != 2U, &soname) !=
+            PACKAGE_STATE_STATUS_OK ||
+        (kind == 2U && !library_name(&soname)) ||
+        (kind != 2U && soname.length != 0U) ||
+        !zero_bytes(record + 248U, 8U)) {
+        return PACKAGE_STATE_STATUS_FILE;
+    }
+    result->database = database;
+    result->file_index = index;
+    result->path = (struct package_state_text){ path.bytes, path.length };
+    result->owner_index = owner;
+    result->kind = kind;
+    result->mode = mode;
+    result->length = length;
+    result->sha256 = record + 152U;
+    result->soname = (struct package_state_text){ soname.bytes, soname.length };
+    return PACKAGE_STATE_STATUS_OK;
+}
+
 enum package_state_status package_state_authority_parse(
     const uint8_t *bytes,
     size_t byte_count,

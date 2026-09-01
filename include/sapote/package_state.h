@@ -64,6 +64,44 @@ struct package_state_database_view {
     size_t file_offset;
 };
 
+struct package_state_text {
+    const uint8_t *bytes;
+    size_t length;
+};
+
+struct package_state_package_view {
+    const struct package_state_database_view *database;
+    uint32_t package_index;
+    struct package_state_text identifier;
+    struct package_state_text version;
+    const uint8_t *package_sha256;
+    const uint8_t *publisher_key_id;
+    bool explicit_root;
+    uint32_t dependency_start;
+    uint32_t dependency_count;
+    uint32_t file_count;
+};
+
+struct package_state_dependency_view {
+    const struct package_state_database_view *database;
+    uint32_t dependency_index;
+    struct package_state_text requested;
+    struct package_state_text constraint;
+    struct package_state_text provider;
+};
+
+struct package_state_file_view {
+    const struct package_state_database_view *database;
+    uint32_t file_index;
+    struct package_state_text path;
+    uint32_t owner_index;
+    uint16_t kind;
+    uint32_t mode;
+    uint64_t length;
+    const uint8_t *sha256;
+    struct package_state_text soname;
+};
+
 struct package_state_authority_view {
     uint64_t generation;
     uint64_t database_bytes;
@@ -143,6 +181,25 @@ enum package_state_status package_state_database_parse(
     const uint8_t *bytes,
     size_t byte_count,
     struct package_state_database_view *result
+);
+
+/* Immutable record views over a database returned by the parser. */
+enum package_state_status package_state_database_package(
+    const struct package_state_database_view *database,
+    uint32_t index,
+    struct package_state_package_view *result
+);
+
+enum package_state_status package_state_database_dependency(
+    const struct package_state_database_view *database,
+    uint32_t index,
+    struct package_state_dependency_view *result
+);
+
+enum package_state_status package_state_database_file(
+    const struct package_state_database_view *database,
+    uint32_t index,
+    struct package_state_file_view *result
 );
 
 enum package_state_status package_state_authority_parse(
