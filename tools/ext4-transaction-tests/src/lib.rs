@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #![cfg(test)]
 
+use ext4plus::error::Ext4Error;
 use ext4plus::{
     Ext4, Ext4Read, Ext4Write, FILESYSTEM_SUPERBLOCK_START_BYTE, JOURNAL_BLOCK_BYTES,
     JournalCommitOperation, JournalExecutionError, JournalFlush, JournalMutationStage,
@@ -781,8 +782,10 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
     let physical = Vec::from(journal.physical_blocks());
     let mut ring = journal.into_clean_ring().unwrap();
     assert_eq!(ring.filesystem_is_clean(), Ok(true));
+    assert_eq!(ring.filesystem_recovery_marker_is_durable(), Ok(false));
     let marker_plan = ring.prepare_recovery_marker_plan().unwrap();
     assert_eq!(ring.prepare_recovery_marker_plan().unwrap(), marker_plan);
+    assert_eq!(ring.filesystem_recovery_marker_is_durable(), Ok(false));
     assert_eq!(ring.filesystem_is_clean(), Ok(false));
     assert!(matches!(
         &marker_plan[0],
@@ -808,6 +811,7 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
         Err(JournalTransactionError::RecoveryMarkerNotDurable)
     );
     ring.mark_recovery_marker_durable().unwrap();
+    assert_eq!(ring.filesystem_recovery_marker_is_durable(), Ok(true));
     assert_eq!(ring.filesystem_is_clean(), Ok(false));
     assert!(ring.prepare_commit_plan(&prepared).is_ok());
     assert_eq!(
@@ -828,6 +832,7 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
     ring.checkpoint_durable(prepared.ticket()).unwrap();
     assert_eq!(ring.filesystem_is_clean(), Ok(false));
     let clean_plan = ring.prepare_filesystem_clean_plan().unwrap();
+    assert_eq!(ring.filesystem_recovery_marker_is_durable(), Ok(true));
     assert_eq!(ring.prepare_filesystem_clean_plan().unwrap(), clean_plan);
     assert!(matches!(
         &clean_plan[0],
@@ -840,6 +845,7 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
         JournalCommitOperation::Flush(JournalFlush::FilesystemState)
     );
     ring.mark_filesystem_clean_durable().unwrap();
+    assert_eq!(ring.filesystem_recovery_marker_is_durable(), Ok(false));
     assert_eq!(ring.filesystem_is_clean(), Ok(true));
 
     let mut next = ring.begin_transaction().unwrap();
@@ -963,6 +969,27 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
     commit_ring.mark_recovery_marker_durable().unwrap();
 
     let marker_backing = Rc::new(commit_storage.bytes.clone());
+    let refused_stage = Rc::new(
+        JournalMutationStage::new(
+            Box::new(marker_backing.clone()),
+            u64::try_from(marker_backing.len()).unwrap(),
+        )
+        .unwrap(),
+    );
+    let refused_filesystem = Ext4::load_with_writer(
+        Box::new(refused_stage.clone()),
+        Some(Box::new(refused_stage.clone())),
+    )
+    .unwrap();
+    let mut refused_file = refused_filesystem.open(b"/system/README.TXT").unwrap();
+    assert!(matches!(
+        refused_file.write_bytes_at(b"X", 0),
+        Err(Ext4Error::Readonly)
+    ));
+    assert_eq!(refused_stage.staged_block_count(), 0);
+    drop(refused_file);
+    drop(refused_filesystem);
+
     let commit_stage = Rc::new(
         JournalMutationStage::new(
             Box::new(marker_backing.clone()),
@@ -970,7 +997,7 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
         )
         .unwrap(),
     );
-    let mutating_filesystem = Ext4::load_with_writer(
+    let mutating_filesystem = Ext4::load_with_recovery_writer(
         Box::new(commit_stage.clone()),
         Some(Box::new(commit_stage.clone())),
     )

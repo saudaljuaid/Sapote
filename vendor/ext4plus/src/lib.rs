@@ -241,8 +241,33 @@ impl Ext4 {
     /// descriptors, and journal. No other data is read or written.
     #[maybe_async::maybe_async]
     pub async fn load_with_writer(
+        reader: Box<dyn Ext4Read>,
+        writer: Option<Box<dyn Ext4Write>>,
+    ) -> Result<Self, Ext4Error> {
+        Self::load_with_writer_inner(reader, writer, false).await
+    }
+
+    /// Load an `Ext4` instance while retaining a writer on a filesystem whose
+    /// journal recovery feature is set.
+    ///
+    /// Ordinary callers must use [`Self::load_with_writer`], which makes such
+    /// a filesystem read-only. This entry point is only for a caller that has
+    /// independently validated and owns journal recovery, commit, checkpoint,
+    /// and durability ordering. Other read-only conditions still discard the
+    /// writer.
+    #[maybe_async::maybe_async]
+    pub async fn load_with_recovery_writer(
+        reader: Box<dyn Ext4Read>,
+        writer: Option<Box<dyn Ext4Write>>,
+    ) -> Result<Self, Ext4Error> {
+        Self::load_with_writer_inner(reader, writer, true).await
+    }
+
+    #[maybe_async::maybe_async]
+    async fn load_with_writer_inner(
         mut reader: Box<dyn Ext4Read>,
         mut writer: Option<Box<dyn Ext4Write>>,
+        allow_recovery_writer: bool,
     ) -> Result<Self, Ext4Error> {
         // The first 1024 bytes are reserved for "weird" stuff like x86
         // boot sectors.
@@ -255,7 +280,9 @@ impl Ext4 {
 
         let superblock = Superblock::from_bytes(&data)?;
 
-        if superblock.read_only() {
+        if superblock.read_only()
+            && !(allow_recovery_writer && !superblock.read_only_without_recovery())
+        {
             writer = None;
         }
         let mut fs = Self(PtrPrimitive::new(Ext4Inner {

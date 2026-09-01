@@ -1410,6 +1410,32 @@ impl JournalRing {
             && superblock.sequence() == self.next_sequence)
     }
 
+    /// Return whether ext4's recovery marker is acknowledged as durable.
+    ///
+    /// A prepared marker write is not durable yet. A pending final-clean plan
+    /// continues to report durable because its clearing flush has not been
+    /// acknowledged. Any disagreement between the retained image and planner
+    /// state is rejected.
+    pub fn filesystem_recovery_marker_is_durable(
+        &self,
+    ) -> Result<bool, JournalTransactionError> {
+        let state = self
+            .filesystem_recovery_state
+            .ok_or(JournalTransactionError::FilesystemStateUnavailable)?;
+        let filesystem = self
+            .filesystem_superblock
+            .as_ref()
+            .ok_or(JournalTransactionError::FilesystemStateUnavailable)?;
+        let expected = matches!(
+            state,
+            FilesystemRecoveryState::Durable | FilesystemRecoveryState::CleanPlanPrepared
+        );
+        if filesystem.needs_recovery() != expected {
+            return Err(JournalTransactionError::RecoveryStateMismatch);
+        }
+        Ok(expected)
+    }
+
     /// Build the write and flush that make ext4's recovery marker durable.
     ///
     /// A ring discovered from a real clean ext4 image must execute this plan

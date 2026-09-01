@@ -47,6 +47,14 @@ emits that marker write followed by `Flush(FilesystemState)` and refuses its
 first mapped JBD2 commit plan until the caller acknowledges the flush. Synthetic
 journal-only rings retain their existing host-test boundary.
 
+Ordinary `load_with_writer` admission still discards a supplied writer whenever
+the recovery marker is present. The explicit `load_with_recovery_writer` entry
+point preserves it only when recovery is the sole read-only condition; the
+on-disk read-only flag and unsupported read-only-compatible features continue
+to discard it. This narrow API is for Sapote's coordinator after it has made the
+marker durable and owns commit, checkpoint, and barrier ordering. It does not
+make ext4plus's ordinary mutation API journal-aware.
+
 `load_journal_inode_map` discovers the internal journal through ext4plus's own
 checked inode and extent/block-map iterator, bounds the complete physical map,
 reads logical block zero without the replay overlay, and requires its length to
@@ -122,10 +130,14 @@ also incomplete. Those gaps keep every user-facing Sapote ext4 operation
 read-only even though the private recovery and unmount leases are writable.
 
 Sapote also tightens upstream writer admission: an image carrying ext4's
-`RO_COMPAT_READONLY` feature now discards the supplied writer just as an image
-requiring recovery or carrying an unsupported read-only-compatible feature
-does. A focused superblock test pins that refusal. This is a prerequisite for a
-future writable profile, not writable-backend admission by itself.
+`RO_COMPAT_READONLY` feature discards the supplied writer, as does an image
+carrying an unsupported read-only-compatible feature. Recovery remains
+read-only through the ordinary loader and can retain a writer only through the
+explicit coordinator-only loader described above. Focused superblock tests pin
+the permanent read-only refusal, and the real-fixture transaction test proves
+that the ordinary loader still refuses a recovery-marked writer before using
+the explicit loader. This is a prerequisite for a future writable profile,
+not writable-backend admission by itself.
 
 Sapote-specific changes stay in reviewable commits and are summarized here as
 they land. The intended port configuration is `--no-default-features
