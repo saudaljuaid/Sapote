@@ -86,6 +86,19 @@ def wait_count(path, marker, count, timeout):
     )
 
 
+def wait_after(path, start, marker, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists() and marker in path.read_bytes()[start:]:
+            return
+        time.sleep(0.05)
+    transcript = path.read_bytes()[start:] if path.exists() else b""
+    tail = transcript[-8192:].decode("utf-8", errors="replace")
+    raise RuntimeError(
+        f"serial transcript did not echo {marker.decode('ascii')!r}\n{tail}"
+    )
+
+
 def key_name(character):
     names = {" ": "spc", ".": "dot", "/": "slash", "-": "minus"}
     if character not in names and not character.isalnum():
@@ -93,10 +106,13 @@ def key_name(character):
     return names.get(character, character)
 
 
-def send_line(qmp, text):
+def send_line(qmp, serial, text):
+    start = len(serial.read_bytes()) if serial.exists() else 0
+    echoed = b""
     for character in text:
         qmp.hmp(f"sendkey {key_name(character)}")
-        time.sleep(0.012)
+        echoed += character.encode("ascii")
+        wait_after(serial, start, echoed, 2.0)
     qmp.hmp("sendkey ret")
 
 
@@ -252,7 +268,7 @@ def main():
             wait_count(serial, PROOF, 1, 60.0)
             prompt_count = serial.read_bytes().count(b"sap> ")
             open_terminal(qmp)
-            wait_count(serial, b"sap> ", prompt_count + 1, 5.0)
+            wait_count(serial, b"sap> ", prompt_count + 1, 15.0)
             started = time.monotonic()
             actions = [
                 (0.5, "drives"),
@@ -272,10 +288,11 @@ def main():
                 elapsed = time.monotonic() - started
                 if action_index < len(actions) and elapsed >= actions[action_index][0]:
                     text = actions[action_index][1]
-                    send_line(qmp, text)
+                    prompt_count = serial.read_bytes().count(b"sap> ")
+                    send_line(qmp, serial, text)
                     if text == "reboot":
                         wait_count(serial,
-                            b"restarting after clean synchronization", 1, 5.0)
+                            b"restarting after clean synchronization", 1, 15.0)
                         stop_guest(qmp, process)
                         qmp = None
                         port = free_port()
@@ -291,10 +308,17 @@ def main():
                             b"sap> ")
                         open_terminal(qmp)
                         wait_count(second_serial, b"sap> ",
-                            prompt_count + 1, 5.0)
-                        send_line(qmp, "read projects/notes.txt")
-                        wait_count(second_serial, b"first cut", 1, 5.0)
-                        wait_count(second_serial, b"second line", 1, 5.0)
+                            prompt_count + 1, 15.0)
+                        prompt_count = second_serial.read_bytes().count(
+                            b"sap> ")
+                        send_line(qmp, second_serial,
+                            "read projects/notes.txt")
+                        wait_count(second_serial, b"first cut", 1, 15.0)
+                        wait_count(second_serial, b"second line", 1, 15.0)
+                        wait_count(second_serial, b"sap> ",
+                            prompt_count + 1, 15.0)
+                    else:
+                        wait_count(serial, b"sap> ", prompt_count + 1, 15.0)
                     action_index += 1
                 frame = temp / f"frame-{index:04d}.ppm"
                 screendump(qmp, frame)
