@@ -142,8 +142,11 @@ complete clean ring. For a filesystem carrying ext4's recovery bit, Sapote
 reads the bounded physical ring, independently validates and collapses every
 committed transaction, checkpoints the returned home images, flushes them,
 persists and flushes the returned clean JBD2 superblock, and only then clears
-and flushes the checksummed ext4 recovery marker. It reloads and re-admits the
-clean filesystem before walking the namespace or exposing the mount.
+and flushes the checksummed ext4 recovery marker. If the collapsed replay set
+contains primary-superblock block zero, the marker clear is derived from that
+validated replay image so recovered allocation counters cannot be replaced by
+the mount-time snapshot. It reloads and re-admits the clean filesystem before
+walking the namespace or exposing the mount.
 
 `recover_committed_ring` implements the bounded live-ring reader for Sapote's
 single-descriptor transaction profile. It starts at the admitted JBD2 sequence
@@ -272,10 +275,12 @@ The deterministic Linux fixture now drives one real upstream sparse-extending
 file write through that classifier after persisting the recovery marker. It
 proves the allocation-updated block-zero superblock image retains a valid
 metadata checksum and the recovery bit, independently checks the block-bitmap
-CRC over the non-padding bytes, executes the ordered commit,
-checkpoint, journal-tail cleanup, and final marker clear into the image, then
-proves the persisted free-block count changed once, reopens the appended byte,
-and requires read-only `e2fsck` acceptance. This is a
+CRC over the non-padding bytes, executes the ordered commit, and models both
+normal checkpoint completion and a reset after the durable commit record.
+Mount recovery replays the block-zero allocation counters before journal-tail
+cleanup and derives the final marker clear from the replayed image. Both paths
+prove the persisted free-block count changed once, reopen the appended byte,
+and require read-only `e2fsck` acceptance. This is a
 host integration proof over the operation executor, not yet a VFS or QEMU
 writable-volume claim.
 

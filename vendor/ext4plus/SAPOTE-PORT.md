@@ -95,7 +95,10 @@ absolute byte write and passes every named flush through without coalescing it.
 Sapote's mount adapter implements that boundary with native NVMe writes and
 `nvme_volume_flush()`. Dirty mounts checkpoint the validated replay set, flush
 home metadata, persist and flush the clean JBD2 superblock, clear and flush the
-checksummed ext4 recovery marker, then reload and re-admit the clean image.
+checksummed ext4 recovery marker, then reload and re-admit the clean image. If
+replay includes the primary-superblock home block, the final marker clear is
+derived from that validated replay image rather than the stale mount-time
+image, preserving recovered allocation counters.
 For future writable mounts, the ring exposes a separate final-clean plan only
 after all reservations are checkpointed and the durable JBD2 start is zero. It
 blocks new reservations until the checksummed ext4 marker clear is flushed, and
@@ -130,9 +133,10 @@ The real Linux fixture persists the checksummed recovery marker, reloads the
 upstream filesystem on that dirty-marker backing, performs an allocation-bearing
 sparse extension, and verifies that its staged block-zero image cannot clear the
 marker. It then binds that image to the prepared reservation, executes the
-complete ordered commit, checkpoint, tail cleanup, and final marker clear
-against a copied image, verifies the allocation counter and group-zero bitmap
-checksum independently, reopens the appended byte, and requires read-only
+complete ordered commit, and checks both normal checkpoint completion and
+mount replay after a reset following the durable commit record. Both paths
+preserve the allocation counter through tail cleanup, verify the group-zero
+bitmap checksum independently, reopen the appended byte, and require read-only
 `e2fsck` acceptance. Platform VFS writes remain gated.
 
 The stage is not yet connected to VFS mutations, which do not yet collect their

@@ -638,8 +638,11 @@ impl JournalRecovery {
     ///
     /// Home metadata is flushed before the clean journal state is written.
     /// The journal state is then flushed before ext4's recovery marker is
-    /// cleared and independently flushed. This mirrors the separation Linux
-    /// keeps between recovery replay, journal cleanup, and marking ext4 clean.
+    /// cleared and independently flushed. When replay updates the primary
+    /// ext4 superblock, the clean marker is derived from that validated replay
+    /// image rather than the stale mount-time image. This mirrors the
+    /// separation Linux keeps between recovery replay, journal cleanup, and
+    /// marking ext4 clean.
     pub fn checkpoint_plan(
         &self,
         journal_superblock_block: u64,
@@ -672,9 +675,21 @@ impl JournalRecovery {
             image: self.clean_superblock.clone(),
         });
         operations.push(JournalCommitOperation::Flush(JournalFlush::JournalState));
+        let checkpointed_filesystem_superblock = self
+            .replay_images
+            .iter()
+            .find(|image| image.block_index() == 0)
+            .map(|image| {
+                FilesystemSuperblockImage::from_checkpointed_home_block(
+                    filesystem_superblock,
+                    image,
+                )
+            })
+            .transpose()?
+            .unwrap_or_else(|| filesystem_superblock.clone());
         operations.push(JournalCommitOperation::WriteFilesystemSuperblock {
             start_byte: FILESYSTEM_SUPERBLOCK_START_BYTE,
-            image: filesystem_superblock.with_recovery_state(false),
+            image: checkpointed_filesystem_superblock.with_recovery_state(false),
         });
         operations.push(JournalCommitOperation::Flush(JournalFlush::FilesystemState));
         Ok(operations)

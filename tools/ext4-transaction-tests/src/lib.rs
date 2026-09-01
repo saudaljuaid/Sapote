@@ -960,10 +960,9 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
 
     let commit_bytes = std::fs::read(&path).unwrap();
     let commit_filesystem = Ext4::load(Box::new(commit_bytes.clone())).unwrap();
-    let mut commit_ring = load_journal_inode_map(&commit_filesystem)
-        .unwrap()
-        .into_clean_ring()
-        .unwrap();
+    let commit_journal = load_journal_inode_map(&commit_filesystem).unwrap();
+    let commit_physical = Vec::from(commit_journal.physical_blocks());
+    let mut commit_ring = commit_journal.into_clean_ring().unwrap();
     let marker_plan = commit_ring.prepare_recovery_marker_plan().unwrap();
     let mut commit_storage = VectorStorage {
         bytes: commit_bytes,
@@ -1053,6 +1052,116 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
         Err(JournalTransactionError::RingTransactionMismatch)
     );
     execute_commit_operations(&mut commit_storage, &commit_plan).unwrap();
+
+    // Model a reset after the commit record is durable but before any home
+    // metadata is checkpointed. Recovery must replay the allocation counters
+    // from journaled block zero and derive the final clean marker from that
+    // image, not from the stale superblock admitted at mount.
+    let mut crash_storage = VectorStorage {
+        bytes: commit_storage.bytes.clone(),
+        flushes: Vec::new(),
+    };
+    let crashed_filesystem = Ext4::load(Box::new(crash_storage.bytes.clone())).unwrap();
+    let crashed_journal = load_journal_inode_map(&crashed_filesystem).unwrap();
+    assert!(crashed_journal.filesystem_needs_recovery());
+    assert_eq!(crashed_journal.physical_blocks(), commit_physical);
+    let crashed_journal_bytes: Vec<Vec<u8>> = crashed_journal.physical_blocks()[1..]
+        .iter()
+        .map(|block| {
+            let start = usize::try_from(*block).unwrap() * JOURNAL_BLOCK_BYTES;
+            crash_storage.bytes[start..start + JOURNAL_BLOCK_BYTES].to_vec()
+        })
+        .collect();
+    let crashed_journal_references: Vec<&[u8]> = crashed_journal_bytes
+        .iter()
+        .map(Vec::as_slice)
+        .collect();
+    let crashed_recovery = recover_committed_ring(
+        crashed_journal.superblock(),
+        true,
+        crashed_journal.maximum_block(),
+        &crashed_journal_references,
+    )
+    .unwrap();
+    assert_eq!(crashed_recovery.committed_transactions(), 1);
+    assert!(
+        crashed_recovery
+            .replay_images()
+            .iter()
+            .any(|image| image.block_index() == 0)
+    );
+    let crashed_recovery_plan = crashed_recovery
+        .checkpoint_plan(
+            crashed_journal.physical_blocks()[0],
+            crashed_journal.filesystem_superblock(),
+        )
+        .unwrap();
+    let recovered_clean_superblock = crashed_recovery_plan
+        .iter()
+        .find_map(|operation| match operation {
+            JournalCommitOperation::WriteFilesystemSuperblock { image, .. } => Some(image),
+            _ => None,
+        })
+        .unwrap();
+    assert!(!recovered_clean_superblock.needs_recovery());
+    let staged_checkpointed_superblock =
+        &staged_superblock.bytes()[1024..1024 + recovered_clean_superblock.bytes().len()];
+    for (index, (recovered, staged)) in recovered_clean_superblock
+        .bytes()
+        .iter()
+        .zip(staged_checkpointed_superblock.iter())
+        .enumerate()
+    {
+        if !(0x60..0x64).contains(&index) && !(0x3fc..0x400).contains(&index) {
+            assert_eq!(recovered, staged);
+        }
+    }
+    assert_eq!(
+        u32::from_le_bytes(
+            recovered_clean_superblock.bytes()[0x3fc..0x400]
+                .try_into()
+                .unwrap(),
+        ),
+        ext4_crc32c(&recovered_clean_superblock.bytes()[..0x3fc])
+    );
+    execute_commit_operations(&mut crash_storage, &crashed_recovery_plan).unwrap();
+    assert_eq!(
+        crash_storage.flushes,
+        vec![
+            JournalFlush::Checkpoint,
+            JournalFlush::JournalState,
+            JournalFlush::FilesystemState,
+        ]
+    );
+    let recovered_filesystem = Ext4::load(Box::new(crash_storage.bytes.clone())).unwrap();
+    let recovered_journal = load_journal_inode_map(&recovered_filesystem).unwrap();
+    assert!(!recovered_journal.filesystem_needs_recovery());
+    recovered_journal.into_clean_ring().unwrap();
+    let mut recovered_file = recovered_filesystem.open(b"/system/README.TXT").unwrap();
+    let mut recovered_append = [0u8; 1];
+    assert_eq!(
+        recovered_file
+            .read_bytes_at(&mut recovered_append, append_offset)
+            .unwrap(),
+        1
+    );
+    assert_eq!(recovered_append, *b"X");
+
+    let recovered_path = std::path::Path::new(&path).with_extension("recovered.img");
+    std::fs::write(&recovered_path, &crash_storage.bytes).unwrap();
+    let recovered_fsck = std::process::Command::new("e2fsck")
+        .args(["-fn"])
+        .arg(&recovered_path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&recovered_path);
+    assert!(
+        recovered_fsck.status.success(),
+        "e2fsck rejected recovered image:\n{}\n{}",
+        String::from_utf8_lossy(&recovered_fsck.stdout),
+        String::from_utf8_lossy(&recovered_fsck.stderr)
+    );
+
     commit_ring.mark_commit_durable(prepared.ticket()).unwrap();
     let checkpoint_plan = commit_ring
         .prepare_checkpoint_plan(prepared.ticket())
