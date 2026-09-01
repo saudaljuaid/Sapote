@@ -25,9 +25,11 @@ The only accepted profile is:
 - 48,000 frames per second;
 - stream format `0x0011`;
 - stream tag 1, starting at channel 0;
-- 1,024 frames / 4,096 bytes in one page;
-- two 2,048-byte BDL periods; the proof marks both for status and native
-  playback marks only the final period so one completion means one whole chunk;
+- 1,024 frames / 4,096 bytes of payload followed by one zero-filled 4,096-byte
+  drain-guard period;
+- two 4,096-byte BDL periods; the proof marks both for status and native
+  playback marks the payload period so the guard absorbs bounded stop latency
+  without replaying the payload;
 - a deterministic 750 Hz square wave at amplitude +/-8192, identical on both
   channels.
 
@@ -47,13 +49,13 @@ Four typed below-4-GiB DMA allocations exist during the proof:
 1. CORB command ring;
 2. RIRB response ring;
 3. BDL page;
-4. immutable PCM page.
+4. immutable two-page PCM payload-and-guard allocation.
 
 All four are initialized while CPU-owned and named in one bus-master request.
 The first enable attempt, before ownership transfer, must fail with
 `DMA_NOT_PREPARED`. Only after all four allocations are device-owned may PCI bus
-mastering be enabled. The BDL and PCM page are never modified while the device
-owns them.
+mastering be enabled. The BDL and PCM allocation are never modified while the
+device owns them.
 
 The first output stream descriptor is located after all input descriptors, as
 required by GCAP. Sapote stops and resets it, programs BDL base, cyclic buffer
@@ -92,7 +94,7 @@ unsigned Q15 left/right gain to each stream, adds in signed 32-bit space, and
 saturates to signed 16-bit output. Unity is 32768 and zero is silent. A lone
 queued handle starts after the grace/window expires; a single open handle starts
 without the two-handle coalescing delay. At most two 4,096-byte source chunks and
-one 4,096-byte DMA mix exist.
+one 8,192-byte DMA payload-and-guard mix exist.
 
 `SAPOTE_WAIT_WRITABLE` means the handle can accept another chunk;
 `SAPOTE_WAIT_CLOSED` reports cancellation or a stream error. Drain blocks only

@@ -6,7 +6,7 @@
  * something other than storage or networking, and the ordering that makes that
  * safe is the whole point of the file. Sapote has no IOMMU. A device with bus
  * mastering enabled can write anywhere, so bus mastering is enabled only after
- * every ring, BDL and PCM page is a typed DMA allocation declared to the
+ * every ring, BDL and PCM region is a typed DMA allocation declared to the
  * claim, and it is withdrawn only after the stream and ring engines have been
  * stopped and the controller put back into reset. Memory is reclaimed after
  * that, never before.
@@ -423,7 +423,8 @@ static bool fill_buffer_list(
 {
     if (entries == NULL ||
         AUDIO_PCM_BDL_ENTRIES * sizeof(*entries) > PAGING_PAGE_SIZE ||
-        AUDIO_PCM_PERIOD_BYTES * AUDIO_PCM_BDL_ENTRIES != AUDIO_PCM_BYTES ||
+        AUDIO_PCM_PERIOD_BYTES * AUDIO_PCM_BDL_ENTRIES !=
+            AUDIO_PCM_DMA_BYTES ||
         AUDIO_PCM_PERIOD_BYTES % 128U != 0U) {
         return false;
     }
@@ -432,8 +433,7 @@ static bool fill_buffer_list(
         entries[index].address = pcm_physical +
             index * AUDIO_PCM_PERIOD_BYTES;
         entries[index].length = AUDIO_PCM_PERIOD_BYTES;
-        entries[index].flags = (every_period_reports ||
-            index + 1U == AUDIO_PCM_BDL_ENTRIES) ?
+        entries[index].flags = (every_period_reports || index == 0U) ?
                 HDA_BDL_INTERRUPT_ON_COMPLETION : 0U;
     }
     return true;
@@ -576,7 +576,7 @@ static bool program_output_stream(struct audio_controller *controller)
         controller->output_stream_base + HDA_SDBDPU,
         (uint32_t)(controller->buffer_list_physical >> 32U));
     mmio_write32(controller->registers,
-        controller->output_stream_base + HDA_SDCBL, AUDIO_PCM_BYTES);
+        controller->output_stream_base + HDA_SDCBL, AUDIO_PCM_DMA_BYTES);
     mmio_write16(controller->registers,
         controller->output_stream_base + HDA_SDLVI,
         AUDIO_PCM_BDL_ENTRIES - 1U);
@@ -586,7 +586,8 @@ static bool program_output_stream(struct audio_controller *controller)
         controller->output_stream_base + HDA_SDCTL_TAG,
         (uint8_t)(AUDIO_PCM_STREAM_TAG << 4U));
     return mmio_read32(controller->registers,
-            controller->output_stream_base + HDA_SDCBL) == AUDIO_PCM_BYTES &&
+            controller->output_stream_base + HDA_SDCBL) ==
+                AUDIO_PCM_DMA_BYTES &&
         mmio_read16(controller->registers,
             controller->output_stream_base + HDA_SDLVI) ==
                 AUDIO_PCM_BDL_ENTRIES - 1U &&
@@ -1308,7 +1309,7 @@ static enum audio_status service_output_stream(
         controller->output_stream_base + HDA_SDLPIB);
 
     ++result->service_iterations;
-    if (position >= AUDIO_PCM_BYTES) {
+    if (position >= AUDIO_PCM_DMA_BYTES) {
         return AUDIO_STATUS_STREAM_ERROR;
     }
     if (position != result->final_link_position) {
@@ -1356,7 +1357,7 @@ static enum audio_status prove_pcm_playback(
     }
     result->initial_link_position = mmio_read32(controller->registers,
         controller->output_stream_base + HDA_SDLPIB);
-    if (result->initial_link_position >= AUDIO_PCM_BYTES) {
+    if (result->initial_link_position >= AUDIO_PCM_DMA_BYTES) {
         return AUDIO_STATUS_STREAM_ERROR;
     }
     result->final_link_position = result->initial_link_position;
@@ -1486,8 +1487,14 @@ static enum audio_status bring_up(
     request.maximum_physical_address = UINT64_C(0xFFFFFFFF);
     if (dma_allocate(&request, &controller->command_ring) != DMA_STATUS_OK ||
         dma_allocate(&request, &controller->response_ring) != DMA_STATUS_OK ||
-        dma_allocate(&request, &controller->buffer_list) != DMA_STATUS_OK ||
-        dma_allocate(&request, &controller->pcm_buffer) != DMA_STATUS_OK) {
+        dma_allocate(&request, &controller->buffer_list) != DMA_STATUS_OK) {
+        return AUDIO_STATUS_DMA_FAILURE;
+    }
+    if (AUDIO_PCM_DMA_BYTES % PAGING_PAGE_SIZE != 0U) {
+        return AUDIO_STATUS_DMA_FAILURE;
+    }
+    request.page_count = AUDIO_PCM_DMA_BYTES / PAGING_PAGE_SIZE;
+    if (dma_allocate(&request, &controller->pcm_buffer) != DMA_STATUS_OK) {
         return AUDIO_STATUS_DMA_FAILURE;
     }
     controller->commands = controller->command_ring.cpu_address;
@@ -1502,7 +1509,7 @@ static enum audio_status bring_up(
             controller->response_ring.byte_length ||
         AUDIO_PCM_BDL_ENTRIES * sizeof(*controller->descriptors) >
             controller->buffer_list.byte_length ||
-        AUDIO_PCM_BYTES > controller->pcm_buffer.byte_length) {
+        AUDIO_PCM_DMA_BYTES > controller->pcm_buffer.byte_length) {
         return AUDIO_STATUS_DMA_FAILURE;
     }
     for (uint64_t index = 0U;
@@ -1753,18 +1760,19 @@ bool audio_foundation_self_test(size_t *completed_tests)
         return false;
     }
     ++completed;
-    /* The fixed profile is exactly 48 kHz, signed 16-bit stereo. */
+    /* The fixed payload is followed by one page of zero drain guard. */
     if (AUDIO_STREAM_FORMAT != UINT16_C(0x0011) ||
         AUDIO_PCM_FRAME_BYTES != 4U || AUDIO_PCM_BYTES != PAGING_PAGE_SIZE ||
-        AUDIO_PCM_PERIOD_BYTES * AUDIO_PCM_BDL_ENTRIES != AUDIO_PCM_BYTES) {
+        AUDIO_PCM_PERIOD_BYTES != AUDIO_PCM_BYTES ||
+        AUDIO_PCM_DMA_BYTES != 2U * PAGING_PAGE_SIZE) {
         return false;
     }
     ++completed;
-    /* Two legal periods cover the PCM page and both request status evidence. */
+    /* The proof observes both periods; native playback reports after payload. */
     zero_bytes(descriptors, sizeof(descriptors));
     if (!fill_buffer_list(descriptors, UINT64_C(0x00100000), true) ||
         descriptors[0].address != UINT64_C(0x00100000) ||
-        descriptors[1].address != UINT64_C(0x00100800) ||
+        descriptors[1].address != UINT64_C(0x00101000) ||
         descriptors[0].length != AUDIO_PCM_PERIOD_BYTES ||
         descriptors[1].length != AUDIO_PCM_PERIOD_BYTES ||
         descriptors[0].flags != HDA_BDL_INTERRUPT_ON_COMPLETION ||
@@ -2496,8 +2504,8 @@ bool audio_native_self_test(size_t *completed_tests)
     ++completed;
     zero_bytes(descriptors, sizeof(descriptors));
     if (!fill_buffer_list(descriptors, UINT64_C(0x00200000), false) ||
-        descriptors[0].flags != 0U ||
-        descriptors[1].flags != HDA_BDL_INTERRUPT_ON_COMPLETION) {
+        descriptors[0].flags != HDA_BDL_INTERRUPT_ON_COMPLETION ||
+        descriptors[1].flags != 0U) {
         return false;
     }
     ++completed;
