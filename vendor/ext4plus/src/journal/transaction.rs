@@ -2248,6 +2248,7 @@ mod tests {
                         durable_ordered_data.extend(pending_ordered_data.clone());
                         durable_home.extend(pending_home.clone());
                     }
+                    JournalCommitOperation::WriteFilesystemSuperblock { .. } => {}
                     JournalCommitOperation::WriteJournalSuperblock { .. } => {}
                 }
             }

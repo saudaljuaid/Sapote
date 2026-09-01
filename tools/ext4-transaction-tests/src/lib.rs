@@ -739,7 +739,7 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
         Some(Box::new(stage.clone())),
     )
     .unwrap();
-    let mut file = staged_filesystem.open(b"/README.TXT").unwrap();
+    let mut file = staged_filesystem.open(b"/system/README.TXT").unwrap();
     let mut original = [0u8; 1];
     assert_eq!(file.read_bytes_at(&mut original, 0).unwrap(), 1);
     assert_eq!(file.write_bytes_at(b"X", 0).unwrap(), 1);
@@ -753,7 +753,9 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
     drop(staged_filesystem);
     stage.rollback();
     let restored_filesystem = Ext4::load(Box::new(stage.clone())).unwrap();
-    let mut restored = restored_filesystem.open(b"/README.TXT").unwrap();
+    let mut restored = restored_filesystem
+        .open(b"/system/README.TXT")
+        .unwrap();
     assert_eq!(restored.read_bytes_at(&mut overlaid, 0).unwrap(), 1);
     assert_eq!(overlaid, original);
 }
