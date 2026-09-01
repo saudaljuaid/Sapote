@@ -1161,15 +1161,18 @@ package-trust-tests: $(PACKAGE_TRUST_HOST_TEST)
 	$(PACKAGE_TRUST_HOST_TEST)
 
 $(PACKAGE_MANAGER_HOST_TEST): tools/package-manager-host-test.c \
+		src/kernel/package_builder.c src/kernel/package_generation.c \
 		src/kernel/package_manager.c src/kernel/package_trust.c \
-		src/kernel/package_state.c include/sapote/package_manager.h \
+		src/kernel/package_state.c include/sapote/package_builder.h \
+		include/sapote/package_generation.h include/sapote/package_manager.h \
 		include/sapote/package_trust.h include/sapote/package_state.h \
 		$(MONOCYPHER_HOST_OBJECTS)
 	mkdir -p $(dir $@)
 	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -Wshadow \
 		-Wundef -Wstrict-prototypes -Wmissing-prototypes -Iinclude \
 		-Ivendor/monocypher/src -Ivendor/monocypher/src/optional \
-		tools/package-manager-host-test.c src/kernel/package_manager.c \
+		tools/package-manager-host-test.c src/kernel/package_builder.c \
+		src/kernel/package_generation.c src/kernel/package_manager.c \
 		src/kernel/package_trust.c src/kernel/package_state.c \
 		$(MONOCYPHER_HOST_OBJECTS) -o $@
 

@@ -32,6 +32,7 @@ PUBLISHER_SEED = bytes(range(32, 64))
 
 
 def package_spec(identifier: str, name: str, *,
+                 version: str = "1.0.0",
                  dependencies: list[dict[str, str]] | None = None) -> dict[str, Any]:
     return {
         "format": 3,
@@ -40,7 +41,7 @@ def package_spec(identifier: str, name: str, *,
         "abi_max": 1,
         "identifier": identifier,
         "name": name,
-        "version": "1.0.0",
+        "version": version,
         "publisher": "Sapote Package Test",
         "capabilities": ["console"],
         "dependencies": dependencies or [],
@@ -117,9 +118,36 @@ def main() -> int:
         repository_package("org.sapote.app", "1.0.0", application,
                            publisher_key_id, dependencies=dependency),
         repository_package("org.sapote.lib", "1.0.0", library,
-                           publisher_key_id),
+                           publisher_key_id, provides=[{
+                               "identifier": "virtual.proof",
+                               "version": "1.0.0",
+                           }]),
     ]
     main_index = REPOSITORY.build_repository(repository_spec(main_packages), ROOT_SEED)
+    replacement_dependency = [{
+        "identifier": "org.sapote.newlib",
+        "constraint": "^2.0.0",
+    }]
+    replacement_library = PACKAGE.build_package_v3(
+        package_spec("org.sapote.newlib", "Replacement Library", version="2.0.0"),
+        ({"path": "lib/libnew.so.2", "kind": "library",
+          "soname": "libnew.so.2", "payload": b"\x7fELFreplacement-library"},),
+        PUBLISHER_SEED,
+    )
+    replacement_application = PACKAGE.build_package_v3(
+        package_spec("org.sapote.app", "Proof Application", version="2.0.0",
+                     dependencies=replacement_dependency),
+        ({"path": "bin/proof-app", "kind": "executable",
+          "payload": b"\x7fELFupdated-application"},),
+        PUBLISHER_SEED,
+    )
+    update_index = REPOSITORY.build_repository(repository_spec([
+        repository_package("org.sapote.app", "2.0.0", replacement_application,
+                           publisher_key_id,
+                           dependencies=replacement_dependency),
+        repository_package("org.sapote.newlib", "2.0.0", replacement_library,
+                           publisher_key_id),
+    ]), ROOT_SEED)
     trusted_root = {hashlib.sha256(root_public).hexdigest(): root_public}
     trusted_publisher = {publisher_key_id: publisher_public}
     REPOSITORY.parse_repository(
@@ -195,11 +223,14 @@ def main() -> int:
             write(directory / "unsatisfied.sri", unsatisfied),
             write(directory / "backtrack.sri", backtrack),
             write(directory / "deep-chain.sri", deep_chain),
+            write(directory / "update.sri", update_index),
+            write(directory / "app-v2.spk", replacement_application),
+            write(directory / "newlib.spk", replacement_library),
         ]
         subprocess.run([sys.argv[1], *paths], check=True)
     print(
         "Sapote guest package-manager host tests passed: real signed bytes, "
-        "bounded parser, planner, trust refusals, installed-state removal"
+        "bounded parser/planner/builder, update pruning, trust refusals"
     )
     return 0
 

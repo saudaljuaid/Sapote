@@ -1668,6 +1668,7 @@ enum package_manager_status package_manager_plan_install(
     }
     result->operation = 0;
     result->target = requested;
+    result->root = (struct package_manager_text){ NULL, 0U };
     result->count = 0U;
     if (install_solver_busy) {
         return PACKAGE_MANAGER_STATUS_STATE;
@@ -1683,6 +1684,10 @@ enum package_manager_status package_manager_plan_install(
     status = solve_requirement(&install_solver, &requested,
         &constraint, 0U);
     if (status != PACKAGE_MANAGER_STATUS_OK) {
+        goto finish;
+    }
+    if (!binding_for(&install_solver, &requested, &result->root)) {
+        status = PACKAGE_MANAGER_STATUS_STATE;
         goto finish;
     }
     status = order_packages(&install_solver, install_order_states,
@@ -1718,7 +1723,7 @@ enum package_manager_status package_manager_plan_install(
                 status = PACKAGE_MANAGER_STATUS_DOWNGRADE;
                 goto finish;
             }
-            if (text_equal(&entry.identifier, &requested)) {
+            if (text_equal(&entry.identifier, &result->root)) {
                 target_installed = true;
                 target_explicit = installed_explicit;
             }
@@ -1888,6 +1893,7 @@ enum package_manager_status package_manager_plan_remove(
     }
     result->operation = 0;
     result->target = requested;
+    result->root = requested;
     result->count = 0U;
     if (!installed_index_for(installed, &requested, &target)) {
         return PACKAGE_MANAGER_STATUS_NOT_FOUND;

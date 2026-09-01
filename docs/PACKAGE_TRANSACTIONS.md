@@ -233,6 +233,17 @@ parser accepts the complete generated database. Its host proof requires exact
 byte equality with the independently assembled two-package fixture and refuses
 bad ordering, file collisions, missing digests, and output-length mismatch.
 
+`package_builder.c` supplies those arrays from an authenticated plan without
+performing filesystem I/O. It reopens the signed repository and package bytes,
+recomputes the plan, preserves unchanged package metadata and file sources,
+binds changed dependency edges to the selected providers, promotes the requested
+root, and removes automatic packages no longer reachable after an update. Its
+caller-owned heap workspace records whether every output file must be copied
+from the old generation or written from an admitted package payload. The host
+proof covers fresh install, unchanged-file reuse, zero-download root promotion,
+full removal, dependency-changing update/orphan pruning, plan mismatch, and
+wrong payload ordering before passing the result through the canonical encoder.
+
 The SHA-256 context API is public so the filesystem service can hash immutable
 files in bounded chunks; update-after-finish, finish-twice, and counter overflow
 are refused.

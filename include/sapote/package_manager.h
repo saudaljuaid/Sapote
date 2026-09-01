@@ -201,6 +201,7 @@ struct package_manager_plan_item {
 struct package_manager_plan {
     enum package_manager_plan_operation operation;
     struct package_manager_text target;
+    struct package_manager_text root;
     uint32_t count;
     struct package_manager_plan_item items[PACKAGE_MANAGER_PLAN_MAX_PACKAGES];
 };
@@ -281,7 +282,8 @@ enum package_manager_status package_manager_package_conflict(
  * deterministic, rejects ambiguous providers and backtracks over versions.
  * An installed database is optional for a fresh install.  A successful
  * zero-item install promotes an already-present automatic dependency to an
- * explicit root without downloading its unchanged bytes.
+ * explicit root without downloading its unchanged bytes.  target is the exact
+ * requested identity; root is its uniquely selected provider package.
  */
 enum package_manager_status package_manager_plan_install(
     const struct package_manager_repository_view *repository,

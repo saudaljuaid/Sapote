@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <sapote/package_builder.h>
 #include <sapote/package_manager.h>
 #include <sapote/package_trust.h>
 
@@ -66,6 +67,14 @@ static bool any_bytes(const uint8_t *bytes, size_t count)
 }
 
 static bool text_is(const struct package_manager_text *text, const char *value)
+{
+    size_t length = strlen(value);
+
+    return text->length == length &&
+        same_bytes(text->bytes, (const uint8_t *)value, length);
+}
+
+static bool state_text_is(const struct package_state_text *text, const char *value)
 {
     size_t length = strlen(value);
 
@@ -337,6 +346,224 @@ static int expect_plan_status(
     return status == expected ? 0 : 1;
 }
 
+static int test_fresh_builder(
+    const struct package_manager_repository_view *repository,
+    const struct package_manager_plan *plan,
+    const struct file_bytes *application,
+    const struct file_bytes *library,
+    const struct package_manager_policy *policy,
+    const struct package_manager_trust *trust
+)
+{
+    struct package_builder_workspace *workspace = calloc(1U, sizeof(*workspace));
+    struct package_builder_package_bytes packages[2];
+    struct package_state_database_view encoded_view;
+    struct package_state_database_view promoted_view;
+    struct package_manager_plan changed_plan = *plan;
+    struct package_manager_plan promotion_plan;
+    struct package_manager_plan removal_plan;
+    uint8_t *encoded;
+    uint8_t *promoted;
+    size_t encoded_bytes;
+
+    CHECK(workspace != NULL && plan->count == 2U);
+    packages[0] = (struct package_builder_package_bytes){
+        library->bytes, library->count
+    };
+    packages[1] = (struct package_builder_package_bytes){
+        application->bytes, application->count
+    };
+    CHECK(package_builder_build(repository, NULL, plan, packages, 2U, policy,
+            trust, workspace) == PACKAGE_MANAGER_STATUS_OK &&
+        workspace->spec.generation == 1U && workspace->spec.abi == 1U &&
+        workspace->spec.package_count == 2U &&
+        workspace->spec.dependency_count == 1U &&
+        workspace->spec.file_count == 2U &&
+        state_text_is(&workspace->packages[0].identifier, "org.sapote.app") &&
+        workspace->packages[0].explicit_root &&
+        workspace->packages[0].dependency_start == 0U &&
+        workspace->packages[0].dependency_count == 1U &&
+        state_text_is(&workspace->packages[1].identifier, "org.sapote.lib") &&
+        !workspace->packages[1].explicit_root &&
+        state_text_is(&workspace->dependencies[0].requested,
+            "org.sapote.lib") &&
+        state_text_is(&workspace->dependencies[0].provider,
+            "org.sapote.lib") &&
+        state_text_is(&workspace->files[0].path, "bin/proof-app") &&
+        workspace->files[0].owner_index == 0U &&
+        workspace->file_sources[0].kind ==
+            PACKAGE_BUILDER_FILE_SOURCE_PAYLOAD &&
+        workspace->file_sources[0].package_index == 1U &&
+        workspace->file_sources[0].payload_bytes ==
+            sizeof("\x7f" "ELFproof-application") - 1U &&
+        state_text_is(&workspace->files[1].path, "lib/libproof.so.1") &&
+        workspace->files[1].owner_index == 1U &&
+        workspace->file_sources[1].kind ==
+            PACKAGE_BUILDER_FILE_SOURCE_PAYLOAD &&
+        workspace->file_sources[1].package_index == 0U);
+    CHECK(package_generation_size(&workspace->spec, &encoded_bytes) ==
+        PACKAGE_STATE_STATUS_OK);
+    encoded = malloc(encoded_bytes);
+    CHECK(encoded != NULL && package_generation_encode(&workspace->spec,
+            encoded, encoded_bytes, &encoded_view) == PACKAGE_STATE_STATUS_OK &&
+        encoded_view.generation == 1U && encoded_view.file_count == 2U);
+    CHECK(package_manager_plan_install(repository, &encoded_view,
+        (const uint8_t *)"org.sapote.lib", 14U, policy, trust,
+        &promotion_plan) == PACKAGE_MANAGER_STATUS_OK &&
+        promotion_plan.count == 0U);
+    CHECK(package_builder_build(repository, &encoded_view, &promotion_plan,
+            NULL, 0U, policy, trust, workspace) == PACKAGE_MANAGER_STATUS_OK &&
+        workspace->spec.generation == 2U && workspace->spec.file_count == 2U &&
+        workspace->packages[1].explicit_root &&
+        workspace->file_sources[0].kind ==
+            PACKAGE_BUILDER_FILE_SOURCE_INSTALLED &&
+        workspace->file_sources[0].payload == NULL &&
+        workspace->file_sources[1].kind ==
+            PACKAGE_BUILDER_FILE_SOURCE_INSTALLED &&
+        workspace->file_sources[1].payload == NULL);
+    promoted = malloc(encoded_bytes);
+    CHECK(promoted != NULL && package_generation_encode(&workspace->spec,
+            promoted, encoded_bytes, &promoted_view) == PACKAGE_STATE_STATUS_OK);
+    CHECK(package_manager_plan_remove(&promoted_view,
+        (const uint8_t *)"org.sapote.app", 14U, &removal_plan) ==
+            PACKAGE_MANAGER_STATUS_OK && removal_plan.count == 1U &&
+        text_is(&removal_plan.items[0].identifier, "org.sapote.app"));
+    CHECK(package_builder_build(NULL, &promoted_view, &removal_plan, NULL, 0U,
+            NULL, NULL, workspace) == PACKAGE_MANAGER_STATUS_OK &&
+        workspace->spec.generation == 3U &&
+        workspace->spec.package_count == 1U &&
+        state_text_is(&workspace->packages[0].identifier, "org.sapote.lib") &&
+        workspace->packages[0].explicit_root &&
+        workspace->spec.file_count == 1U &&
+        state_text_is(&workspace->files[0].path, "lib/libproof.so.1") &&
+        workspace->files[0].owner_index == 0U &&
+        workspace->file_sources[0].kind ==
+            PACKAGE_BUILDER_FILE_SOURCE_INSTALLED);
+    free(promoted);
+    free(encoded);
+
+    changed_plan.items[1].source_index = changed_plan.items[0].source_index;
+    CHECK(package_builder_build(repository, NULL, &changed_plan, packages, 2U,
+            policy, trust, workspace) == PACKAGE_MANAGER_STATUS_STATE &&
+        workspace->spec.package_count == 0U);
+    packages[0] = (struct package_builder_package_bytes){
+        application->bytes, application->count
+    };
+    CHECK(package_builder_build(repository, NULL, plan, packages, 2U, policy,
+            trust, workspace) != PACKAGE_MANAGER_STATUS_OK &&
+        workspace->spec.package_count == 0U);
+    free(workspace);
+    return 0;
+}
+
+static int test_existing_builder(
+    const struct package_manager_repository_view *repository,
+    const struct package_state_database_view *installed,
+    const struct package_manager_plan *plan,
+    const struct package_manager_policy *policy,
+    const struct package_manager_trust *trust,
+    bool remove_all
+)
+{
+    struct package_builder_workspace *workspace = calloc(1U, sizeof(*workspace));
+    struct package_state_database_view encoded_view;
+    uint8_t *encoded;
+    size_t encoded_bytes;
+
+    CHECK(workspace != NULL);
+    if (remove_all) {
+        CHECK(package_builder_build(NULL, installed, plan, NULL, 0U, NULL, NULL,
+                workspace) == PACKAGE_MANAGER_STATUS_OK &&
+            workspace->spec.generation == installed->generation + 1U &&
+            workspace->spec.package_count == 0U &&
+            workspace->spec.dependency_count == 0U &&
+            workspace->spec.file_count == 0U);
+    } else {
+        CHECK(package_builder_build(repository, installed, plan, NULL, 0U,
+                policy, trust, workspace) == PACKAGE_MANAGER_STATUS_OK &&
+            workspace->spec.generation == installed->generation + 1U &&
+            workspace->spec.package_count == 2U &&
+            workspace->spec.dependency_count == 1U &&
+            workspace->spec.file_count == 0U &&
+            state_text_is(&workspace->packages[0].identifier,
+                "org.sapote.app") && workspace->packages[0].explicit_root &&
+            state_text_is(&workspace->packages[1].identifier,
+                "org.sapote.lib") && workspace->packages[1].explicit_root);
+    }
+    CHECK(package_generation_size(&workspace->spec, &encoded_bytes) ==
+        PACKAGE_STATE_STATUS_OK);
+    encoded = malloc(encoded_bytes);
+    CHECK(encoded != NULL && package_generation_encode(&workspace->spec,
+            encoded, encoded_bytes, &encoded_view) == PACKAGE_STATE_STATUS_OK &&
+        encoded_view.generation == installed->generation + 1U);
+    free(encoded);
+    free(workspace);
+    return 0;
+}
+
+static int test_update_builder(
+    const struct file_bytes *repository_bytes,
+    const struct package_state_database_view *installed,
+    const struct file_bytes *application,
+    const struct file_bytes *library,
+    const struct package_manager_policy *policy,
+    const struct package_manager_trust *trust
+)
+{
+    struct package_builder_workspace *workspace = calloc(1U, sizeof(*workspace));
+    struct package_manager_repository_view repository;
+    struct package_manager_plan plan;
+    struct package_builder_package_bytes packages[2];
+    struct package_state_database_view encoded_view;
+    uint8_t *encoded;
+    size_t encoded_bytes;
+
+    CHECK(workspace != NULL && package_manager_repository_open(
+        repository_bytes->bytes, repository_bytes->count, policy, trust,
+        &repository) == PACKAGE_MANAGER_STATUS_OK);
+    CHECK(package_manager_plan_install(&repository, installed,
+        (const uint8_t *)"org.sapote.app", 14U, policy, trust, &plan) ==
+            PACKAGE_MANAGER_STATUS_OK &&
+        plan.operation == PACKAGE_MANAGER_PLAN_UPDATE && plan.count == 2U &&
+        text_is(&plan.items[0].identifier, "org.sapote.newlib") &&
+        text_is(&plan.items[1].identifier, "org.sapote.app"));
+    packages[0] = (struct package_builder_package_bytes){
+        library->bytes, library->count
+    };
+    packages[1] = (struct package_builder_package_bytes){
+        application->bytes, application->count
+    };
+    CHECK(package_builder_build(&repository, installed, &plan, packages, 2U,
+            policy, trust, workspace) == PACKAGE_MANAGER_STATUS_OK &&
+        workspace->spec.generation == installed->generation + 1U &&
+        workspace->spec.package_count == 2U &&
+        workspace->spec.dependency_count == 1U &&
+        workspace->spec.file_count == 2U &&
+        state_text_is(&workspace->packages[0].identifier, "org.sapote.app") &&
+        state_text_is(&workspace->packages[0].version, "2.0.0") &&
+        workspace->packages[0].explicit_root &&
+        state_text_is(&workspace->packages[1].identifier,
+            "org.sapote.newlib") &&
+        !workspace->packages[1].explicit_root &&
+        state_text_is(&workspace->dependencies[0].provider,
+            "org.sapote.newlib") &&
+        state_text_is(&workspace->files[0].path, "bin/proof-app") &&
+        state_text_is(&workspace->files[1].path, "lib/libnew.so.2") &&
+        workspace->file_sources[0].kind ==
+            PACKAGE_BUILDER_FILE_SOURCE_PAYLOAD &&
+        workspace->file_sources[1].kind ==
+            PACKAGE_BUILDER_FILE_SOURCE_PAYLOAD);
+    CHECK(package_generation_size(&workspace->spec, &encoded_bytes) ==
+        PACKAGE_STATE_STATUS_OK);
+    encoded = malloc(encoded_bytes);
+    CHECK(encoded != NULL && package_generation_encode(&workspace->spec,
+            encoded, encoded_bytes, &encoded_view) == PACKAGE_STATE_STATUS_OK &&
+        encoded_view.package_count == 2U && encoded_view.file_count == 2U);
+    free(encoded);
+    free(workspace);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     struct file_bytes repository_bytes;
@@ -344,6 +571,9 @@ int main(int argc, char **argv)
     struct file_bytes publisher_key;
     struct file_bytes application_bytes;
     struct file_bytes library_bytes;
+    struct file_bytes update_repository_bytes;
+    struct file_bytes update_application_bytes;
+    struct file_bytes update_library_bytes;
     struct trust_context context;
     struct package_manager_trust trust;
     struct package_manager_policy policy = normal_policy();
@@ -363,16 +593,24 @@ int main(int argc, char **argv)
     uint8_t installed_bytes[INSTALLED_BYTES];
     uint8_t *changed;
 
-    CHECK(argc == 12);
+    CHECK(argc == 15);
     repository_bytes = read_file(argv[1], PACKAGE_MANAGER_REPOSITORY_MAX_BYTES);
     root_key = read_file(argv[2], PACKAGE_MANAGER_ED25519_PUBLIC_KEY_BYTES);
     publisher_key = read_file(argv[3], PACKAGE_MANAGER_ED25519_PUBLIC_KEY_BYTES);
     application_bytes = read_file(argv[4], PACKAGE_MANAGER_PACKAGE_MAX_BYTES);
     library_bytes = read_file(argv[5], PACKAGE_MANAGER_PACKAGE_MAX_BYTES);
+    update_repository_bytes = read_file(argv[12],
+        PACKAGE_MANAGER_REPOSITORY_MAX_BYTES);
+    update_application_bytes = read_file(argv[13],
+        PACKAGE_MANAGER_PACKAGE_MAX_BYTES);
+    update_library_bytes = read_file(argv[14],
+        PACKAGE_MANAGER_PACKAGE_MAX_BYTES);
     CHECK(repository_bytes.bytes != NULL &&
         root_key.count == PACKAGE_MANAGER_ED25519_PUBLIC_KEY_BYTES &&
         publisher_key.count == PACKAGE_MANAGER_ED25519_PUBLIC_KEY_BYTES &&
-        application_bytes.bytes != NULL && library_bytes.bytes != NULL);
+        application_bytes.bytes != NULL && library_bytes.bytes != NULL &&
+        update_repository_bytes.bytes != NULL &&
+        update_application_bytes.bytes != NULL && update_library_bytes.bytes != NULL);
     CHECK(initialize_trust_context(&context, root_key.bytes,
         publisher_key.bytes));
     trust = make_trust(&context);
@@ -392,7 +630,8 @@ int main(int argc, char **argv)
         (const uint8_t *)"org.sapote.app", 14U, &policy, &trust, &plan) ==
             PACKAGE_MANAGER_STATUS_OK &&
         plan.operation == PACKAGE_MANAGER_PLAN_INSTALL &&
-        text_is(&plan.target, "org.sapote.app") && plan.count == 2U &&
+        text_is(&plan.target, "org.sapote.app") &&
+        text_is(&plan.root, "org.sapote.app") && plan.count == 2U &&
         text_is(&plan.items[0].identifier, "org.sapote.lib") &&
         text_is(&plan.items[1].identifier, "org.sapote.app"));
     CHECK(package_manager_plan_dependency_binding(&repository, &plan, 1U, 0U,
@@ -456,6 +695,8 @@ int main(int argc, char **argv)
         memcmp(library_file.payload, "\x7f" "ELFproof-library",
             library_file.payload_bytes) == 0 &&
         context.verification_count == 3U);
+    CHECK(test_fresh_builder(&repository, &plan, &application_bytes,
+        &library_bytes, &policy, &trust) == 0);
 
     CHECK(build_installed_database(installed_bytes, &application_entry,
         &library_entry));
@@ -468,8 +709,10 @@ int main(int argc, char **argv)
         (const uint8_t *)"org.sapote.app", 14U, &plan) ==
             PACKAGE_MANAGER_STATUS_OK &&
         text_is(&plan.target, "org.sapote.app") && plan.count == 2U &&
+        text_is(&plan.root, "org.sapote.app") &&
         text_is(&plan.items[0].identifier, "org.sapote.app") &&
         text_is(&plan.items[1].identifier, "org.sapote.lib"));
+    CHECK(test_existing_builder(NULL, &installed, &plan, NULL, NULL, true) == 0);
     CHECK(package_manager_plan_remove(&installed,
         (const uint8_t *)"org.sapote.lib", 14U, &plan) ==
             PACKAGE_MANAGER_STATUS_IN_USE);
@@ -478,10 +721,15 @@ int main(int argc, char **argv)
         search.count == 1U && search.repository_indices[0] == 0U);
 
     CHECK(package_manager_plan_install(&repository, &installed,
-        (const uint8_t *)"org.sapote.lib", 14U, &policy, &trust, &plan) ==
+        (const uint8_t *)"virtual.proof", 13U, &policy, &trust, &plan) ==
             PACKAGE_MANAGER_STATUS_OK &&
         plan.operation == PACKAGE_MANAGER_PLAN_INSTALL &&
-        text_is(&plan.target, "org.sapote.lib") && plan.count == 0U);
+        text_is(&plan.target, "virtual.proof") &&
+        text_is(&plan.root, "org.sapote.lib") && plan.count == 0U);
+    CHECK(test_existing_builder(&repository, &installed, &plan, &policy,
+        &trust, false) == 0);
+    CHECK(test_update_builder(&update_repository_bytes, &installed,
+        &update_application_bytes, &update_library_bytes, &policy, &trust) == 0);
 
     CHECK(package_manager_repository_open(repository_bytes.bytes,
         repository_bytes.count, &policy, NULL, &repository) ==
@@ -563,6 +811,10 @@ int main(int argc, char **argv)
     free(publisher_key.bytes);
     free(application_bytes.bytes);
     free(library_bytes.bytes);
-    (void)puts("Sapote bounded guest package-manager core tests passed");
+    free(update_repository_bytes.bytes);
+    free(update_application_bytes.bytes);
+    free(update_library_bytes.bytes);
+    (void)puts("Sapote bounded guest package-manager and generation-builder "
+        "tests passed");
     return 0;
 }

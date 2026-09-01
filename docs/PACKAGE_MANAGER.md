@@ -56,8 +56,9 @@ rotation rather than silently changing trust. Removal starts from an explicit
 installed root and removes only dependencies no longer reachable from another
 explicit root; shared dependencies stay installed. Removal plans do not delete
 mutable application data. Every successful plan retains the exact requested
-target identity separately from its dependency-first changed-item list so a
-generation builder can preserve or assign the explicit-root flag correctly. An
+target and its uniquely selected provider-package root separately from the
+dependency-first changed-item list so a generation builder can preserve or
+assign the explicit-root flag correctly, including virtual-capability requests. An
 already-present automatic dependency is promoted by a successful zero-download
 install plan rather than being misreported as explicitly installed.
 
@@ -85,10 +86,17 @@ consumer's exact dependency identifier, constraint, and unique provider
 identity. It revalidates the plan item against the authenticated repository and
 uses the resolver's bounded ambiguity rule without adding another large binding
 array to the already stack-sensitive plan. The provider may be an unchanged
-installed package and therefore need no plan item of its own. The future builder
-must still prevent path traversal and ownership collisions, write a complete
-next generation, verify it, and commit it through the package transaction
-protocol.
+installed package and therefore need no plan item of its own.
+
+`package_builder.c` implements the allocation-free metadata half of the
+generation boundary in a caller-owned heap workspace. It re-authenticates the
+repository and every package, recomputes the supplied plan, merges unchanged
+installed records with changed packages, assigns the requested explicit root,
+prunes automatic dependencies that are no longer reachable, refuses cycles and
+file ownership collisions, and emits canonical package, provider-edge, and file
+arrays for `package_generation_encode()`. Each file retains an exact old-file or
+signed-payload source. The builder performs no filesystem I/O; staging, durable
+commit, and cleanup remain separate privileged-service work.
 
 ## Verification and integration
 
@@ -104,5 +112,5 @@ unsatisfied dependencies, conflicts, ambiguous providers, cycles, backtracking,
 and the dependency-depth bound.
 
 `package_service.c` recovers already-staged FAT32 generations. Fetching,
-signature-provider setup, generation building and commit, client commands, and
+signature-provider setup, filesystem staging and commit, client commands, and
 Store presentation remain outside this parser and planner.
