@@ -87,8 +87,11 @@ def write(path: Path, payload: bytes) -> str:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: package_manager_host_test.py HOST_TEST")
+    if len(sys.argv) not in (2, 3):
+        raise SystemExit(
+            "usage: package_manager_host_test.py MANAGER_TEST "
+            "[CONTROL_TEST]"
+        )
     if not PACKAGE.ed25519_available():
         if os.environ.get("SAPOTE_REQUIRE_ED25519") == "1":
             raise AssertionError("Python Ed25519 support is required")
@@ -228,6 +231,10 @@ def main() -> int:
             write(directory / "newlib.spk", replacement_library),
         ]
         subprocess.run([sys.argv[1], *paths], check=True)
+        if len(sys.argv) == 3:
+            subprocess.run(
+                [sys.argv[2], *paths[:5], *paths[11:14]], check=True
+            )
     print(
         "Sapote guest package-manager host tests passed: real signed bytes, "
         "bounded parser/planner/builder, update pruning, trust refusals"

@@ -14,6 +14,7 @@ struct upload_slot {
     sapfs_handle file;
     uint64_t owner;
     uint64_t byte_count;
+    uint8_t digest[PACKAGE_STATE_SHA256_BYTES];
     uint32_t generation;
     bool active;
     bool file_open;
@@ -90,6 +91,9 @@ static enum package_upload_status finish(
         if (slot != NULL) {
             report->token = encode_token(index, slot->generation);
             report->byte_count = slot->byte_count;
+            for (size_t at = 0U; at < sizeof(report->sha256); ++at) {
+                report->sha256[at] = slot->digest[at];
+            }
             report->sealed = slot->sealed;
             report->durable = slot->durable;
         }
@@ -424,7 +428,7 @@ enum package_upload_status package_upload_seal(
             slot, index);
     }
     for (size_t at = 0U; at < sizeof(digest); ++at) {
-        report->sha256[at] = digest[at];
+        slot->digest[at] = digest[at];
     }
     if (slot->byte_count != expected_bytes) {
         slot->poisoned = true;
@@ -508,6 +512,33 @@ enum package_upload_status package_upload_read(
     return finish(report, fs_status == SAPFS_STATUS_OK ?
         PACKAGE_UPLOAD_STATUS_OK : PACKAGE_UPLOAD_STATUS_FILESYSTEM,
         fs_status, slot, index);
+}
+
+enum package_upload_status package_upload_inspect(
+    uint64_t owner,
+    package_upload_token token,
+    struct package_upload_report *report
+)
+{
+    struct upload_slot *slot;
+    size_t index;
+
+    report_clear(report);
+    if (report == NULL) {
+        return PACKAGE_UPLOAD_STATUS_NULL_ARGUMENT;
+    }
+    enum package_upload_status status = resolve_slot(owner, token, &slot,
+        &index);
+
+    if (status != PACKAGE_UPLOAD_STATUS_OK) {
+        return finish(report, status, SAPFS_STATUS_OK, NULL, 0U);
+    }
+    if (!slot->sealed || !slot->durable || slot->poisoned || slot->file_open) {
+        return finish(report, PACKAGE_UPLOAD_STATUS_STATE, SAPFS_STATUS_OK,
+            slot, index);
+    }
+    return finish(report, PACKAGE_UPLOAD_STATUS_OK, SAPFS_STATUS_OK, slot,
+        index);
 }
 
 enum package_upload_status package_upload_close(

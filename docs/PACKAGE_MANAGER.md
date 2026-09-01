@@ -141,6 +141,14 @@ writes up to the VFS's real 16 MiB file bound, seal only to an exact privileged
 caller-supplied length and digest, flush before use, and clean up on final close
 or process exit. Sealing proves stable bytes, not the authority of those
 expected values. Transaction-control calls must consume the handle while
-binding it to an admitted repository record; those calls, end-user client
-commands, Store presentation, and writable-ext4 integration remain outside
-this parser and planner.
+binding it to an admitted repository record. `package_control.c` now provides
+that privileged internal boundary for install and update: it authenticates a
+sealed repository through platform trust and wall-clock policy, recovers and
+snapshots installed authority, exposes a bounded eight-package plan, copies
+only exact repository-bound sealed payloads, re-authenticates every package,
+rebuilds canonical state, and invokes bootstrap or prepare/commit. Its signed
+host lifecycle also proves retry of a prepared commit after a durability error
+and zero controller allocations after close or refusal. A persistent repository
+rollback floor, native control-handle syscalls, remove/repair control sessions,
+end-user client commands, Store presentation, and writable-ext4 integration
+remain separate unfinished layers.

@@ -35,7 +35,7 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	native-https
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 EXPECTED_TEST_SCENARIO_COUNT := 116
-EXPECTED_SHELL_ASSERTION_COUNT := 461
+EXPECTED_SHELL_ASSERTION_COUNT := 463
 
 CC := gcc
 LD := ld
@@ -78,6 +78,7 @@ SDK_TIME_HOST_TEST := $(TEST_BUILD_DIR)/sdk-time-host-test
 PACKAGE_STATE_HOST_TEST := $(TEST_BUILD_DIR)/package-state-host-test
 PACKAGE_SERVICE_HOST_TEST := $(TEST_BUILD_DIR)/package-service-host-test
 PACKAGE_MANAGER_HOST_TEST := $(TEST_BUILD_DIR)/package-manager-host-test
+PACKAGE_CONTROL_HOST_TEST := $(TEST_BUILD_DIR)/package-control-host-test
 PACKAGE_TRUST_HOST_TEST := $(TEST_BUILD_DIR)/package-trust-host-test
 PACKAGE_FETCH_HOST_TEST := $(TEST_BUILD_DIR)/package-fetch-host-test
 PACKAGE_UPLOAD_HOST_TEST := $(TEST_BUILD_DIR)/package-upload-host-test
@@ -385,7 +386,7 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d) $(MONOCYPHER_OBJECTS:.o=.d) \
 # They never create a file of their own name, so they rerun regardless.
 .PHONY: all audio-wav-tests capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios dynamic-elf-tests ext4-images ext4-tests fat32-images force-package-trust hooks https-tests \
 	iso kernel lint native-apps native-audio-proof native-dynamic-proof native-https-proof native-sdl-proof port-tests qemu-port-tests reproducible-sdk run \
-	package-fetch-tests package-manager-tests package-repository-tests package-service-tests package-state-tests package-transaction-tests package-trust-asset-tests package-trust-tests package-upload-tests qemu-test-ext4-powercuts screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests zlib-tests
+	package-control-tests package-fetch-tests package-manager-tests package-repository-tests package-service-tests package-state-tests package-transaction-tests package-trust-asset-tests package-trust-tests package-upload-tests qemu-test-ext4-powercuts screenshot-proof sdk sdk-once smoke tls-tests toolchain verify wall-clock-tests zlib-tests
 
 all: kernel
 
@@ -1216,11 +1217,31 @@ $(PACKAGE_MANAGER_HOST_TEST): tools/package-manager-host-test.c \
 		src/kernel/package_trust.c src/kernel/package_state.c \
 		$(MONOCYPHER_HOST_OBJECTS) -o $@
 
-package-manager-tests: $(PACKAGE_MANAGER_HOST_TEST) \
+$(PACKAGE_CONTROL_HOST_TEST): tools/package-control-host-test.c \
+		src/kernel/package_control.c src/kernel/package_builder.c \
+		src/kernel/package_generation.c src/kernel/package_manager.c \
+		src/kernel/package_trust.c src/kernel/package_state.c \
+		include/sapote/package_control.h include/sapote/package_builder.h \
+		include/sapote/package_generation.h include/sapote/package_manager.h \
+		include/sapote/package_trust.h include/sapote/package_state.h \
+		$(MONOCYPHER_HOST_OBJECTS)
+	mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -Wshadow \
+		-Wundef -Wstrict-prototypes -Wmissing-prototypes -Iinclude \
+		-Ivendor/monocypher/src -Ivendor/monocypher/src/optional \
+		tools/package-control-host-test.c src/kernel/package_control.c \
+		src/kernel/package_builder.c src/kernel/package_generation.c \
+		src/kernel/package_manager.c src/kernel/package_trust.c \
+		src/kernel/package_state.c $(MONOCYPHER_HOST_OBJECTS) -o $@
+
+package-control-tests: $(PACKAGE_MANAGER_HOST_TEST) $(PACKAGE_CONTROL_HOST_TEST) \
 		tools/package_manager_host_test.py tools/sapote-repository.py \
 		tools/sapote-package.py
 	SAPOTE_REQUIRE_ED25519=1 $(PYTHON) -u \
-		tools/package_manager_host_test.py $(PACKAGE_MANAGER_HOST_TEST)
+		tools/package_manager_host_test.py $(PACKAGE_MANAGER_HOST_TEST) \
+			$(PACKAGE_CONTROL_HOST_TEST)
+
+package-manager-tests: package-control-tests
 
 $(ZLIB_HOST_TEST): tools/zlib-host-test.c sdk/src/zlib.c \
 		sdk/include/sapote/zlib.h $(ZLIB_SOURCE) $(ZLIB_HEADERS)
@@ -1315,7 +1336,7 @@ verify: toolchain lint
 	$(MAKE) kernel
 	$(MAKE) wall-clock-tests ext4-tests package-repository-tests \
 		package-transaction-tests package-state-tests package-service-tests \
-		package-trust-asset-tests package-trust-tests package-manager-tests \
+		package-trust-asset-tests package-trust-tests package-control-tests \
 		package-fetch-tests package-upload-tests \
 		dynamic-elf-tests \
 		https-tests tls-tests zlib-tests

@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #include <sapote/fat32_fs.h>
 #include <sapote/package_state.h>
@@ -261,6 +262,9 @@ static int exact_upload_test(void)
         &report) == PACKAGE_UPLOAD_STATUS_STATE, 13);
     CHECK(package_upload_seal(41U, token, sizeof(abc), abc_sha256, &report) ==
         PACKAGE_UPLOAD_STATUS_OK && report.sealed && report.durable, 14);
+    CHECK(package_upload_inspect(41U, token, &report) ==
+            PACKAGE_UPLOAD_STATUS_OK && report.byte_count == sizeof(abc) &&
+        memcmp(report.sha256, abc_sha256, sizeof(abc_sha256)) == 0, 141);
     CHECK(package_upload_write(41U, token, abc, sizeof(abc), &completed,
         &report) == PACKAGE_UPLOAD_STATUS_STATE, 15);
     CHECK(package_upload_read(41U, token, 0U, copy, sizeof(copy), &completed,

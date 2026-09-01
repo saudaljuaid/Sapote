@@ -461,8 +461,19 @@ boundary, persisted bootstrap and authority-switch prefixes, journal-last
 cleanup ordering, durability failure with recoverable state, and zero live
 handle/allocation census on every exit.
 
-The transaction service starts from authenticated package bytes and an existing
-valid authenticated builder result. The SDK can durably stage exact HTTPS bytes
-and boot provisions the immutable trust provider, but no privileged client
-endpoint connects those layers yet. Client presentation and writable-ext4
-backend evidence remain separate integration layers.
+`package_control.c` connects the internal install/update layers without
+exposing them prematurely as an application feature. It consumes only sealed
+kernel upload handles, authenticates repository bytes with platform trust and
+wall-clock freshness, recovers the authority-selected installed snapshot,
+binds each payload to the exact planned repository digest and length,
+re-authenticates packages, rebuilds the canonical generation, and enters this
+service's bootstrap or prepare/commit path. The controller retains a prepared
+session after a commit durability failure so the same token retries only the
+authority commit. Its real signed-fixture host proof covers fresh install,
+persisted-state update, wrong-owner and wrong-payload refusal, stale handles,
+and allocation census.
+
+This is still an internal privileged core, not a completed package feature. A
+durable minimum-repository-version record, native control-handle ABI, remove
+and repair sessions, client presentation, and writable-ext4 backend evidence
+remain separate integration layers.

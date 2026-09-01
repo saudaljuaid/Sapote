@@ -91,6 +91,13 @@ enum package_upload_status package_upload_read(
     struct package_upload_report *report
 );
 
+/* Reports only a sealed, durable upload and performs no filesystem access. */
+enum package_upload_status package_upload_inspect(
+    uint64_t owner,
+    package_upload_token token,
+    struct package_upload_report *report
+);
+
 /* Last native-handle close calls this and durably removes the private file. */
 enum package_upload_status package_upload_close(
     uint64_t owner,
