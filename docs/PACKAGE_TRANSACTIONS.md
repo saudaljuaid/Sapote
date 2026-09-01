@@ -211,6 +211,13 @@ locations, counts, record sizes, canonical text and SemVer grammars, package-v3
 per-package limits, unique sorting, provider existence, file ownership, modes,
 SONAMEs, zero reserved bytes, and both content and envelope digests.
 
+The same core emits canonical authority and prepared-journal records for a
+future privileged generation committer. Both encoders re-parse their database
+inputs, enforce adjacent generations and bounded canonical target identifiers,
+and clear the entire output on refusal. Recovery uses the public authority
+encoder too, so repair and installation cannot drift into different record
+encodings.
+
 The SHA-256 context API is public so the filesystem service can hash immutable
 files in bounded chunks; update-after-finish, finish-twice, and counter overflow
 are refused.

@@ -90,6 +90,16 @@ static bool same_bytes(const uint8_t *left, const uint8_t *right, size_t count)
     return different == 0U;
 }
 
+static bool all_zero(const uint8_t *bytes, size_t count)
+{
+    uint8_t combined = 0U;
+
+    for (size_t index = 0U; index < count; ++index) {
+        combined |= bytes[index];
+    }
+    return combined == 0U;
+}
+
 static void digest_text(const char *text, uint8_t output[PACKAGE_STATE_SHA256_BYTES])
 {
     size_t length = 0U;
@@ -427,6 +437,61 @@ static int test_parsers_and_mutations(
     return 0;
 }
 
+static int test_encoders(
+    const uint8_t old_database[OLD_DATABASE_BYTES],
+    const uint8_t new_database[NEW_DATABASE_BYTES],
+    const uint8_t authority[PACKAGE_STATE_AUTHORITY_BYTES],
+    const uint8_t journal[PACKAGE_STATE_JOURNAL_BYTES]
+)
+{
+    static const uint8_t target[] = "org.sapote.app";
+    struct package_state_database_view old_view;
+    struct package_state_database_view new_view;
+    struct package_state_database_view invalid_view;
+    struct package_state_journal_spec spec;
+    uint8_t encoded_authority[PACKAGE_STATE_AUTHORITY_BYTES];
+    uint8_t encoded_journal[PACKAGE_STATE_JOURNAL_BYTES];
+
+    CHECK(package_state_database_parse(old_database, OLD_DATABASE_BYTES,
+            &old_view) == PACKAGE_STATE_STATUS_OK &&
+        package_state_database_parse(new_database, NEW_DATABASE_BYTES,
+            &new_view) == PACKAGE_STATE_STATUS_OK, 40);
+    CHECK(package_state_authority_encode(&new_view, encoded_authority) ==
+            PACKAGE_STATE_STATUS_OK &&
+        same_bytes(encoded_authority, authority, sizeof(encoded_authority)), 41);
+    spec = (struct package_state_journal_spec){
+        PACKAGE_STATE_OPERATION_INSTALL,
+        &old_view,
+        &new_view,
+        4096U,
+        target,
+        sizeof(target) - 1U
+    };
+    CHECK(package_state_journal_encode(&spec, encoded_journal) ==
+            PACKAGE_STATE_STATUS_OK &&
+        same_bytes(encoded_journal, journal, sizeof(encoded_journal)), 42);
+
+    invalid_view = new_view;
+    invalid_view.byte_count = 1U;
+    encoded_authority[0] = 1U;
+    CHECK(package_state_authority_encode(&invalid_view, encoded_authority) ==
+            PACKAGE_STATE_STATUS_LENGTH &&
+        all_zero(encoded_authority, sizeof(encoded_authority)), 43);
+    spec.target = &old_view;
+    encoded_journal[0] = 1U;
+    CHECK(package_state_journal_encode(&spec, encoded_journal) ==
+            PACKAGE_STATE_STATUS_JOURNAL &&
+        all_zero(encoded_journal, sizeof(encoded_journal)), 44);
+    spec.target = &new_view;
+    spec.target_identifier = (const uint8_t *)"Bad/Identifier";
+    spec.target_identifier_bytes = sizeof("Bad/Identifier") - 1U;
+    encoded_journal[0] = 1U;
+    CHECK(package_state_journal_encode(&spec, encoded_journal) ==
+            PACKAGE_STATE_STATUS_TEXT &&
+        all_zero(encoded_journal, sizeof(encoded_journal)), 45);
+    return 0;
+}
+
 static int test_recovery(
     const uint8_t old_database[OLD_DATABASE_BYTES],
     const uint8_t new_database[NEW_DATABASE_BYTES],
@@ -518,6 +583,10 @@ int main(void)
     build_journal(journal, old_database, new_database);
     result = test_parsers_and_mutations(
         old_database, new_database, new_authority, journal);
+    if (result != 0) {
+        return result;
+    }
+    result = test_encoders(old_database, new_database, new_authority, journal);
     if (result != 0) {
         return result;
     }

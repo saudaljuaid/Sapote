@@ -90,6 +90,15 @@ struct package_state_journal_view {
     uint8_t transaction_id[PACKAGE_STATE_SHA256_BYTES];
 };
 
+struct package_state_journal_spec {
+    enum package_state_operation operation;
+    const struct package_state_database_view *base;
+    const struct package_state_database_view *target;
+    uint64_t required_space;
+    const uint8_t *target_identifier;
+    size_t target_identifier_bytes;
+};
+
 struct package_state_generation {
     const uint8_t *database;
     size_t database_bytes;
@@ -146,6 +155,21 @@ enum package_state_status package_state_journal_parse(
     const uint8_t *bytes,
     size_t byte_count,
     struct package_state_journal_view *result
+);
+
+/*
+ * Canonical encoders for the transaction records written by a privileged
+ * generation service. Inputs are parsed again and output is cleared on every
+ * refusal so a partial record cannot be persisted accidentally.
+ */
+enum package_state_status package_state_authority_encode(
+    const struct package_state_database_view *database,
+    uint8_t result[PACKAGE_STATE_AUTHORITY_BYTES]
+);
+
+enum package_state_status package_state_journal_encode(
+    const struct package_state_journal_spec *spec,
+    uint8_t result[PACKAGE_STATE_JOURNAL_BYTES]
 );
 
 /*

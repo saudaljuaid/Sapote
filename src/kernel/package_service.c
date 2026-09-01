@@ -70,19 +70,6 @@ static uint64_t read_u64(const uint8_t *bytes)
         (uint64_t)read_u32(bytes + 4U) << 32U;
 }
 
-static void write_u16(uint8_t *bytes, uint16_t value)
-{
-    bytes[0] = (uint8_t)value;
-    bytes[1] = (uint8_t)(value >> 8U);
-}
-
-static void write_u64(uint8_t *bytes, uint64_t value)
-{
-    for (size_t index = 0U; index < 8U; ++index) {
-        bytes[index] = (uint8_t)(value >> (index * 8U));
-    }
-}
-
 static size_t string_length(const char *text, size_t capacity)
 {
     size_t length = 0U;
@@ -850,31 +837,6 @@ static enum package_service_status cleanup_transaction(
     return PACKAGE_SERVICE_STATUS_OK;
 }
 
-static enum package_state_status build_authority(
-    const struct package_state_database_view *database,
-    uint8_t authority[PACKAGE_STATE_AUTHORITY_BYTES]
-)
-{
-    static const uint8_t magic[8] = {
-        'S', 'A', 'P', 'G', 'E', 'N', '0', '1'
-    };
-    uint8_t database_digest[PACKAGE_STATE_SHA256_BYTES];
-    enum package_state_status status = package_state_sha256(database->bytes,
-        database->byte_count, database_digest);
-
-    if (status != PACKAGE_STATE_STATUS_OK) {
-        return status;
-    }
-    zero_bytes(authority, PACKAGE_STATE_AUTHORITY_BYTES);
-    copy_bytes(authority, magic, sizeof(magic));
-    write_u16(authority + 8U, UINT16_C(1));
-    write_u16(authority + 10U, PACKAGE_STATE_AUTHORITY_BYTES);
-    write_u64(authority + 16U, database->generation);
-    write_u64(authority + 24U, database->byte_count);
-    copy_bytes(authority + 32U, database_digest, sizeof(database_digest));
-    return package_state_sha256(authority, 64U, authority + 64U);
-}
-
 static bool authority_selects(
     const uint8_t authority[PACKAGE_STATE_AUTHORITY_BYTES],
     const struct package_state_database_view *database
@@ -985,7 +947,7 @@ static enum package_service_status recover_internal(
         context->report->generation = recovery.generation;
         if (used_old_authority) {
             uint8_t replacement[PACKAGE_STATE_AUTHORITY_BYTES];
-            context->report->state_status = build_authority(
+            context->report->state_status = package_state_authority_encode(
                 &recovery.database, replacement);
             if (context->report->state_status != PACKAGE_STATE_STATUS_OK) {
                 status = PACKAGE_SERVICE_STATUS_STATE;
@@ -1044,8 +1006,8 @@ static enum package_service_status recover_internal(
     if (!authority_selects(authority, &recovery.database) ||
         used_old_authority) {
         uint8_t replacement[PACKAGE_STATE_AUTHORITY_BYTES];
-        context->report->state_status = build_authority(&recovery.database,
-            replacement);
+        context->report->state_status = package_state_authority_encode(
+            &recovery.database, replacement);
         if (context->report->state_status != PACKAGE_STATE_STATUS_OK) {
             status = PACKAGE_SERVICE_STATUS_STATE;
             goto release;

@@ -73,6 +73,19 @@ static uint64_t read_u64(const uint8_t *bytes)
         (uint64_t)read_u32(bytes + 4U) << 32U;
 }
 
+static void write_u16(uint8_t *bytes, uint16_t value)
+{
+    bytes[0] = (uint8_t)value;
+    bytes[1] = (uint8_t)(value >> 8U);
+}
+
+static void write_u64(uint8_t *bytes, uint64_t value)
+{
+    for (size_t index = 0U; index < 8U; ++index) {
+        bytes[index] = (uint8_t)(value >> (index * 8U));
+    }
+}
+
 static bool equal_bytes(const uint8_t *left, const uint8_t *right, size_t count)
 {
     uint8_t difference = 0U;
@@ -97,6 +110,13 @@ static void copy_bytes(uint8_t *destination, const uint8_t *source, size_t count
 {
     for (size_t index = 0U; index < count; ++index) {
         destination[index] = source[index];
+    }
+}
+
+static void clear_bytes(uint8_t *destination, size_t count)
+{
+    for (size_t index = 0U; index < count; ++index) {
+        destination[index] = 0U;
     }
 }
 
@@ -1064,6 +1084,117 @@ enum package_state_status package_state_journal_parse(
     copy_bytes(result->transaction_id, bytes + 128U,
         sizeof(result->transaction_id));
     return PACKAGE_STATE_STATUS_OK;
+}
+
+enum package_state_status package_state_authority_encode(
+    const struct package_state_database_view *database,
+    uint8_t result[PACKAGE_STATE_AUTHORITY_BYTES]
+)
+{
+    static const uint8_t magic[8] = {
+        'S', 'A', 'P', 'G', 'E', 'N', '0', '1'
+    };
+    struct package_state_database_view validated;
+    enum package_state_status status;
+
+    if (result == NULL) {
+        return PACKAGE_STATE_STATUS_NULL_ARGUMENT;
+    }
+    clear_bytes(result, PACKAGE_STATE_AUTHORITY_BYTES);
+    if (database == NULL || database->bytes == NULL) {
+        return PACKAGE_STATE_STATUS_NULL_ARGUMENT;
+    }
+    status = package_state_database_parse(database->bytes,
+        database->byte_count, &validated);
+    if (status != PACKAGE_STATE_STATUS_OK) {
+        return status;
+    }
+    copy_bytes(result, magic, sizeof(magic));
+    write_u16(result + 8U, UINT16_C(1));
+    write_u16(result + 10U, PACKAGE_STATE_AUTHORITY_BYTES);
+    write_u64(result + 16U, validated.generation);
+    write_u64(result + 24U, validated.byte_count);
+    status = package_state_sha256(validated.bytes, validated.byte_count,
+        result + 32U);
+    if (status == PACKAGE_STATE_STATUS_OK) {
+        status = package_state_sha256(result, 64U, result + 64U);
+    }
+    if (status != PACKAGE_STATE_STATUS_OK) {
+        clear_bytes(result, PACKAGE_STATE_AUTHORITY_BYTES);
+    }
+    return status;
+}
+
+enum package_state_status package_state_journal_encode(
+    const struct package_state_journal_spec *spec,
+    uint8_t result[PACKAGE_STATE_JOURNAL_BYTES]
+)
+{
+    static const uint8_t magic[8] = {
+        'S', 'A', 'P', 'T', 'X', 'N', '0', '1'
+    };
+    struct package_state_database_view base;
+    struct package_state_database_view target;
+    struct package_state_journal_view validated;
+    enum package_state_status status;
+
+    if (result == NULL) {
+        return PACKAGE_STATE_STATUS_NULL_ARGUMENT;
+    }
+    clear_bytes(result, PACKAGE_STATE_JOURNAL_BYTES);
+    if (spec == NULL || spec->base == NULL || spec->target == NULL ||
+        spec->base->bytes == NULL || spec->target->bytes == NULL ||
+        (spec->target_identifier == NULL && spec->target_identifier_bytes != 0U)) {
+        return PACKAGE_STATE_STATUS_NULL_ARGUMENT;
+    }
+    status = package_state_database_parse(spec->base->bytes,
+        spec->base->byte_count, &base);
+    if (status == PACKAGE_STATE_STATUS_OK) {
+        status = package_state_database_parse(spec->target->bytes,
+            spec->target->byte_count, &target);
+    }
+    if (status != PACKAGE_STATE_STATUS_OK) {
+        return status;
+    }
+    if (spec->operation <= PACKAGE_STATE_OPERATION_INVALID ||
+        spec->operation > PACKAGE_STATE_OPERATION_REPAIR ||
+        base.generation == UINT64_MAX ||
+        target.generation != base.generation + 1U ||
+        spec->required_space == 0U || spec->target_identifier_bytes >= 64U) {
+        return PACKAGE_STATE_STATUS_JOURNAL;
+    }
+    copy_bytes(result, magic, sizeof(magic));
+    write_u16(result + 8U, UINT16_C(1));
+    write_u16(result + 10U, PACKAGE_STATE_JOURNAL_BYTES);
+    write_u16(result + 16U, (uint16_t)spec->operation);
+    write_u16(result + 18U, JOURNAL_PHASE_PREPARED);
+    write_u64(result + 24U, base.generation);
+    write_u64(result + 32U, target.generation);
+    write_u64(result + 40U, spec->required_space);
+    write_u64(result + 48U, base.byte_count);
+    write_u64(result + 56U, target.byte_count);
+    status = package_state_sha256(base.bytes, base.byte_count, result + 64U);
+    if (status == PACKAGE_STATE_STATUS_OK) {
+        status = package_state_sha256(target.bytes, target.byte_count,
+            result + 96U);
+    }
+    if (status == PACKAGE_STATE_STATUS_OK &&
+            spec->target_identifier_bytes != 0U) {
+        copy_bytes(result + 160U, spec->target_identifier,
+            spec->target_identifier_bytes);
+    }
+    if (status == PACKAGE_STATE_STATUS_OK) {
+        status = package_state_sha256(result, PACKAGE_STATE_JOURNAL_BYTES,
+            result + 128U);
+    }
+    if (status == PACKAGE_STATE_STATUS_OK) {
+        status = package_state_journal_parse(result,
+            PACKAGE_STATE_JOURNAL_BYTES, &validated);
+    }
+    if (status != PACKAGE_STATE_STATUS_OK) {
+        clear_bytes(result, PACKAGE_STATE_JOURNAL_BYTES);
+    }
+    return status;
 }
 
 static bool generation_matches(
