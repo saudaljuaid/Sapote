@@ -477,6 +477,12 @@ int main(int argc, char **argv)
         (const uint8_t *)"APP", 3U, &search) == PACKAGE_MANAGER_STATUS_OK &&
         search.count == 1U && search.repository_indices[0] == 0U);
 
+    CHECK(package_manager_plan_install(&repository, &installed,
+        (const uint8_t *)"org.sapote.lib", 14U, &policy, &trust, &plan) ==
+            PACKAGE_MANAGER_STATUS_OK &&
+        plan.operation == PACKAGE_MANAGER_PLAN_INSTALL &&
+        text_is(&plan.target, "org.sapote.lib") && plan.count == 0U);
+
     CHECK(package_manager_repository_open(repository_bytes.bytes,
         repository_bytes.count, &policy, NULL, &repository) ==
             PACKAGE_MANAGER_STATUS_CRYPTO_UNAVAILABLE);

@@ -1589,7 +1589,8 @@ static bool installed_package(
     const struct package_manager_text *identifier,
     uint32_t *index,
     struct package_manager_text *version,
-    const uint8_t **publisher_key_id
+    const uint8_t **publisher_key_id,
+    bool *explicit_root
 )
 {
     if (installed == NULL) {
@@ -1612,6 +1613,7 @@ static bool installed_package(
                 package.version.bytes, package.version.length
             };
             *publisher_key_id = package.publisher_key_id;
+            *explicit_root = package.explicit_root;
             return true;
         }
     }
@@ -1657,6 +1659,7 @@ enum package_manager_status package_manager_plan_install(
     struct package_manager_text constraint = { &star, 1U };
     uint32_t order_count = 0U;
     bool target_installed = false;
+    bool target_explicit = false;
     enum package_manager_status status;
 
     if (repository == NULL || policy == NULL || result == NULL ||
@@ -1692,6 +1695,7 @@ enum package_manager_status package_manager_plan_install(
         struct package_manager_catalog_entry entry;
         struct package_manager_text installed_version;
         const uint8_t *installed_key;
+        bool installed_explicit;
         uint32_t installed_index;
         bool present;
         (void)package_manager_repository_entry(repository,
@@ -1701,7 +1705,7 @@ enum package_manager_status package_manager_plan_install(
             goto finish;
         }
         present = installed_package(installed, &entry.identifier, &installed_index,
-            &installed_version, &installed_key);
+            &installed_version, &installed_key, &installed_explicit);
         (void)installed_index;
         if (present) {
             int comparison = compare_semver_text(&entry.version, &installed_version);
@@ -1716,6 +1720,7 @@ enum package_manager_status package_manager_plan_install(
             }
             if (text_equal(&entry.identifier, &requested)) {
                 target_installed = true;
+                target_explicit = installed_explicit;
             }
             if (comparison == 0) {
                 continue;
@@ -1735,6 +1740,10 @@ enum package_manager_status package_manager_plan_install(
         item->publisher_key_id = entry.publisher_key_id;
     }
     if (result->count == 0U) {
+        if (target_installed && !target_explicit) {
+            status = PACKAGE_MANAGER_STATUS_OK;
+            goto finish;
+        }
         status = PACKAGE_MANAGER_STATUS_ALREADY_INSTALLED;
         goto finish;
     }

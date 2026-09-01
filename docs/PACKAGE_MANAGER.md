@@ -57,7 +57,9 @@ installed root and removes only dependencies no longer reachable from another
 explicit root; shared dependencies stay installed. Removal plans do not delete
 mutable application data. Every successful plan retains the exact requested
 target identity separately from its dependency-first changed-item list so a
-generation builder can preserve or assign the explicit-root flag correctly.
+generation builder can preserve or assign the explicit-root flag correctly. An
+already-present automatic dependency is promoted by a successful zero-download
+install plan rather than being misreported as explicitly installed.
 
 Planning is serialized. Its roughly 9 KiB graph workspace is static rather than
 placed on Sapote's 16 KiB syscall stack, reentrant entry is refused, candidate

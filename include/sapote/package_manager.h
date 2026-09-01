@@ -279,7 +279,9 @@ enum package_manager_status package_manager_package_conflict(
 /*
  * Produces dependency-first download/install order.  The resolver is bounded,
  * deterministic, rejects ambiguous providers and backtracks over versions.
- * An installed database is optional for a fresh install.
+ * An installed database is optional for a fresh install.  A successful
+ * zero-item install promotes an already-present automatic dependency to an
+ * explicit root without downloading its unchanged bytes.
  */
 enum package_manager_status package_manager_plan_install(
     const struct package_manager_repository_view *repository,
