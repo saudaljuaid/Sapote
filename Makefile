@@ -1460,9 +1460,18 @@ verify: toolchain lint
 		echo "kernel contains an RWX load segment"; exit 1; \
 	fi
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'invlpg'
+	# The Multiboot entry is genuinely 32-bit code in an ELF64 image. Check that
+	# input section in 32-bit mode; otherwise objdump consumes its four-byte
+	# absolute addresses as eight-byte operands and can invent instructions from
+	# adjacent bytes whenever the kernel's BSS layout changes.
+	@boot_forbidden="$$( $(OBJDUMP) -d -j .boot.text32 -mi386 \
+		--no-show-raw-insn $(BUILD_DIR)/arch_boot.o | \
+		grep -Ei '%(xmm|ymm|zmm|mm|k)[0-9]+|^[[:space:]]*[0-9a-f]+:[[:space:]]+(f[a-z0-9]+|emms|fxsave|fxrstor|ldmxcsr|stmxcsr|v[a-z0-9]+)([[:space:]]|$$)' | \
+		grep -Ev '[[:space:]](verr|verw)[[:space:]]' || true )"; \
+		test -z "$$boot_forbidden" || { echo '32-bit boot entry contains floating-point, MMX, SSE, or AVX instructions'; echo "$$boot_forbidden"; exit 1; }
 	@forbidden="$$( $(OBJDUMP) -d -j .text --no-show-raw-insn $(KERNEL) | \
 		awk '/^[[:space:]]*[0-9a-f]+ <[^>]+>:/ { allowed = \
-			($$0 ~ / <native_fx(save|rstor|init)>:/) } !allowed { print }' | \
+			($$0 ~ / <(_start|native_fx(save|rstor|init))>:/) } !allowed { print }' | \
 		grep -Ei '%(xmm|ymm|zmm|mm|k)[0-9]+|^[[:space:]]*[0-9a-f]+:[[:space:]]+(f[a-z0-9]+|emms|fxsave|fxrstor|ldmxcsr|stmxcsr|v[a-z0-9]+)([[:space:]]|$$)' | \
 		grep -Ev '[[:space:]](verr|verw)[[:space:]]' || true )"; \
 		test -z "$$forbidden" || { echo 'kernel contains floating-point, MMX, SSE, or AVX instructions'; echo "$$forbidden"; exit 1; }
