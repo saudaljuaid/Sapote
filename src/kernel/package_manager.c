@@ -1663,6 +1663,9 @@ enum package_manager_status package_manager_plan_install(
         identifier == NULL || !package_identifier(&requested)) {
         return PACKAGE_MANAGER_STATUS_NULL_ARGUMENT;
     }
+    result->operation = 0;
+    result->target = requested;
+    result->count = 0U;
     if (install_solver_busy) {
         return PACKAGE_MANAGER_STATUS_STATE;
     }
@@ -1684,7 +1687,6 @@ enum package_manager_status package_manager_plan_install(
     if (status != PACKAGE_MANAGER_STATUS_OK) {
         goto finish;
     }
-    result->count = 0U;
     result->operation = PACKAGE_MANAGER_PLAN_INSTALL;
     for (uint32_t ordered = 0U; ordered < order_count; ++ordered) {
         struct package_manager_catalog_entry entry;
@@ -1875,6 +1877,9 @@ enum package_manager_status package_manager_plan_remove(
         result == NULL || !package_identifier(&requested)) {
         return PACKAGE_MANAGER_STATUS_NULL_ARGUMENT;
     }
+    result->operation = 0;
+    result->target = requested;
+    result->count = 0U;
     if (!installed_index_for(installed, &requested, &target)) {
         return PACKAGE_MANAGER_STATUS_NOT_FOUND;
     }
@@ -1932,7 +1937,6 @@ enum package_manager_status package_manager_plan_remove(
         return PACKAGE_MANAGER_STATUS_IN_USE;
     }
     result->operation = PACKAGE_MANAGER_PLAN_REMOVE;
-    result->count = 0U;
     bool emitted[PACKAGE_STATE_DATABASE_MAX_PACKAGES] = { false };
     for (;;) {
         uint32_t package_index = installed->package_count;

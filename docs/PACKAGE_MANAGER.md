@@ -55,7 +55,9 @@ downgrades unless policy explicitly permits them, and refuses publisher-key
 rotation rather than silently changing trust. Removal starts from an explicit
 installed root and removes only dependencies no longer reachable from another
 explicit root; shared dependencies stay installed. Removal plans do not delete
-mutable application data.
+mutable application data. Every successful plan retains the exact requested
+target identity separately from its dependency-first changed-item list so a
+generation builder can preserve or assign the explicit-root flag correctly.
 
 Planning is serialized. Its roughly 9 KiB graph workspace is static rather than
 placed on Sapote's 16 KiB syscall stack, reentrant entry is refused, candidate

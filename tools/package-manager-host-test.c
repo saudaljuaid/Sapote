@@ -391,7 +391,8 @@ int main(int argc, char **argv)
     CHECK(package_manager_plan_install(&repository, NULL,
         (const uint8_t *)"org.sapote.app", 14U, &policy, &trust, &plan) ==
             PACKAGE_MANAGER_STATUS_OK &&
-        plan.operation == PACKAGE_MANAGER_PLAN_INSTALL && plan.count == 2U &&
+        plan.operation == PACKAGE_MANAGER_PLAN_INSTALL &&
+        text_is(&plan.target, "org.sapote.app") && plan.count == 2U &&
         text_is(&plan.items[0].identifier, "org.sapote.lib") &&
         text_is(&plan.items[1].identifier, "org.sapote.app"));
     CHECK(package_manager_plan_dependency_binding(&repository, &plan, 1U, 0U,
@@ -465,7 +466,8 @@ int main(int argc, char **argv)
             PACKAGE_MANAGER_STATUS_ALREADY_INSTALLED);
     CHECK(package_manager_plan_remove(&installed,
         (const uint8_t *)"org.sapote.app", 14U, &plan) ==
-            PACKAGE_MANAGER_STATUS_OK && plan.count == 2U &&
+            PACKAGE_MANAGER_STATUS_OK &&
+        text_is(&plan.target, "org.sapote.app") && plan.count == 2U &&
         text_is(&plan.items[0].identifier, "org.sapote.app") &&
         text_is(&plan.items[1].identifier, "org.sapote.lib"));
     CHECK(package_manager_plan_remove(&installed,

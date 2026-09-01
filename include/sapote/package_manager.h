@@ -200,6 +200,7 @@ struct package_manager_plan_item {
 
 struct package_manager_plan {
     enum package_manager_plan_operation operation;
+    struct package_manager_text target;
     uint32_t count;
     struct package_manager_plan_item items[PACKAGE_MANAGER_PLAN_MAX_PACKAGES];
 };
