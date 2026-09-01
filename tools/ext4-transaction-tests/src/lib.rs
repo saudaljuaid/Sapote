@@ -93,6 +93,27 @@ impl JournalStorage for RecordingStorage {
     }
 }
 
+struct VectorStorage {
+    bytes: Vec<u8>,
+    flushes: Vec<JournalFlush>,
+}
+
+impl JournalStorage for VectorStorage {
+    type Error = core::convert::Infallible;
+
+    fn write(&mut self, start_byte: u64, bytes: &[u8]) -> Result<(), Self::Error> {
+        let start = usize::try_from(start_byte).unwrap();
+        let end = start.checked_add(bytes.len()).unwrap();
+        self.bytes[start..end].copy_from_slice(bytes);
+        Ok(())
+    }
+
+    fn flush(&mut self, boundary: JournalFlush) -> Result<(), Self::Error> {
+        self.flushes.push(boundary);
+        Ok(())
+    }
+}
+
 #[test]
 fn public_executor_maps_every_block_write_and_preserves_flushes() {
     let slots = [3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007];
@@ -622,7 +643,7 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
         eprintln!("journal-inode fixture was not produced because e2fsprogs is unavailable");
         return;
     };
-    let filesystem = Ext4::load(Box::new(bytes)).unwrap();
+    let filesystem = Ext4::load(Box::new(bytes.clone())).unwrap();
     let journal = load_journal_inode_map(&filesystem).unwrap();
     assert_eq!(journal.superblock().start_block(), 0);
     assert!(!journal.filesystem_needs_recovery());
@@ -769,6 +790,53 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
     ));
     ring.mark_recovery_marker_durable().unwrap();
     assert!(ring.prepare_commit_plan(&next).is_ok());
+
+    let mut dirty_bytes = bytes;
+    let superblock_start = usize::try_from(FILESYSTEM_SUPERBLOCK_START_BYTE).unwrap();
+    let superblock_end = superblock_start
+        .checked_add(recovery_marker.bytes().len())
+        .unwrap();
+    dirty_bytes[superblock_start..superblock_end].copy_from_slice(recovery_marker.bytes());
+    let dirty_filesystem = Ext4::load(Box::new(dirty_bytes.clone())).unwrap();
+    let dirty_journal = load_journal_inode_map(&dirty_filesystem).unwrap();
+    assert!(dirty_journal.filesystem_needs_recovery());
+    let mut journal_bytes = Vec::new();
+    for block in &dirty_journal.physical_blocks()[1..] {
+        let start = usize::try_from(*block).unwrap() * JOURNAL_BLOCK_BYTES;
+        journal_bytes.push(dirty_bytes[start..start + JOURNAL_BLOCK_BYTES].to_vec());
+    }
+    let journal_references: Vec<&[u8]> = journal_bytes.iter().map(Vec::as_slice).collect();
+    let recovery = recover_committed_ring(
+        dirty_journal.superblock(),
+        true,
+        dirty_journal.maximum_block(),
+        &journal_references,
+    )
+    .unwrap();
+    let recovery_plan = recovery
+        .checkpoint_plan(
+            dirty_journal.physical_blocks()[0],
+            dirty_journal.filesystem_superblock(),
+        )
+        .unwrap();
+    let mut storage = VectorStorage {
+        bytes: dirty_bytes,
+        flushes: Vec::new(),
+    };
+    execute_commit_operations(&mut storage, &recovery_plan).unwrap();
+    assert_eq!(
+        storage.flushes,
+        vec![
+            JournalFlush::Checkpoint,
+            JournalFlush::JournalState,
+            JournalFlush::FilesystemState,
+        ]
+    );
+    let recovered_filesystem = Ext4::load(Box::new(storage.bytes)).unwrap();
+    let recovered_journal = load_journal_inode_map(&recovered_filesystem).unwrap();
+    assert!(!recovered_journal.filesystem_needs_recovery());
+    assert_eq!(recovered_journal.superblock().start_block(), 0);
+    recovered_journal.into_clean_ring().unwrap();
 
     let backing = Rc::new(std::fs::read(&path).unwrap());
     let stage = Rc::new(
