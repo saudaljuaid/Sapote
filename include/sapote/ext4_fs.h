@@ -124,6 +124,8 @@ enum sapfs_status ext4_backend_pread(sapfs_handle handle,
 enum sapfs_status ext4_backend_transaction_probe(enum sapfs_volume volume,
     const char *path, uint64_t offset, const uint8_t *source,
     size_t source_bytes, size_t *written_bytes);
+enum sapfs_status ext4_backend_truncate_probe(enum sapfs_volume volume,
+    const char *path, uint64_t size);
 /* Private ext4-recovery scenario controls; never installed in the VFS table. */
 bool ext4_backend_test_configure_power_cut(const char *command_line,
     size_t command_line_length);

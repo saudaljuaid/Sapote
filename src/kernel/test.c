@@ -4932,6 +4932,31 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
             SAPFS_ACCESS_WRITE, &handle) != SAPFS_STATUS_READ_ONLY) {
         kernel_test_fail("ext4 private journal transaction probe failed");
     }
+    if (!power_cut && !transaction_already_visible) {
+        if (ext4_backend_truncate_probe(SAPFS_VOLUME_SYSTEM,
+                "system/README.TXT", sizeof(expected) - 1U) !=
+                SAPFS_STATUS_OK ||
+            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
+            sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "system/README.TXT", &stat) !=
+                SAPFS_STATUS_OK || stat.size != sizeof(expected) - 1U ||
+            sapfs_open(SAPFS_VOLUME_SYSTEM, "system/README.TXT",
+                SAPFS_ACCESS_READ, &handle) != SAPFS_STATUS_OK ||
+            sapfs_pread(handle, &appended, sizeof(appended), UINT64_C(4096),
+                &read_bytes) != SAPFS_STATUS_OK || read_bytes != 0U ||
+            sapfs_close(handle) != SAPFS_STATUS_OK) {
+            kernel_test_fail("ext4 private truncate revocation probe failed");
+        }
+        written_bytes = 0U;
+        if (ext4_backend_transaction_probe(SAPFS_VOLUME_SYSTEM,
+                "system/README.TXT", UINT64_C(4096), &transaction_byte,
+                sizeof(transaction_byte), &written_bytes) != SAPFS_STATUS_OK ||
+            written_bytes != sizeof(transaction_byte) ||
+            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
+            sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "system/README.TXT", &stat) !=
+                SAPFS_STATUS_OK || stat.size != UINT64_C(4097)) {
+            kernel_test_fail("ext4 post-truncate marker re-arm failed");
+        }
+    }
     if (sapfs_unmount(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
         sapfs_drive(SAPFS_VOLUME_SYSTEM).mounted ||
         !nvme_filesystem_session_resources_released() ||
@@ -4989,7 +5014,8 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
         kernel_test_fail("clean ext4 remount changed the resource census");
     }
     console_write("ST EXT4 RECOVERY marker cleared transaction committed ");
-    console_write("appended exact journal clean transactions 0 replay 0 slots 0 ");
+    console_write("appended exact truncate revoke rearm journal clean ");
+    console_write("transactions 0 replay 0 slots 0 ");
     console_write("VFS read-only remount clean resources exact\n");
     kernel_test_pass();
 }

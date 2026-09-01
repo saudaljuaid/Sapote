@@ -94,7 +94,14 @@ enum PendingMutationPhase {
     Reload,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum PendingMutationKind {
+    Write,
+    Truncate,
+}
+
 struct PendingMutation {
+    kind: PendingMutationKind,
     path: Vec<u8>,
     source: Vec<u8>,
     offset: u64,
@@ -566,12 +573,17 @@ fn arm_recovery_marker(mounted: &mut Mounted) -> Result<(), Status> {
 
 fn resume_pending_mutation(
     mounted: &mut Mounted,
+    kind: PendingMutationKind,
     path: &[u8],
     offset: u64,
     source: &[u8],
 ) -> Result<usize, Status> {
     let pending = mounted.pending_mutation.as_ref().ok_or(Status::Invalid)?;
-    if pending.path != path || pending.offset != offset || pending.source != source {
+    if pending.kind != kind
+        || pending.path != path
+        || pending.offset != offset
+        || pending.source != source
+    {
         return Err(Status::Invalid);
     }
     resume_pending_mutation_inner(mounted)
@@ -680,6 +692,77 @@ fn resume_pending_mutation_inner(mounted: &mut Mounted) -> Result<usize, Status>
     }
 }
 
+fn commit_staged_mutation(
+    mounted: &mut Mounted,
+    kind: PendingMutationKind,
+    path: Vec<u8>,
+    source: Vec<u8>,
+    offset: u64,
+    written: usize,
+    ordered_data: &[u64],
+    expected_revoke: Option<u64>,
+) -> Result<usize, Status> {
+    let transaction = match mounted.journal.begin_transaction() {
+        Ok(transaction) => transaction,
+        Err(_) => {
+            discard_uncommitted_stage(mounted, true)?;
+            return Err(Status::Invalid);
+        }
+    };
+    let transaction = match mounted.stage.build_transaction(&transaction, ordered_data) {
+        Ok(transaction) => transaction,
+        Err(_) => {
+            discard_uncommitted_stage(mounted, true)?;
+            return Err(Status::Invalid);
+        }
+    };
+    if let Some(block) = expected_revoke {
+        if !transaction.revokes_block(block) {
+            discard_uncommitted_stage(mounted, true)?;
+            return Err(Status::Invalid);
+        }
+    }
+    let prepared = match mounted.journal.prepare(&transaction) {
+        Ok(prepared) => prepared,
+        Err(_) => {
+            discard_uncommitted_stage(mounted, true)?;
+            return Err(Status::Invalid);
+        }
+    };
+    let checkpointed_superblock = match mounted
+        .stage
+        .staged_images()
+        .into_iter()
+        .find(|image| image.block_index() == 0)
+        .map(|image| {
+            mounted
+                .journal
+                .admit_checkpointed_filesystem_superblock(&prepared, &image)
+        })
+        .transpose()
+    {
+        Ok(superblock) => superblock,
+        Err(_) => {
+            mounted
+                .journal
+                .abort_precommit(prepared.ticket())
+                .map_err(|_| Status::Invalid)?;
+            discard_uncommitted_stage(mounted, true)?;
+            return Err(Status::Invalid);
+        }
+    };
+    mounted.pending_mutation = Some(PendingMutation {
+        kind,
+        path,
+        source,
+        offset,
+        written,
+        checkpointed_superblock,
+        phase: PendingMutationPhase::Commit(prepared),
+    });
+    resume_pending_mutation_inner(mounted)
+}
+
 /// Execute one controlled staged write through the native journal executor.
 ///
 /// This is a private kernel acceptance probe, not a VFS mutation entry point.
@@ -696,7 +779,13 @@ pub(crate) fn transaction_probe(
     }
     let absolute = absolute_path(path)?;
     if mounted.pending_mutation.is_some() {
-        return resume_pending_mutation(mounted, &absolute, offset, source);
+        return resume_pending_mutation(
+            mounted,
+            PendingMutationKind::Write,
+            &absolute,
+            offset,
+            source,
+        );
     }
     if !mounted.stage.is_empty() || mounted.stage.is_sealed() {
         let recovery = mounted
@@ -790,59 +879,106 @@ pub(crate) fn transaction_probe(
         position = next.min(end);
     }
     drop(file);
-
-    let transaction = match mounted.journal.begin_transaction() {
-        Ok(transaction) => transaction,
-        Err(_) => {
-            discard_uncommitted_stage(mounted, true)?;
-            return Err(Status::Invalid);
-        }
-    };
-    let transaction = match mounted.stage.build_transaction(&transaction, &ordered_data) {
-        Ok(transaction) => transaction,
-        Err(_) => {
-            discard_uncommitted_stage(mounted, true)?;
-            return Err(Status::Invalid);
-        }
-    };
-    let prepared = match mounted.journal.prepare(&transaction) {
-        Ok(prepared) => prepared,
-        Err(_) => {
-            discard_uncommitted_stage(mounted, true)?;
-            return Err(Status::Invalid);
-        }
-    };
-    let checkpointed_superblock = match mounted
-        .stage
-        .staged_images()
-        .into_iter()
-        .find(|image| image.block_index() == 0)
-        .map(|image| {
-            mounted
-                .journal
-                .admit_checkpointed_filesystem_superblock(&prepared, &image)
-        })
-        .transpose()
-    {
-        Ok(superblock) => superblock,
-        Err(_) => {
-            mounted
-                .journal
-                .abort_precommit(prepared.ticket())
-                .map_err(|_| Status::Invalid)?;
-            discard_uncommitted_stage(mounted, true)?;
-            return Err(Status::Invalid);
-        }
-    };
-    mounted.pending_mutation = Some(PendingMutation {
-        path: absolute,
-        source: source_copy,
+    commit_staged_mutation(
+        mounted,
+        PendingMutationKind::Write,
+        absolute,
+        source_copy,
         offset,
         written,
-        checkpointed_superblock,
-        phase: PendingMutationPhase::Commit(prepared),
-    });
-    resume_pending_mutation_inner(mounted)
+        &ordered_data,
+        None,
+    )
+}
+
+/// Execute one controlled one-block shrink through the native journal executor.
+///
+/// This private probe proves that an ext4plus free callback becomes the exact
+/// JBD2 revocation committed on platform storage. It is not a VFS mutation
+/// entry point.
+pub(crate) fn truncate_probe(
+    mounted: &mut Mounted,
+    path: &[u8],
+    size: u64,
+) -> Result<(), Status> {
+    let absolute = absolute_path(path)?;
+    if mounted.pending_mutation.is_some() {
+        let resumed = resume_pending_mutation(
+            mounted,
+            PendingMutationKind::Truncate,
+            &absolute,
+            size,
+            &[],
+        )?;
+        return if resumed == 0 {
+            Ok(())
+        } else {
+            Err(Status::Invalid)
+        };
+    }
+    if !mounted.stage.is_empty() || mounted.stage.is_sealed() {
+        let recovery = mounted
+            .journal
+            .filesystem_recovery_marker_is_durable()
+            .map_err(|_| Status::Invalid)?;
+        discard_uncommitted_stage(mounted, recovery)?;
+    }
+    arm_recovery_marker(mounted)?;
+
+    let mut file = mounted
+        .filesystem
+        .open(absolute.as_slice())
+        .map_err(map_error)?;
+    let old_size = file.inode().size_in_bytes();
+    let old_blocks = old_size.div_ceil(BLOCK_BYTES);
+    let new_blocks = size.div_ceil(BLOCK_BYTES);
+    if size >= old_size || old_blocks.checked_sub(new_blocks) != Some(1) {
+        discard_uncommitted_stage(mounted, true)?;
+        return Err(Status::Range);
+    }
+    let revoked_offset = match new_blocks.checked_mul(BLOCK_BYTES) {
+        Some(offset) => offset,
+        None => {
+            discard_uncommitted_stage(mounted, true)?;
+            return Err(Status::Range);
+        }
+    };
+    let revoked_block = match file.filesystem_block_at_offset(revoked_offset) {
+        Ok(Some(block)) => block,
+        Ok(None) => {
+            discard_uncommitted_stage(mounted, true)?;
+            return Err(Status::Invalid);
+        }
+        Err(error) => {
+            discard_uncommitted_stage(mounted, true)?;
+            return Err(map_error(error));
+        }
+    };
+    if let Err(error) = file.truncate(size) {
+        discard_uncommitted_stage(mounted, true)?;
+        return Err(map_error(error));
+    }
+    if file.inode().size_in_bytes() != size || mounted.stage.revoked_block_count() != 1 {
+        discard_uncommitted_stage(mounted, true)?;
+        return Err(Status::Invalid);
+    }
+    drop(file);
+
+    let resumed = commit_staged_mutation(
+        mounted,
+        PendingMutationKind::Truncate,
+        absolute,
+        Vec::new(),
+        size,
+        0,
+        &[],
+        Some(revoked_block),
+    )?;
+    if resumed == 0 {
+        Ok(())
+    } else {
+        Err(Status::Invalid)
+    }
 }
 
 /// Retry and durably execute the final clean plan while C holds a write lease.

@@ -161,8 +161,10 @@ another refusal keeps that exact plan retryable. The VFS cannot make a dirty
 mount yet. The private QEMU probe retains one
 allocation-bearing transaction across an injected live-superblock write
 failure and an injected ordered-data flush failure, including retry through VFS
-sync, then retries injected final-clean marker-write and flush failures. A
-separate Linux target
+sync, then retries injected final-clean marker-write and flush failures. Its
+non-power-cut path commits a one-block truncate, requires the freed physical
+block in the JBD2 revocation set, cleans, and re-appends to prove recovery-marker
+re-arming after sync. A separate Linux target
 cuts ten independent VMs immediately after every named durability barrier,
 reboots each disk, and requires namespace, data, resource, and read-only
 `e2fsck` acceptance. The real fixture separately pins pre-commit allocation

@@ -330,9 +330,11 @@ its retained commit/checkpoint/reload phase; a further refusal leaves that exact
 plan owned for another retry instead of discarding staged state.
 The QEMU probe injects both its marker write and flush failures, retries the
 same plan through both the original mutation request and VFS sync, and only then
-accepts sync; the next mutation must durably re-arm the recovery marker. Because
-every current transaction checkpoints synchronously, a clean sync needs no
-extra device operation.
+accepts sync. Its non-power-cut path then shrinks the sparse extension, requires
+the freed physical block to appear in the prepared JBD2 revocation set, commits
+and cleans it, and appends again to prove that a post-sync mutation durably
+re-arms the recovery marker. Because every current transaction checkpoints
+synchronously, a clean sync needs no extra device operation.
 The recovery-marker activation plan is equally retry-stable: its exact
 checksummed write and filesystem-state flush are re-emitted after an I/O refusal
 and acknowledged only after the flush completes. Started commit plans and
@@ -340,6 +342,6 @@ pending journal-tail writes likewise re-emit byte-identical operations until
 their final flushes are acknowledged; slots remain reserved throughout. The
 lease is closed before the separate Rust release, and either failure leaves the
 mount live. The private QEMU probe can now arm the marker, sync it clean, and
-then unmount without another write; that does not expose mutation entry points
-to VFS callers. All VFS mutation operations therefore continue to return
-`EROFS`.
+then unmount without another write. Its truncate path is likewise private and
+does not expose mutation entry points to VFS callers. All VFS mutation
+operations therefore continue to return `EROFS`.

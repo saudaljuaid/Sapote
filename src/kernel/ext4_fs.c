@@ -73,6 +73,8 @@ extern int32_t sapote_ext4_pread(uintptr_t mounted, const uint8_t *path,
 extern int32_t sapote_ext4_transaction_probe(uintptr_t mounted,
     const uint8_t *path, size_t path_length, uint64_t offset,
     const uint8_t *source, size_t source_length, size_t *written_out);
+extern int32_t sapote_ext4_truncate_probe(uintptr_t mounted,
+    const uint8_t *path, size_t path_length, uint64_t size);
 extern int32_t sapote_ext4_directory_entry(uintptr_t mounted,
     const uint8_t *path, size_t path_length, uint64_t index,
     struct sapote_ext4_directory_entry *entry, bool *present);
@@ -929,6 +931,28 @@ enum sapfs_status ext4_backend_transaction_probe(enum sapfs_volume volume,
     status = map_status(sapote_ext4_transaction_probe(mount->rust_mount,
         (const uint8_t *)path, length, offset, source, source_bytes,
         written_bytes));
+    close_status = end_operation(mount, NULL);
+    return status != SAPFS_STATUS_OK ? status : close_status;
+}
+
+enum sapfs_status ext4_backend_truncate_probe(enum sapfs_volume volume,
+    const char *path, uint64_t size)
+{
+    struct ext4_mount_state *mount;
+    const size_t length = path_length(path);
+    enum sapfs_status status;
+    enum sapfs_status close_status;
+
+    if (!valid_volume(volume) || length == 0U || length >= SAPFS_MAX_PATH) {
+        return SAPFS_STATUS_INVALID_ARGUMENT;
+    }
+    mount = &ext4_mounts[volume];
+    status = begin_operation(mount, true);
+    if (status != SAPFS_STATUS_OK) {
+        return status;
+    }
+    status = map_status(sapote_ext4_truncate_probe(mount->rust_mount,
+        (const uint8_t *)path, length, size));
     close_status = end_operation(mount, NULL);
     return status != SAPFS_STATUS_OK ? status : close_status;
 }

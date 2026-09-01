@@ -453,6 +453,37 @@ pub(crate) unsafe extern "C" fn sapote_ext4_transaction_probe(
     }
 }
 
+/// Execute or retry one private ext4 truncate/revocation acceptance probe.
+///
+/// This bypasses the still-read-only VFS mutation table and exists only for a
+/// kernel QEMU acceptance scenario. C must hold a writable storage lease.
+///
+/// # Safety
+/// The mount and path range must be live and readable and must not overlap the
+/// mounted object.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn sapote_ext4_truncate_probe(
+    mounted: usize,
+    path: *const u8,
+    path_length: usize,
+    size: u64,
+) -> i32 {
+    if mounted == 0 || path.is_null() {
+        return ext4::Status::NullArgument as i32;
+    }
+    // SAFETY: the complete, non-overlapping inputs are the caller's contract.
+    let (mounted, path) = unsafe {
+        (
+            &mut *(mounted as *mut ext4::Mounted),
+            core::slice::from_raw_parts(path, path_length),
+        )
+    };
+    match ext4::truncate_probe(mounted, path, size) {
+        Ok(()) => ext4::Status::Ok as i32,
+        Err(status) => status as i32,
+    }
+}
+
 /// Return one directory entry by stable enumeration index.
 ///
 /// # Safety

@@ -2703,7 +2703,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		fat32-handles) \
 			grep -Fxq 'ST FAT32 HANDLES generation stale double-close access bound clean' "$$log" || diagnostics_ok=false ;; \
 		ext4-recovery) \
-			grep -Fxq 'ST EXT4 RECOVERY marker cleared transaction committed appended exact journal clean transactions 0 replay 0 slots 0 VFS read-only remount clean resources exact' "$$log" && \
+			grep -Fxq 'ST EXT4 RECOVERY marker cleared transaction committed appended exact truncate revoke rearm journal clean transactions 0 replay 0 slots 0 VFS read-only remount clean resources exact' "$$log" && \
 			$(PYTHON) tools/ext4_image.py inspect '$(EXT4_RECOVERY_FIXTURE)' \
 				--report '$(EXT4_RECOVERY_FIXTURE).after.json' || diagnostics_ok=false ;; \
 		thread-guard) \
