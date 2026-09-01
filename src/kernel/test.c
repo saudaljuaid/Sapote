@@ -4770,6 +4770,9 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
 {
     static const uint8_t expected[] =
         "Sapote deterministic ext4 fixture\n";
+    const struct boot_ledger *ledger = boot_ledger_installed();
+    const struct boot_stage_receipt *nvme_proof;
+    const struct boot_stage_receipt *fat16_proof;
     struct sapote_ext4_recovery_report recovery = {0};
     const struct sapfs_drive_info drive = sapfs_drive(SAPFS_VOLUME_SYSTEM);
     struct sapfs_stat stat = {0};
@@ -4781,6 +4784,23 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
 
     if (active_scenario != KERNEL_TEST_EXT4_RECOVERY) {
         kernel_test_fail("ext4 recovery completion used outside its scenario");
+    }
+    nvme_proof = boot_ledger_receipt_for(ledger,
+        BOOT_STAGE_NVME_READ_PROOF);
+    fat16_proof = boot_ledger_receipt_for(ledger,
+        BOOT_STAGE_FILESYSTEM_FILE_PROOF);
+    if (ledger == NULL || nvme_proof == NULL || fat16_proof == NULL ||
+        nvme_proof->result != BOOT_RECEIPT_SKIPPED ||
+        fat16_proof->result != BOOT_RECEIPT_SKIPPED ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_NVME_FIXTURE_ABSENT) ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_FILESYSTEM_FIXTURE_ABSENT) ||
+        boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_NVME_READ_PROOF_COMPLETE) ||
+        boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_FILESYSTEM_FILE_PROOF_COMPLETE)) {
+        kernel_test_fail("ext4 namespace proof skips are invalid");
     }
     if (!drive.present || !drive.mounted || !drive.read_only || !drive.healthy ||
         !ext4_backend_recovery_report(SAPFS_VOLUME_SYSTEM, &recovery) ||
