@@ -125,6 +125,12 @@ public test crosses a block boundary, proves coalescing and rollback, reaches
 the 64-block image and revocation bounds, and proves the backing bytes never
 change. The Linux fixture additionally runs a real upstream file write through
 the stage and observes the overlay while the source image remains unchanged.
+Sapote's directory delta initializes new directory inodes with checksummed
+`.`/`..` entries and supplies a bounded empty-directory removal primitive.
+Removal validates the complete single-block directory before changing the
+stage, updates the parent link count, frees the inode and data block, and
+returns that physical block so the platform adapter can require its exact JBD2
+revocation.
 The stage can also clone an input transaction into one atomic classified
 snapshot: each explicitly named ordered-data block must be staged exactly once,
 derived revocations are added, every remaining image becomes journaled

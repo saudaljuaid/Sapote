@@ -110,6 +110,9 @@ pub enum Ext4Error {
 
     /// Cannot delete "." or ".." directory entries.
     DotEntry,
+
+    /// A directory must be empty before it can be removed.
+    DirectoryNotEmpty,
 }
 
 impl Ext4Error {
@@ -160,6 +163,7 @@ impl Display for Ext4Error {
             Self::DotEntry => {
                 write!(f, "cannot delete \".\" or \"..\" directory entry")
             }
+            Self::DirectoryNotEmpty => write!(f, "directory is not empty"),
         }
     }
 }
@@ -184,7 +188,8 @@ impl From<Ext4Error> for std::io::Error {
             | Ext4Error::UnsupportedOperation(_)
             | Ext4Error::PathTooLong
             | Ext4Error::TooManySymlinks
-            | Ext4Error::DotEntry => Self::other(e),
+            | Ext4Error::DotEntry
+            | Ext4Error::DirectoryNotEmpty => Self::other(e),
 
             Ext4Error::FileTooLarge => FileTooLarge.into(),
             Ext4Error::Io(inner) => Self::other(inner),

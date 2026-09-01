@@ -104,6 +104,8 @@ enum PendingMutationKind {
     CreateFile,
     UnlinkFile,
     LinkFile,
+    CreateDirectory,
+    RemoveDirectory,
 }
 
 struct PendingMutation {
@@ -375,6 +377,7 @@ fn map_error(error: Ext4Error) -> Status {
         Ext4Error::Io(_) => Status::Io,
         Ext4Error::NotFound => Status::NotFound,
         Ext4Error::AlreadyExists => Status::Exists,
+        Ext4Error::DirectoryNotEmpty => Status::NotEmpty,
         Ext4Error::NotADirectory => Status::NotDirectory,
         Ext4Error::IsADirectory => Status::IsDirectory,
         Ext4Error::PathTooLong | Ext4Error::FileTooLarge => Status::Range,
@@ -1201,6 +1204,137 @@ pub(crate) fn link_file_probe(
     commit_namespace_mutation(mounted, PendingMutationKind::LinkFile, pending_key)
 }
 
+/// Create one empty directory through a private journal acceptance path.
+pub(crate) fn create_directory_probe(
+    mounted: &mut Mounted,
+    path: &[u8],
+) -> Result<(), Status> {
+    let absolute = absolute_path(path)?;
+    if mounted.pending_mutation.is_some() {
+        return resume_namespace_mutation(
+            mounted,
+            PendingMutationKind::CreateDirectory,
+            &absolute,
+        );
+    }
+    if !mounted.stage.is_empty() || mounted.stage.is_sealed() {
+        let recovery = mounted
+            .journal
+            .filesystem_recovery_marker_is_durable()
+            .map_err(|_| Status::Invalid)?;
+        discard_uncommitted_stage(mounted, recovery)?;
+    }
+    arm_recovery_marker(mounted)?;
+    let (parent, name) = parent_and_name(&absolute)?;
+    let mutation = (|| {
+        let parent_inode = mounted
+            .filesystem
+            .path_to_inode(parent, FollowSymlinks::All)?;
+        let mut parent_directory =
+            Dir::open_inode(&mounted.filesystem, parent_inode)?;
+        let inode = mounted.filesystem.create_inode(InodeCreationOptions {
+            file_type: FileType::Directory,
+            mode: InodeMode::S_IFDIR
+                | InodeMode::S_IRUSR
+                | InodeMode::S_IWUSR
+                | InodeMode::S_IXUSR
+                | InodeMode::S_IRGRP
+                | InodeMode::S_IXGRP
+                | InodeMode::S_IROTH
+                | InodeMode::S_IXOTH,
+            uid: 0,
+            gid: 0,
+            time: Duration::from_secs(0),
+            flags: InodeFlags::empty(),
+        })?;
+        let mut directory = Dir::init(
+            mounted.filesystem.clone(),
+            inode,
+            parent_directory.inode(),
+        )?;
+        parent_directory.link(name, directory.inode_mut())
+    })();
+    if let Err(error) = mutation {
+        discard_uncommitted_stage(mounted, true)?;
+        return Err(map_error(error));
+    }
+    if mounted.stage.is_empty() || mounted.stage.revoked_block_count() != 0 {
+        discard_uncommitted_stage(mounted, true)?;
+        return Err(Status::Invalid);
+    }
+    commit_namespace_mutation(
+        mounted,
+        PendingMutationKind::CreateDirectory,
+        absolute,
+    )
+}
+
+/// Remove one empty directory through a private journal acceptance path.
+pub(crate) fn remove_directory_probe(
+    mounted: &mut Mounted,
+    path: &[u8],
+) -> Result<(), Status> {
+    let absolute = absolute_path(path)?;
+    if mounted.pending_mutation.is_some() {
+        return resume_namespace_mutation(
+            mounted,
+            PendingMutationKind::RemoveDirectory,
+            &absolute,
+        );
+    }
+    if !mounted.stage.is_empty() || mounted.stage.is_sealed() {
+        let recovery = mounted
+            .journal
+            .filesystem_recovery_marker_is_durable()
+            .map_err(|_| Status::Invalid)?;
+        discard_uncommitted_stage(mounted, recovery)?;
+    }
+    arm_recovery_marker(mounted)?;
+    let (parent, name) = parent_and_name(&absolute)?;
+    let mutation = (|| {
+        let path = Path::try_from(absolute.as_slice())
+            .map_err(|_| Ext4Error::MalformedPath)?;
+        let inode = mounted
+            .filesystem
+            .path_to_inode(path, FollowSymlinks::ExcludeFinalComponent)?;
+        if !inode.file_type().is_dir() {
+            return Err(Ext4Error::NotADirectory);
+        }
+        let parent_inode = mounted
+            .filesystem
+            .path_to_inode(parent, FollowSymlinks::All)?;
+        let mut parent_directory =
+            Dir::open_inode(&mounted.filesystem, parent_inode)?;
+        parent_directory.remove_empty_directory(name, inode)
+    })();
+    let revoked_block = match mutation {
+        Ok(block) => block,
+        Err(error) => {
+            discard_uncommitted_stage(mounted, true)?;
+            return Err(map_error(error));
+        }
+    };
+    if mounted.stage.is_empty() || mounted.stage.revoked_block_count() != 1 {
+        discard_uncommitted_stage(mounted, true)?;
+        return Err(Status::Invalid);
+    }
+    let resumed = commit_staged_mutation(
+        mounted,
+        PendingMutationKind::RemoveDirectory,
+        absolute,
+        Vec::new(),
+        0,
+        0,
+        &[],
+        Some(revoked_block),
+    )?;
+    if resumed == 0 {
+        Ok(())
+    } else {
+        Err(Status::Invalid)
+    }
+}
+
 /// Retry and durably execute the final clean plan while C holds a write lease.
 pub(crate) fn prepare_unmount(mounted: &mut Mounted) -> Result<(), Status> {
     if mounted.pending_mutation.is_some() {
@@ -1345,6 +1479,8 @@ pub(crate) enum Status {
     Special = 9,
     /// A namespace entry already exists at the requested path.
     Exists = 10,
+    /// A directory removal targeted a directory with live children.
+    NotEmpty = 11,
 }
 
 const _: i32 = Status::Volume as i32;

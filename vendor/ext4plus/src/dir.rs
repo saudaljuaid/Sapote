@@ -635,9 +635,9 @@ impl Dir {
     pub async fn init(
         fs: Ext4,
         mut dir_inode: Inode,
-        parent_inode_index: InodeIndex,
+        parent_inode: &Inode,
     ) -> Result<Self, Ext4Error> {
-        init_directory(&fs, &mut dir_inode, parent_inode_index).await?;
+        init_directory(&fs, &mut dir_inode, parent_inode.index).await?;
         Ok(Self {
             fs,
             inode: dir_inode,
@@ -749,6 +749,87 @@ impl Dir {
         } else {
             Ok(Some(inode))
         }
+    }
+
+    /// Remove an empty, single-block directory entry and return its freed block.
+    ///
+    /// Sapote uses the returned physical block to require the matching JBD2
+    /// revocation before checkpointing the inode, bitmap, counter, and parent
+    /// directory updates. The operation validates everything that can fail
+    /// before changing the filesystem through its configured writer.
+    #[maybe_async::maybe_async]
+    pub async fn remove_empty_directory(
+        &mut self,
+        name: DirEntryName<'_>,
+        inode: Inode,
+    ) -> Result<u64, Ext4Error> {
+        if name.0 == b"." || name.0 == b".." {
+            return Err(Ext4Error::DotEntry);
+        }
+        if !inode.file_type().is_dir() {
+            return Err(Ext4Error::NotADirectory);
+        }
+
+        let linked_inode =
+            get_dir_entry_inode_by_name(&self.fs, &self.inode, name).await?;
+        if linked_inode.index != inode.index {
+            return Err(dir_entry_error(self.inode.index));
+        }
+        let parent_links = self.inode.links_count();
+        let parent_links_after = parent_links
+            .checked_sub(1)
+            .filter(|links| *links >= 2)
+            .ok_or_else(|| dir_entry_error(self.inode.index))?;
+        if inode.links_count() != 2 {
+            return Err(dir_entry_error(inode.index));
+        }
+
+        let mut entries = ReadDir::new(
+            self.fs.clone(),
+            &inode,
+            PathBuf::empty(),
+        )?;
+        let mut found_dot = false;
+        let mut found_dotdot = false;
+        while let Some(entry) = entries.next().await {
+            let entry = entry?;
+            let entry_name = entry.file_name();
+            if entry_name == b"." {
+                if found_dot || entry.inode != inode.index {
+                    return Err(dir_entry_error(inode.index));
+                }
+                found_dot = true;
+            } else if entry_name == b".." {
+                if found_dotdot || entry.inode != self.inode.index {
+                    return Err(dir_entry_error(inode.index));
+                }
+                found_dotdot = true;
+            } else {
+                return Err(Ext4Error::DirectoryNotEmpty);
+            }
+        }
+        if !found_dot || !found_dotdot {
+            return Err(dir_entry_error(inode.index));
+        }
+
+        let block_size = self.fs.0.superblock.block_size().to_u64();
+        if inode.size_in_bytes() != block_size {
+            return Err(Ext4Error::Readonly);
+        }
+        let mut file_blocks = FileBlocks::new(self.fs.clone(), &inode)?;
+        let revoked_block = file_blocks
+            .next()
+            .await
+            .ok_or_else(|| dir_entry_error(inode.index))??;
+        if revoked_block == 0 {
+            return Err(dir_entry_error(inode.index));
+        }
+
+        remove_dir_entry(&self.fs, &mut self.inode, name).await?;
+        self.inode.set_links_count(parent_links_after);
+        self.inode.write(&self.fs).await?;
+        self.fs.delete_file(inode).await?;
+        Ok(revoked_block)
     }
 
     /// Return the inode for this directory.
@@ -1371,5 +1452,68 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(old_entry.file_type(), FileType::Regular);
+    }
+
+    #[maybe_async::test(
+        feature = "sync",
+        async(not(feature = "sync"), tokio::test)
+    )]
+    async fn test_remove_empty_directory() {
+        let fs = load_test_disk1_rw().await;
+        let root_inode = fs.read_root_inode().await.unwrap();
+        let mut root = Dir::open_inode(&fs.0, root_inode).unwrap();
+        let name = DirEntryName::try_from("sapote_rmdir").unwrap();
+
+        let child_inode = fs
+            .create_inode(InodeCreationOptions {
+                file_type: FileType::Directory,
+                mode: InodeMode::S_IFDIR
+                    | InodeMode::S_IRUSR
+                    | InodeMode::S_IWUSR
+                    | InodeMode::S_IXUSR,
+                uid: 0,
+                gid: 0,
+                time: Default::default(),
+                flags: InodeFlags::empty(),
+            })
+            .await
+            .unwrap();
+        let mut child =
+            Dir::init(fs.0.clone(), child_inode, root.inode()).await.unwrap();
+        root.link(name, child.inode_mut()).await.unwrap();
+
+        let mut file_inode = fs
+            .create_inode(InodeCreationOptions {
+                file_type: FileType::Regular,
+                mode: InodeMode::S_IFREG
+                    | InodeMode::S_IRUSR
+                    | InodeMode::S_IWUSR,
+                uid: 0,
+                gid: 0,
+                time: Default::default(),
+                flags: InodeFlags::empty(),
+            })
+            .await
+            .unwrap();
+        let file_name = DirEntryName::try_from("child").unwrap();
+        child.link(file_name, &mut file_inode).await.unwrap();
+
+        let child_inode = root.get_entry(name).await.unwrap();
+        let error = root
+            .remove_empty_directory(name, child_inode)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, Ext4Error::DirectoryNotEmpty));
+
+        let file_inode = child.get_entry(file_name).await.unwrap();
+        child.unlink(file_name, file_inode).await.unwrap();
+        let child_inode = root.get_entry(name).await.unwrap();
+        let revoked = root
+            .remove_empty_directory(name, child_inode)
+            .await
+            .unwrap();
+        assert_ne!(revoked, 0);
+        let error = root.get_entry(name).await.unwrap_err();
+        assert!(matches!(error, Ext4Error::NotFound));
     }
 }

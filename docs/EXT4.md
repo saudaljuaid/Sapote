@@ -72,6 +72,11 @@ an explicit coordinator-only loader preserves that same overlay writer while
 continuing to refuse permanent or unsupported read-only conditions. The
 ordered journal executor remains the only platform writer. `sync`, create,
 write, truncate, mkdir, rename, unlink, rmdir, and link still return `EROFS`.
+Private QEMU-only acceptance adapters now stage empty-file create/unlink,
+regular-file hard links, and empty-directory create/remove through JBD2. The
+directory removal path refuses live children and requires the exact freed
+directory block in the transaction's revoke record before commit. None of
+these adapters is installed in the public VFS table.
 Enabling the VFS write path requires all of the following in one implementation:
 
 1. ordered-data JBD2 descriptor, data, revoke, and checksummed commit records;

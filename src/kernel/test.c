@@ -4976,6 +4976,27 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
                 "data/user/JRNLPROBE.LNK") != SAPFS_STATUS_OK ||
             sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
             sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.LNK",
+                &stat) != SAPFS_STATUS_NOT_FOUND ||
+            ext4_backend_create_directory_probe(SAPFS_VOLUME_SYSTEM,
+                "data/user/JRNLPROBE.DIR") != SAPFS_STATUS_OK ||
+            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
+            sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.DIR",
+                &stat) != SAPFS_STATUS_OK || !stat.directory ||
+            ext4_backend_create_file_probe(SAPFS_VOLUME_SYSTEM,
+                "data/user/JRNLPROBE.DIR/CHILD.TMP") != SAPFS_STATUS_OK ||
+            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
+            ext4_backend_remove_directory_probe(SAPFS_VOLUME_SYSTEM,
+                "data/user/JRNLPROBE.DIR") != SAPFS_STATUS_NOT_EMPTY ||
+            sapfs_stat_path(SAPFS_VOLUME_SYSTEM,
+                "data/user/JRNLPROBE.DIR/CHILD.TMP", &stat) !=
+                    SAPFS_STATUS_OK || stat.directory ||
+            ext4_backend_unlink_file_probe(SAPFS_VOLUME_SYSTEM,
+                "data/user/JRNLPROBE.DIR/CHILD.TMP") != SAPFS_STATUS_OK ||
+            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
+            ext4_backend_remove_directory_probe(SAPFS_VOLUME_SYSTEM,
+                "data/user/JRNLPROBE.DIR") != SAPFS_STATUS_OK ||
+            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
+            sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.DIR",
                 &stat) != SAPFS_STATUS_NOT_FOUND) {
             kernel_test_fail("ext4 private namespace journal probe failed");
         }

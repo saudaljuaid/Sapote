@@ -24,6 +24,7 @@ enum sapote_ext4_status {
     SAPOTE_EXT4_STATUS_RANGE,
     SAPOTE_EXT4_STATUS_SPECIAL,
     SAPOTE_EXT4_STATUS_EXISTS,
+    SAPOTE_EXT4_STATUS_NOT_EMPTY,
     SAPOTE_EXT4_STATUS_COUNT
 };
 
@@ -133,6 +134,10 @@ enum sapfs_status ext4_backend_unlink_file_probe(enum sapfs_volume volume,
     const char *path);
 enum sapfs_status ext4_backend_link_file_probe(enum sapfs_volume volume,
     const char *source, const char *destination);
+enum sapfs_status ext4_backend_create_directory_probe(
+    enum sapfs_volume volume, const char *path);
+enum sapfs_status ext4_backend_remove_directory_probe(
+    enum sapfs_volume volume, const char *path);
 /* Private ext4-recovery scenario controls; never installed in the VFS table. */
 bool ext4_backend_test_configure_power_cut(const char *command_line,
     size_t command_line_length);
