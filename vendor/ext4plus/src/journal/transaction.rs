@@ -29,7 +29,8 @@ use crate::inode::Inode;
 #[cfg(not(feature = "sync"))]
 use crate::iters::AsyncIterator;
 use crate::iters::file_blocks::FileBlocks;
-use crate::util::read_u32be;
+use crate::superblock::Superblock;
+use crate::util::{read_u32be, read_u32le, write_u32le};
 use crate::uuid::Uuid;
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec;
@@ -52,6 +53,12 @@ pub const JOURNAL_RING_MAX_SLOTS: usize = 8192;
 /// The byte size of the JBD2 superblock admitted by the public ring boundary.
 pub const JOURNAL_SUPERBLOCK_BYTES: usize = 1024;
 
+/// The exact byte size of the ext4 primary superblock.
+pub const FILESYSTEM_SUPERBLOCK_BYTES: usize = 1024;
+
+/// The byte offset of the ext4 primary superblock on a 4 KiB filesystem.
+pub const FILESYSTEM_SUPERBLOCK_START_BYTE: u64 = 1024;
+
 const JOURNAL_SUPERBLOCK_BLOCK_SIZE_OFFSET: usize = 0x0c;
 const JOURNAL_SUPERBLOCK_MAX_LENGTH_OFFSET: usize = 0x10;
 const JOURNAL_SUPERBLOCK_FIRST_BLOCK_OFFSET: usize = 0x14;
@@ -68,6 +75,11 @@ const JOURNAL_FEATURE_CHECKSUM_V3: u32 = 0x10;
 const JOURNAL_REQUIRED_FEATURES: u32 = JOURNAL_FEATURE_64_BIT | JOURNAL_FEATURE_CHECKSUM_V3;
 const JOURNAL_ALLOWED_FEATURES: u32 = JOURNAL_REQUIRED_FEATURES | JOURNAL_FEATURE_BLOCK_REVOCATIONS;
 const JOURNAL_CHECKSUM_TYPE_CRC32C: u8 = 4;
+const FILESYSTEM_INCOMPAT_FEATURES_OFFSET: usize = 0x60;
+const FILESYSTEM_READ_ONLY_FEATURES_OFFSET: usize = 0x64;
+const FILESYSTEM_CHECKSUM_OFFSET: usize = 0x3fc;
+const FILESYSTEM_RECOVERY_FEATURE: u32 = 0x4;
+const FILESYSTEM_METADATA_CHECKSUM_FEATURE: u32 = 0x400;
 
 /// A checked block image owned by a transaction or replay result.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -93,6 +105,8 @@ impl JournalBlockImage {
 /// The durability boundary represented by a commit-plan flush operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum JournalFlush {
+    /// Ext4's checksummed incompat-recovery marker is durable.
+    FilesystemState,
     /// Ordered file data must be durable before journal metadata is committed.
     OrderedData,
     /// Descriptor and journaled metadata must be durable before the commit.
@@ -121,6 +135,13 @@ pub enum JournalRecordKind {
 /// One operation in a strictly ordered JBD2 commit plan.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum JournalCommitOperation {
+    /// Write the complete checksummed ext4 primary superblock.
+    WriteFilesystemSuperblock {
+        /// Absolute byte offset of the primary ext4 superblock.
+        start_byte: u64,
+        /// Complete 1,024-byte ext4 superblock image.
+        image: FilesystemSuperblockImage,
+    },
     /// Write file data to its final block before committing related metadata.
     WriteOrderedData(JournalBlockImage),
     /// Persist every write preceding this operation.
@@ -217,6 +238,10 @@ pub enum JournalTransactionError {
     ReservationOverflow,
     /// A durable plan was requested from a ring without a mapped superblock.
     JournalStateUnavailable,
+    /// A real ext4 ring has no validated filesystem-superblock state.
+    FilesystemStateUnavailable,
+    /// The first journal commit was requested before the recovery marker flush.
+    RecoveryMarkerNotDurable,
 }
 
 impl Display for JournalTransactionError {
@@ -262,6 +287,12 @@ impl Display for JournalTransactionError {
             Self::ReservationOrder => "journal reservation order is invalid",
             Self::ReservationOverflow => "journal reservation ticket would overflow",
             Self::JournalStateUnavailable => "journal ring has no mapped checksummed superblock",
+            Self::FilesystemStateUnavailable => {
+                "journal ring has no validated ext4 superblock state"
+            }
+            Self::RecoveryMarkerNotDurable => {
+                "ext4 recovery marker is not durably recorded"
+            }
         };
         formatter.write_str(message)
     }
@@ -281,6 +312,67 @@ pub struct JournalSuperblockImage {
     start_block: u32,
     uuid: Uuid,
     block_revocations: bool,
+}
+
+/// A complete checksummed ext4 primary-superblock state image.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FilesystemSuperblockImage {
+    bytes: [u8; FILESYSTEM_SUPERBLOCK_BYTES],
+    needs_recovery: bool,
+}
+
+impl FilesystemSuperblockImage {
+    fn from_superblock(superblock: &Superblock, needs_recovery: bool) -> Self {
+        Self {
+            bytes: superblock.recovery_state_image(needs_recovery),
+            needs_recovery,
+        }
+    }
+
+    /// Return the complete 1,024-byte primary-superblock image.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Return whether this image carries ext4's incompat-recovery bit.
+    #[must_use]
+    pub fn needs_recovery(&self) -> bool {
+        self.needs_recovery
+    }
+
+    /// Produce the opposite recovery state while preserving every other byte.
+    #[must_use]
+    pub fn with_recovery_state(&self, needs_recovery: bool) -> Self {
+        let mut bytes = self.bytes;
+        let mut incompat = read_u32le(&bytes, FILESYSTEM_INCOMPAT_FEATURES_OFFSET);
+        if needs_recovery {
+            incompat |= FILESYSTEM_RECOVERY_FEATURE;
+        } else {
+            incompat &= !FILESYSTEM_RECOVERY_FEATURE;
+        }
+        write_u32le(
+            &mut bytes,
+            FILESYSTEM_INCOMPAT_FEATURES_OFFSET,
+            incompat,
+        );
+        if read_u32le(&bytes, FILESYSTEM_READ_ONLY_FEATURES_OFFSET)
+            & FILESYSTEM_METADATA_CHECKSUM_FEATURE
+            != 0
+        {
+            let mut checksum = Checksum::new();
+            checksum.update(&bytes[..FILESYSTEM_CHECKSUM_OFFSET]);
+            write_u32le(
+                &mut bytes,
+                FILESYSTEM_CHECKSUM_OFFSET,
+                checksum.finalize(),
+            );
+        }
+        Self {
+            bytes,
+            needs_recovery,
+        }
+    }
 }
 
 /// A failure while discovering the journal inode from an admitted filesystem.
@@ -330,6 +422,7 @@ impl From<JournalTransactionError> for JournalInodeMapError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JournalInodeMap {
     superblock: JournalSuperblockImage,
+    filesystem_superblock: FilesystemSuperblockImage,
     maximum_block: u64,
     physical_blocks: Vec<u64>,
     filesystem_needs_recovery: bool,
@@ -383,6 +476,12 @@ impl JournalInodeMap {
         &self.physical_blocks
     }
 
+    /// Return the validated ext4 primary-superblock state seen at admission.
+    #[must_use]
+    pub fn filesystem_superblock(&self) -> &FilesystemSuperblockImage {
+        &self.filesystem_superblock
+    }
+
     /// Return the authoritative ext4 incompat-recovery feature state.
     #[must_use]
     pub fn filesystem_needs_recovery(&self) -> bool {
@@ -394,8 +493,12 @@ impl JournalInodeMap {
         if self.filesystem_needs_recovery {
             return Err(JournalTransactionError::RecoveryStateMismatch);
         }
-        self.superblock
-            .map_clean_ring(self.maximum_block, &self.physical_blocks)
+        let mut ring = self
+            .superblock
+            .map_clean_ring(self.maximum_block, &self.physical_blocks)?;
+        ring.filesystem_superblock = Some(self.filesystem_superblock);
+        ring.filesystem_recovery_state = Some(FilesystemRecoveryState::Clean);
+        Ok(ring)
     }
 }
 
@@ -445,6 +548,10 @@ pub async fn load_journal_inode_map(fs: &Ext4) -> Result<JournalInodeMap, Journa
     }
     Ok(JournalInodeMap {
         superblock,
+        filesystem_superblock: FilesystemSuperblockImage::from_superblock(
+            &fs.0.superblock,
+            fs.0.superblock.needs_recovery(),
+        ),
         maximum_block,
         physical_blocks,
         filesystem_needs_recovery: fs.0.superblock.needs_recovery(),
@@ -978,6 +1085,13 @@ enum ReservationState {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FilesystemRecoveryState {
+    Clean,
+    PlanPrepared,
+    Durable,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ActiveReservation {
     ticket: u64,
     sequence: u32,
@@ -1039,6 +1153,8 @@ pub struct JournalRing {
     block_revocations: bool,
     superblock: Option<JournalSuperblockImage>,
     superblock_block: Option<u64>,
+    filesystem_superblock: Option<FilesystemSuperblockImage>,
+    filesystem_recovery_state: Option<FilesystemRecoveryState>,
     slots: Vec<u64>,
     head: usize,
     tail: usize,
@@ -1079,6 +1195,8 @@ impl JournalRing {
             block_revocations,
             superblock: None,
             superblock_block: None,
+            filesystem_superblock: None,
+            filesystem_recovery_state: None,
             slots: Vec::from(journal_slots),
             head: 0,
             tail: 0,
@@ -1096,6 +1214,52 @@ impl JournalRing {
             *self.uuid.as_bytes(),
             self.maximum_block,
         )
+    }
+
+    /// Build the write and flush that make ext4's recovery marker durable.
+    ///
+    /// A ring discovered from a real clean ext4 image must execute this plan
+    /// once before its first mapped commit plan. Synthetic journal-only rings
+    /// have no filesystem-superblock state and do not use this transition.
+    pub fn prepare_recovery_marker_plan(
+        &mut self,
+    ) -> Result<Vec<JournalCommitOperation>, JournalTransactionError> {
+        let state = self
+            .filesystem_recovery_state
+            .ok_or(JournalTransactionError::FilesystemStateUnavailable)?;
+        if state != FilesystemRecoveryState::Clean {
+            return Err(JournalTransactionError::ReservationState);
+        }
+        let marker = self
+            .filesystem_superblock
+            .as_ref()
+            .ok_or(JournalTransactionError::FilesystemStateUnavailable)?;
+        if marker.needs_recovery {
+            return Err(JournalTransactionError::RecoveryStateMismatch);
+        }
+        let marker = marker.with_recovery_state(true);
+        self.filesystem_recovery_state = Some(FilesystemRecoveryState::PlanPrepared);
+        Ok(vec![
+            JournalCommitOperation::WriteFilesystemSuperblock {
+                start_byte: FILESYSTEM_SUPERBLOCK_START_BYTE,
+                image: marker,
+            },
+            JournalCommitOperation::Flush(JournalFlush::FilesystemState),
+        ])
+    }
+
+    /// Acknowledge the completed recovery-marker flush.
+    pub fn mark_recovery_marker_durable(&mut self) -> Result<(), JournalTransactionError> {
+        if self.filesystem_recovery_state != Some(FilesystemRecoveryState::PlanPrepared) {
+            return Err(JournalTransactionError::ReservationState);
+        }
+        let marker = self
+            .filesystem_superblock
+            .as_ref()
+            .ok_or(JournalTransactionError::FilesystemStateUnavailable)?;
+        self.filesystem_superblock = Some(marker.with_recovery_state(true));
+        self.filesystem_recovery_state = Some(FilesystemRecoveryState::Durable);
+        Ok(())
     }
 
     /// Reserve ring slots and build a complete commit plan without issuing I/O.
@@ -1205,6 +1369,11 @@ impl JournalRing {
         &mut self,
         prepared: &JournalPreparedTransaction,
     ) -> Result<Vec<JournalCommitOperation>, JournalTransactionError> {
+        if self.filesystem_recovery_state.is_some()
+            && self.filesystem_recovery_state != Some(FilesystemRecoveryState::Durable)
+        {
+            return Err(JournalTransactionError::RecoveryMarkerNotDurable);
+        }
         let index = self
             .active
             .iter()

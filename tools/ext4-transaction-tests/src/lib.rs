@@ -2,10 +2,10 @@
 #![cfg(test)]
 
 use ext4plus::{
-    Ext4, JOURNAL_BLOCK_BYTES, JournalCommitOperation, JournalFlush, JournalPreparedTransaction,
-    JournalRecordKind, JournalRing, JournalSuperblockImage, JournalTransaction,
-    JournalTransactionError, load_journal_inode_map, recover_committed_ring,
-    replay_committed_transaction,
+    Ext4, FILESYSTEM_SUPERBLOCK_START_BYTE, JOURNAL_BLOCK_BYTES, JournalCommitOperation,
+    JournalFlush, JournalPreparedTransaction, JournalRecordKind, JournalRing,
+    JournalSuperblockImage, JournalTransaction, JournalTransactionError, load_journal_inode_map,
+    recover_committed_ring, replay_committed_transaction,
 };
 use std::collections::BTreeMap;
 
@@ -15,6 +15,20 @@ const JOURNAL_SLOTS: [u64; 4] = [3000, 3001, 3002, 3003];
 
 fn filled(value: u8) -> Vec<u8> {
     vec![value; JOURNAL_BLOCK_BYTES]
+}
+
+fn ext4_crc32c(bytes: &[u8]) -> u32 {
+    const REFLECTED_CRC32C_POLYNOMIAL: u32 = 0x82f6_3b78;
+
+    let mut checksum = u32::MAX;
+    for byte in bytes {
+        checksum ^= u32::from(*byte);
+        for _ in 0..8 {
+            let mask = 0u32.wrapping_sub(checksum & 1);
+            checksum = (checksum >> 1) ^ (REFLECTED_CRC32C_POLYNOMIAL & mask);
+        }
+    }
+    checksum
 }
 
 fn transaction() -> JournalTransaction {
@@ -146,6 +160,7 @@ fn every_precommit_power_cut_has_no_durable_home_or_replay() {
                     durable_home.extend(pending_home.clone());
                 }
                 JournalCommitOperation::WriteOrderedData(_) => {}
+                JournalCommitOperation::WriteFilesystemSuperblock { .. } => {}
                 JournalCommitOperation::WriteJournalSuperblock { .. } => {}
             }
         }
@@ -229,6 +244,7 @@ fn mapped_ring_power_cuts_preserve_a_recoverable_or_clean_state() {
                     durable_home.extend(pending_home.clone());
                 }
                 JournalCommitOperation::WriteOrderedData(_) => {}
+                JournalCommitOperation::WriteFilesystemSuperblock { .. } => {}
             }
         }
 
@@ -494,6 +510,30 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
     let journal = load_journal_inode_map(&filesystem).unwrap();
     assert_eq!(journal.superblock().start_block(), 0);
     assert!(!journal.filesystem_needs_recovery());
+    let clean_filesystem_superblock = journal.filesystem_superblock().clone();
+    assert!(!clean_filesystem_superblock.needs_recovery());
+    let recovery_marker = clean_filesystem_superblock.with_recovery_state(true);
+    assert!(recovery_marker.needs_recovery());
+    assert_eq!(
+        u32::from_le_bytes(recovery_marker.bytes()[0x60..0x64].try_into().unwrap()) & 0x4,
+        0x4
+    );
+    assert_eq!(
+        u32::from_le_bytes(recovery_marker.bytes()[0x3fc..0x400].try_into().unwrap()),
+        ext4_crc32c(&recovery_marker.bytes()[..0x3fc])
+    );
+    for index in 0..recovery_marker.bytes().len() {
+        if !(0x60..0x64).contains(&index) && !(0x3fc..0x400).contains(&index) {
+            assert_eq!(
+                recovery_marker.bytes()[index],
+                clean_filesystem_superblock.bytes()[index]
+            );
+        }
+    }
+    assert_eq!(
+        recovery_marker.with_recovery_state(false),
+        clean_filesystem_superblock
+    );
     assert_eq!(
         usize::try_from(journal.superblock().maximum_length()).unwrap(),
         journal.physical_blocks().len()
@@ -503,6 +543,17 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
 
     let physical = Vec::from(journal.physical_blocks());
     let mut ring = journal.into_clean_ring().unwrap();
+    let marker_plan = ring.prepare_recovery_marker_plan().unwrap();
+    assert!(matches!(
+        &marker_plan[0],
+        JournalCommitOperation::WriteFilesystemSuperblock { start_byte, image }
+            if *start_byte == FILESYSTEM_SUPERBLOCK_START_BYTE
+                && image == &recovery_marker
+    ));
+    assert_eq!(
+        marker_plan[1],
+        JournalCommitOperation::Flush(JournalFlush::FilesystemState)
+    );
     let home_block = (1..MAXIMUM_BLOCK)
         .find(|block| !physical.contains(block))
         .unwrap();
@@ -512,6 +563,12 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
         .unwrap();
     let prepared = ring.prepare(&transaction).unwrap();
     assert_eq!(prepared.journal_blocks(), &physical[1..4]);
+    assert_eq!(
+        ring.prepare_commit_plan(&prepared),
+        Err(JournalTransactionError::RecoveryMarkerNotDurable)
+    );
+    ring.mark_recovery_marker_durable().unwrap();
+    assert!(ring.prepare_commit_plan(&prepared).is_ok());
 }
 
 #[test]

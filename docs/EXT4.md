@@ -146,6 +146,8 @@ each metadata image, and the commit. The resulting operation list has one legal
 order:
 
 ```text
+checksummed ext4 primary-superblock write (set incompat-recovery)
+Flush(FilesystemState)
 live JBD2 superblock write (nonzero s_start)
 ordered file-data home writes
 Flush(OrderedData)
@@ -160,9 +162,12 @@ Flush(JournalState)
 ```
 
 Metadata home blocks appear only after `Flush(Commit)`, and slots are reused
-only after `Flush(JournalState)`. The barriers order the live superblock before
-the commit. The filesystem owner makes ext4's incompat-recovery bit durable
-before executing the plan. A complete, checksummed commit is required before
+only after `Flush(JournalState)`. A ring discovered from a real clean ext4
+image refuses its first mapped commit plan until the caller acknowledges the
+dedicated recovery-marker flush. `FilesystemSuperblockImage` changes only the
+little-endian incompatibility word and the primary-superblock CRC32C, whose
+all-ones seed is independent of ext4's general metadata checksum seed. A
+complete, checksummed commit is required before
 `replay_committed_transaction()` returns any home image. Pure tests cut the
 mapped operation list at every boundary and prove each durable prefix is either
 clean, contains only an uncommitted tail, or replays the complete metadata
@@ -171,6 +176,7 @@ image. They also corrupt descriptor, data, and commit bytes independently.
 `tools/ext4-transaction-tests` with
 `--no-default-features --features sync`, followed by the hostile-image suite.
 
-The ring planner validates the journal map and produces live, checkpoint, and
-tail-state operations. It does not issue filesystem or superblock writes. The
-mounted ext4 backend remains read-only, and mutation operations return `EROFS`.
+The ring planner validates the journal map and produces recovery-marker, live,
+checkpoint, and tail-state operations. It does not issue filesystem or
+superblock writes or bind a flush to platform storage. The mounted ext4 backend
+remains read-only, and mutation operations return `EROFS`.

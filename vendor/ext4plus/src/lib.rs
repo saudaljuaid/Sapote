@@ -182,10 +182,12 @@ pub use file_type::FileType;
 pub use format::BytesDisplay;
 pub use iters::read_dir::ReadDir;
 pub use journal::transaction::{
+    FILESYSTEM_SUPERBLOCK_BYTES, FILESYSTEM_SUPERBLOCK_START_BYTE,
     JOURNAL_BLOCK_BYTES, JOURNAL_RING_MAX_SLOTS, JOURNAL_SUPERBLOCK_BYTES,
     JOURNAL_TRANSACTION_MAX_METADATA_BLOCKS,
     JOURNAL_TRANSACTION_MAX_REVOKED_BLOCKS,
-    JournalBlockImage, JournalCommitOperation, JournalFlush, JournalRecordKind,
+    FilesystemSuperblockImage, JournalBlockImage, JournalCommitOperation, JournalFlush,
+    JournalRecordKind,
     JournalInodeMap, JournalInodeMapError, JournalPreparedTransaction,
     JournalRecovery, JournalRing, JournalSuperblockImage, JournalTransaction,
     JournalTransactionError, load_journal_inode_map,

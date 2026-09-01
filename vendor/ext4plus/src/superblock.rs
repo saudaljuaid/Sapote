@@ -25,6 +25,9 @@ use core::num::NonZeroU32;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use core::time::Duration;
 
+const SUPERBLOCK_INCOMPAT_FEATURES_OFFSET: usize = 0x60;
+const SUPERBLOCK_CHECKSUM_OFFSET: usize = 0x3fc;
+
 /// Creator of the filesystem
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CreatorOS(u32);
@@ -134,8 +137,7 @@ impl Superblock {
         let s_free_blocks_count_hi = read_u32le(bytes, 0x158);
         let s_min_extra_isize = read_u16le(bytes, 0x15C);
         let s_checksum_seed = read_u32le(bytes, 0x270);
-        const S_CHECKSUM_OFFSET: usize = 0x3fc;
-        let s_checksum = read_u32le(bytes, S_CHECKSUM_OFFSET);
+        let s_checksum = read_u32le(bytes, SUPERBLOCK_CHECKSUM_OFFSET);
 
         let blocks_count = u64_from_hilo(s_blocks_count_hi, s_blocks_count_lo);
         let free_blocks_count =
@@ -216,7 +218,7 @@ impl Superblock {
             .contains(ReadOnlyCompatibleFeatures::METADATA_CHECKSUMS)
         {
             let mut checksum = Checksum::new();
-            checksum.update(&bytes[..S_CHECKSUM_OFFSET]);
+            checksum.update(&bytes[..SUPERBLOCK_CHECKSUM_OFFSET]);
             if s_checksum != checksum.finalize() {
                 return Err(CorruptKind::SuperblockChecksum.into());
             }
@@ -292,9 +294,39 @@ impl Superblock {
             .contains(ReadOnlyCompatibleFeatures::METADATA_CHECKSUMS)
         {
             let mut checksum = Checksum::new();
-            checksum.update(&data[..0x3fc]);
+            checksum.update(&data[..SUPERBLOCK_CHECKSUM_OFFSET]);
             let checksum_bytes = checksum.finalize().to_le_bytes();
-            data[0x3fc..].copy_from_slice(&checksum_bytes);
+            data[SUPERBLOCK_CHECKSUM_OFFSET..].copy_from_slice(&checksum_bytes);
+        }
+        data
+    }
+
+    /// Produce a complete primary-superblock image with the requested
+    /// incompat-recovery state and a matching ext4 metadata checksum.
+    pub(crate) fn recovery_state_image(
+        &self,
+        needs_recovery: bool,
+    ) -> [u8; Self::SIZE_IN_BYTES_ON_DISK] {
+        let mut data = self.to_bytes();
+        let mut incompat = read_u32le(&data, SUPERBLOCK_INCOMPAT_FEATURES_OFFSET);
+        if needs_recovery {
+            incompat |= IncompatibleFeatures::RECOVERY.bits();
+        } else {
+            incompat &= !IncompatibleFeatures::RECOVERY.bits();
+        }
+        write_u32le(&mut data, SUPERBLOCK_INCOMPAT_FEATURES_OFFSET, incompat);
+
+        if self
+            .read_only_compatible_features()
+            .contains(ReadOnlyCompatibleFeatures::METADATA_CHECKSUMS)
+        {
+            let mut checksum = Checksum::new();
+            checksum.update(&data[..SUPERBLOCK_CHECKSUM_OFFSET]);
+            write_u32le(
+                &mut data,
+                SUPERBLOCK_CHECKSUM_OFFSET,
+                checksum.finalize(),
+            );
         }
         data
     }

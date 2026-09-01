@@ -39,6 +39,14 @@ into the ring. The mapping is bounded, distinct, in-range, and includes the
 physical superblock in alias checks. Ring preparation also refuses revokes when
 the admitted superblock does not advertise block revocations.
 
+`FilesystemSuperblockImage` preserves the admitted ext4 primary superblock and
+emits clean or incompat-recovery state with the metadata-checksum CRC32C
+recomputed over the little-endian bytes before `s_checksum`, using the ext4
+superblock's fixed all-ones seed. A ring discovered from a real clean filesystem
+emits that marker write followed by `Flush(FilesystemState)` and refuses its
+first mapped JBD2 commit plan until the caller acknowledges the flush. Synthetic
+journal-only rings retain their existing host-test boundary.
+
 `load_journal_inode_map` discovers the internal journal through ext4plus's own
 checked inode and extent/block-map iterator, bounds the complete physical map,
 reads logical block zero without the replay overlay, and requires its length to
@@ -60,8 +68,8 @@ pending images, and returns a collapsed checkpoint set plus the checksummed
 clean superblock state. The ext4 recovery bit must agree with the JBD2 state;
 ambiguous or inconsistent combinations are refused.
 
-This planner does not issue home or superblock writes, make ext4's
-incompat-recovery marker durable, bind a barrier to platform I/O, or redirect
+This planner does not issue home or superblock writes, bind its marker or JBD2
+barriers to platform I/O, clear the recovery marker after replay, or redirect
 ext4 mutation methods away from their upstream home-block writes. Those gaps
 keep the Sapote backend read-only.
 
