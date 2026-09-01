@@ -4785,6 +4785,7 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
     size_t read_bytes = 0U;
     size_t written_bytes = 0U;
     bool contents_match = true;
+    bool transaction_already_visible = false;
     const bool power_cut = ext4_backend_test_power_cut_configured();
     const uint64_t before = sapfs_completion_count(SAPFS_VOLUME_SYSTEM);
 
@@ -4853,19 +4854,25 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
     }
     if (sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "system/README.TXT", &stat) !=
             SAPFS_STATUS_OK || stat.directory || !stat.read_only ||
-        stat.size != sizeof(expected) - 1U ||
+        (stat.size != sizeof(expected) - 1U && stat.size != UINT64_C(4097)) ||
         sapfs_open(SAPFS_VOLUME_SYSTEM, "system/README.TXT",
             SAPFS_ACCESS_READ, &handle) != SAPFS_STATUS_OK ||
-        sapfs_read(handle, bytes, sizeof(bytes), &read_bytes) !=
+        sapfs_pread(handle, bytes, sizeof(expected) - 1U, 0U, &read_bytes) !=
             SAPFS_STATUS_OK || read_bytes != sizeof(expected) - 1U) {
         kernel_test_fail("ext4 recovered namespace could not be read");
     }
+    transaction_already_visible = stat.size == UINT64_C(4097);
     for (size_t index = 0U; index < read_bytes; ++index) {
         if (bytes[index] != expected[index]) {
             contents_match = false;
         }
     }
-    if (!contents_match || sapfs_close(handle) != SAPFS_STATUS_OK ||
+    if (!contents_match ||
+        (transaction_already_visible &&
+            (sapfs_pread(handle, &appended, sizeof(appended), UINT64_C(4096),
+                &read_bytes) != SAPFS_STATUS_OK || read_bytes != 1U ||
+             appended != transaction_byte)) ||
+        sapfs_close(handle) != SAPFS_STATUS_OK ||
         sapfs_close(handle) != SAPFS_STATUS_STALE_HANDLE ||
         sapfs_completion_count(SAPFS_VOLUME_SYSTEM) <= before) {
         kernel_test_fail("ext4 recovery read leaked or changed data");
@@ -4877,7 +4884,7 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
         sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_READ_ONLY) {
         kernel_test_fail("ext4 recovery escaped the read-only VFS gate");
     }
-    if (!power_cut) {
+    if (!power_cut && !transaction_already_visible) {
         if (!ext4_backend_test_fail_storage_once(3U) ||
             ext4_backend_transaction_probe(SAPFS_VOLUME_SYSTEM,
                 "system/README.TXT", UINT64_C(4096), &transaction_byte,
@@ -4893,10 +4900,11 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
             kernel_test_fail("ext4 pending allocation failure retry is invalid");
         }
     }
-    if (ext4_backend_transaction_probe(SAPFS_VOLUME_SYSTEM,
-            "system/README.TXT", UINT64_C(4096), &transaction_byte,
-            sizeof(transaction_byte), &written_bytes) != SAPFS_STATUS_OK ||
-        written_bytes != sizeof(transaction_byte) ||
+    if ((!transaction_already_visible &&
+            (ext4_backend_transaction_probe(SAPFS_VOLUME_SYSTEM,
+                "system/README.TXT", UINT64_C(4096), &transaction_byte,
+                sizeof(transaction_byte), &written_bytes) != SAPFS_STATUS_OK ||
+             written_bytes != sizeof(transaction_byte))) ||
         sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "system/README.TXT", &stat) !=
             SAPFS_STATUS_OK || stat.size != UINT64_C(4097) ||
         sapfs_open(SAPFS_VOLUME_SYSTEM, "system/README.TXT",

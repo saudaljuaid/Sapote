@@ -35,6 +35,11 @@ class PowerCutError(RuntimeError):
     """A named power-cut evidence failure."""
 
 
+def _transcript_tail(transcript: str, line_count: int = 24) -> str:
+    """Return a bounded serial tail suitable for a failed CI annotation."""
+    return "\n".join(transcript.splitlines()[-line_count:])
+
+
 def _build_iso(
     kernel: Path,
     output: Path,
@@ -198,7 +203,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         marker = f"ST EXT4 POWER CUT {cut} {boundary}"
         if status != POWER_CUT_EXIT_STATUS or marker not in transcript:
             raise PowerCutError(
-                f"boundary {cut} did not cut exactly: status={status}, log={cut_log}"
+                f"boundary {cut} did not cut exactly: status={status}, log={cut_log}\n"
+                + _transcript_tail(transcript)
             )
         if PASS_MARKER in transcript or "ST FAIL" in transcript or "Sapote PANIC" in transcript:
             raise PowerCutError(f"boundary {cut} reached an invalid terminal marker")
@@ -214,7 +220,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             or "Sapote PANIC" in transcript
         ):
             raise PowerCutError(
-                f"boundary {cut} reboot failed: status={status}, log={reboot_log}"
+                f"boundary {cut} reboot failed: status={status}, log={reboot_log}\n"
+                + _transcript_tail(transcript)
             )
         after_report = ext4_image.inspect_image(image, tools=tools)
         with tempfile.TemporaryDirectory(prefix="sapote-ext4-result-", dir=output) as raw:
