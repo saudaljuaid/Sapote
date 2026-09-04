@@ -165,8 +165,13 @@ static int install(const char *identifier)
             &request, &fetch);
         if (status != PHIPIA_PACKAGE_FETCH_OK ||
             fetch.upload == PHIPIA_HANDLE_INVALID || !fetch.durable) {
-            printf("phip: payload %u download failed: %s\n", index,
-                phipia_package_fetch_status_string(status));
+            printf("phip: payload %u download failed: %s https=%s tls=%d "
+                "transport=%ld storage=%ld cleanup=%ld bytes=%zu\n", index,
+                phipia_package_fetch_status_string(status),
+                phipia_https_status_string(fetch.https_status),
+                fetch.bearssl_error, fetch.transport_error,
+                fetch.storage_error, fetch.cleanup_error,
+                fetch.bytes_received);
             if (fetch.upload != PHIPIA_HANDLE_INVALID) {
                 (void)close_handle(fetch.upload);
             }

@@ -24,6 +24,11 @@ SERVER_ISN = 0x63000000
 TLS_PORT = 443
 MAX_REQUEST = 2048
 TCP_CHUNK = 1200
+TCP_SEND_WINDOW = TCP_CHUNK * 4
+
+
+def sequence_distance(start: int, end: int) -> int:
+    return (end - start) & 0xFFFFFFFF
 
 
 def make_server_context() -> ssl.SSLContext:
@@ -42,12 +47,14 @@ class HttpsPeer:
     client_port: int
     client_next: int
     server_next: int
+    server_acked: int
     incoming: ssl.MemoryBIO
     outgoing: ssl.MemoryBIO
     tls: ssl.SSLObject
     handshake_complete: bool = False
     closing: bool = False
     finished: bool = False
+    fin_sent: bool = False
     request: bytearray = field(default_factory=bytearray)
 
 
@@ -100,9 +107,10 @@ class HttpsFixture(network.Fixture):
         incoming = ssl.MemoryBIO()
         outgoing = ssl.MemoryBIO()
         tls = self.context.wrap_bio(incoming, outgoing, server_side=True)
+        server_sequence = (SERVER_ISN + client_port) & 0xFFFFFFFF
         return HttpsPeer(
             client_port, (sequence + 1) & 0xFFFFFFFF,
-            (SERVER_ISN + client_port) & 0xFFFFFFFF,
+            server_sequence, server_sequence,
             incoming, outgoing, tls,
         )
 
@@ -120,9 +128,27 @@ class HttpsFixture(network.Fixture):
         ) & 0xFFFFFFFF
 
     def drain_tls(self, peer: HttpsPeer) -> None:
-        while peer.outgoing.pending:
-            block = peer.outgoing.read(min(TCP_CHUNK, peer.outgoing.pending))
+        in_flight = sequence_distance(peer.server_acked, peer.server_next)
+        while peer.outgoing.pending and in_flight < TCP_SEND_WINDOW:
+            available = TCP_SEND_WINDOW - in_flight
+            block = peer.outgoing.read(min(
+                TCP_CHUNK, available, peer.outgoing.pending
+            ))
             self.send_https(peer, 0x18, block)
+            in_flight += len(block)
+
+    def acknowledge_server(self, peer: HttpsPeer,
+                           acknowledgement: int) -> None:
+        outstanding = sequence_distance(peer.server_acked, peer.server_next)
+        advanced = sequence_distance(peer.server_acked, acknowledgement)
+        if advanced <= outstanding:
+            peer.server_acked = acknowledgement
+
+    def finish_https(self, peer: HttpsPeer) -> None:
+        self.drain_tls(peer)
+        if peer.finished and not peer.fin_sent and not peer.outgoing.pending:
+            self.send_https(peer, 0x11)
+            peer.fin_sent = True
 
     def advance_tls(self, peer: HttpsPeer) -> None:
         try:
@@ -159,9 +185,7 @@ class HttpsFixture(network.Fixture):
                     pass
         except ssl.SSLWantReadError:
             pass
-        self.drain_tls(peer)
-        if peer.finished:
-            self.send_https(peer, 0x11)
+        self.finish_https(peer)
 
     def handle_dns(self, source_ip: bytes, source_port: int,
                    payload: bytes) -> None:
@@ -191,9 +215,8 @@ class HttpsFixture(network.Fixture):
                    segment: bytes) -> None:
         if len(segment) < 20 or destination_ip != network.HTTP_IP:
             return
-        source_port, destination_port, sequence, _ = struct.unpack_from(
-            "!HHII", segment, 0
-        )
+        source_port, destination_port, sequence, acknowledgement = \
+            struct.unpack_from("!HHII", segment, 0)
         offset = (segment[12] >> 4) * 4
         flags = segment[13]
         if offset < 20 or offset > len(segment) or destination_port != TLS_PORT:
@@ -206,6 +229,8 @@ class HttpsFixture(network.Fixture):
             return
         if peer is None:
             return
+        if flags & 0x10:
+            self.acknowledge_server(peer, acknowledgement)
         payload = segment[offset:]
         if payload:
             if sequence != peer.client_next:
@@ -218,6 +243,8 @@ class HttpsFixture(network.Fixture):
         elif flags & 0x01:
             peer.client_next = (sequence + 1) & 0xFFFFFFFF
             self.send_https(peer, 0x10)
+        else:
+            self.finish_https(peer)
 
 
 def self_test() -> int:
@@ -263,6 +290,8 @@ def self_test() -> int:
     )
     assert parsed is not None and parsed[0] == HOSTNAME
     assert len(BODY) == 33
+    assert TCP_SEND_WINDOW >= TCP_CHUNK
+    assert sequence_distance(0xFFFFFFF0, 0x00000010) == 0x20
     assert CERTIFICATE.is_file() and PRIVATE_KEY.is_file()
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
