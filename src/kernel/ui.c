@@ -8646,44 +8646,6 @@ static enum ui_element_id active_hit(struct ui_point point)
     if (phipia_shell_ready && taskbar_hit_test(point)) {
         return UI_ELEMENT_NONE;
     }
-    if (rect_contains_point(menu_search_rect(), point)) {
-        return UI_ELEMENT_MENU_SEARCH;
-    }
-    if (launcher_open) {
-        const struct ui_rect panel = launcher_bounds();
-
-        if (rect_contains_point(launcher_search_rect(), point)) {
-            return UI_ELEMENT_LAUNCHER_SEARCH;
-        }
-        for (size_t slot = 0U; slot < UI_LAUNCHER_APPS_PER_PAGE; ++slot) {
-            size_t dock_index;
-            const size_t visible = launcher_page *
-                UI_LAUNCHER_APPS_PER_PAGE + slot;
-
-            if (launcher_dock_index_at(visible, &dock_index) &&
-                    rect_contains_point(launcher_app_rect(slot), point)) {
-                return (enum ui_element_id)(UI_ELEMENT_LAUNCHER_APP_0 +
-                    dock_index);
-            }
-        }
-        const size_t pages = launcher_page_count();
-        for (size_t page = 0U; page < pages; ++page) {
-            if (rect_contains_point(launcher_page_rect(page), point)) {
-                return (enum ui_element_id)(UI_ELEMENT_LAUNCHER_PAGE_0 +
-                    page);
-            }
-        }
-        return rect_contains_point(panel, point) ? UI_ELEMENT_NONE :
-            UI_ELEMENT_LAUNCHER_DISMISS;
-    }
-    const int dock_hit = dock3d_hit(&dock_model, point.x, point.y);
-    enum ui_element_id hit = dock_hit >= 0 ?
-        (enum ui_element_id)(UI_ELEMENT_DOCK_FILES + dock_hit) :
-        UI_ELEMENT_NONE;
-
-    if (hit != UI_ELEMENT_NONE) {
-        return hit;
-    }
     if (phipia_shell_ready && state.active_panel != UI_PANEL_NONE &&
             phipia_panel(state.active_panel)) {
         const struct ui_rect frame = state.layout.panel;
@@ -8704,6 +8666,50 @@ static enum ui_element_id active_hit(struct ui_point point)
             }
         }
         return UI_ELEMENT_NONE;
+    }
+    /* The Windows-style taskbar is the Phipia shell's only launcher.  The
+     * older menu and magnified Dock remain available to the legacy shell,
+     * but must not leave invisible hotspots over Phipia applications or the
+     * desktop. */
+    if (!phipia_shell_ready) {
+        if (rect_contains_point(menu_search_rect(), point)) {
+            return UI_ELEMENT_MENU_SEARCH;
+        }
+        if (launcher_open) {
+            const struct ui_rect panel = launcher_bounds();
+
+            if (rect_contains_point(launcher_search_rect(), point)) {
+                return UI_ELEMENT_LAUNCHER_SEARCH;
+            }
+            for (size_t slot = 0U; slot < UI_LAUNCHER_APPS_PER_PAGE; ++slot) {
+                size_t dock_index;
+                const size_t visible = launcher_page *
+                    UI_LAUNCHER_APPS_PER_PAGE + slot;
+
+                if (launcher_dock_index_at(visible, &dock_index) &&
+                        rect_contains_point(launcher_app_rect(slot), point)) {
+                    return (enum ui_element_id)(UI_ELEMENT_LAUNCHER_APP_0 +
+                        dock_index);
+                }
+            }
+            const size_t pages = launcher_page_count();
+            for (size_t page = 0U; page < pages; ++page) {
+                if (rect_contains_point(launcher_page_rect(page), point)) {
+                    return (enum ui_element_id)(UI_ELEMENT_LAUNCHER_PAGE_0 +
+                        page);
+                }
+            }
+            return rect_contains_point(panel, point) ? UI_ELEMENT_NONE :
+                UI_ELEMENT_LAUNCHER_DISMISS;
+        }
+        const int dock_hit = dock3d_hit(&dock_model, point.x, point.y);
+        const enum ui_element_id hit = dock_hit >= 0 ?
+            (enum ui_element_id)(UI_ELEMENT_DOCK_FILES + dock_hit) :
+            UI_ELEMENT_NONE;
+
+        if (hit != UI_ELEMENT_NONE) {
+            return hit;
+        }
     }
     if (state.active_panel == UI_PANEL_NONE) {
         return UI_ELEMENT_NONE;
@@ -9720,10 +9726,20 @@ static enum ui_status apply_event(
 
         state.focus = next_focus(state.focus,
             event->type == UI_EVENT_KEYBOARD_FOCUS_PREVIOUS);
-        *damage = rect_union(*damage,
-            dock_bounds_for(&state.layout, old_focus));
-        *damage = rect_union(*damage,
-            dock_bounds_for(&state.layout, state.focus));
+        if (phipia_shell_ready) {
+            const size_t focus_index = (size_t)(state.focus -
+                UI_ELEMENT_DOCK_FILES);
+
+            if (taskbar_set_focus(focus_index) != TASKBAR_STATUS_OK) {
+                return UI_STATUS_BAD_ELEMENT;
+            }
+            *damage = rect_union(*damage, taskbar_bounds());
+        } else {
+            *damage = rect_union(*damage,
+                dock_bounds_for(&state.layout, old_focus));
+            *damage = rect_union(*damage,
+                dock_bounds_for(&state.layout, state.focus));
+        }
         state.renders.dock_state_changes += 1U;
     } else if (event->type == UI_EVENT_KEYBOARD_ACTIVATION) {
         if (launcher_open) {

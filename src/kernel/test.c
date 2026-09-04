@@ -51,6 +51,7 @@
 #include <phipia/shell.h>
 #include <phipia/pm_timer.h>
 #include <phipia/surface.h>
+#include <phipia/taskbar.h>
 #include <phipia/test.h>
 #include <phipia/thread.h>
 #include <phipia/timer.h>
@@ -6002,49 +6003,40 @@ static void phipia_proof_move_pointer(
         }
         phipia_proof_inject_pointer(0U, delta_x, delta_y, failure);
     }
-    kernel_test_fail("Phipia cursor did not reach its dock target");
+    kernel_test_fail("Phipia cursor did not reach its UI target");
 }
 
-static void phipia_proof_click_dock_item(
-    const struct ui_dock_item *item,
+static void phipia_proof_click_taskbar_item(
+    size_t item_index,
     enum ui_panel_id expected_panel
 )
 {
-    const size_t item_index =
-        (size_t)(item - ui_get_state()->layout.dock_items);
-    const uint32_t target_x = item->bounds.x + item->bounds.width / 2U;
-    const uint32_t target_y = item->bounds.y + item->bounds.height / 2U;
+    struct ui_rect bounds;
+    struct taskbar_counters counters;
     const struct ui_state *ui;
-    const struct ui_dock_item *current_item;
     uint32_t title_width;
 
+    if (taskbar_app_bounds(item_index, &bounds) != TASKBAR_STATUS_OK ||
+            bounds.width == 0U || bounds.height == 0U) {
+        kernel_test_fail("Phipia taskbar application bounds are unavailable");
+    }
+    counters = taskbar_get_counters();
+    const uint32_t target_x = bounds.x + bounds.width / 2U;
+    const uint32_t target_y = bounds.y + bounds.height / 2U;
     phipia_proof_move_pointer(target_x, target_y,
         "Phipia real pointer movement failed");
-    ui = ui_get_state();
-    if (ui->hover != item->id) {
-        kernel_test_fail("Phipia dock hover state is incorrect");
+    if (taskbar_get_counters().hover_changes <= counters.hover_changes) {
+        kernel_test_fail("Phipia taskbar hover state is incorrect");
     }
 
     phipia_proof_inject_pointer(UINT8_C(0x01), 0, 0,
         "Phipia pointer press failed");
-    ui = ui_get_state();
-    if (ui->pressed != item->id) {
-        kernel_test_fail("Phipia dock pressed state is incorrect");
-    }
-
     phipia_proof_inject_pointer(0U, 0, 0,
         "Phipia pointer release failed");
     ui = ui_get_state();
-    current_item = &ui->layout.dock_items[item_index];
-    if (ui->pressed != UI_ELEMENT_NONE ||
-        ui->active_panel != expected_panel ||
-        current_item->icon_bounds.width == 0U ||
-        current_item->icon_bounds.height == 0U ||
-        phipia_proof_pixel(current_item->icon_bounds.x +
-            current_item->icon_bounds.width / 2U,
-            current_item->icon_bounds.y +
-            current_item->icon_bounds.height / 2U) == 0U) {
-        kernel_test_fail("Phipia dock activation is incorrect");
+    if (ui->active_panel != expected_panel ||
+            phipia_proof_pixel(target_x, target_y) == 0U) {
+        kernel_test_fail("Phipia taskbar activation is incorrect");
     }
     if (ui_font_text_width(ui_panel_name(expected_panel), &title_width) !=
             UI_FONT_STATUS_OK || title_width == 0U) {
@@ -6194,81 +6186,85 @@ _Noreturn void kernel_test_complete_phipia_proof(void)
         kernel_test_fail("Phipia cursor trail probe is not visible");
     }
 
-    /* Exercise the public launcher as a person would: open it from the menu,
-     * select its second bounded page, then filter and launch Paint. */
-    phipia_proof_click_point(ui->layout.surface.width - 19U, 12U,
-        "Phipia application search did not open");
+    /* Exercise the launcher a person can actually see: open the taskbar's
+     * search box, launch Store as the best match, reopen it, then filter and
+     * launch Paint. */
     {
-        uint32_t launcher_width = ui->layout.surface.width > 700U ? 620U :
-            ui->layout.surface.width - 80U;
-        uint32_t launcher_height = ui->layout.surface.height > 630U ? 440U :
-            ui->layout.surface.height - 160U;
-        const uint32_t maximum_height = ui->layout.dock.y - 44U;
-        uint32_t launcher_x;
-
-        if (launcher_width > ui->layout.surface.width - 40U) {
-            launcher_width = ui->layout.surface.width - 40U;
-        }
-        if (launcher_height > maximum_height) {
-            launcher_height = maximum_height;
-        }
-        launcher_x = (ui->layout.surface.width - launcher_width) / 2U;
-        phipia_proof_click_point(
-            launcher_x + (launcher_width - 36U) / 2U + 24U,
-            42U + launcher_height - 22U,
-            "Phipia application page did not activate");
-    }
-    {
-        struct keyboard_event launcher_key = {
+        struct ui_rect first_app;
+        const struct ui_rect bar = taskbar_bounds();
+        struct keyboard_event search_key = {
             .scancode = 0x1CU, .pressed = true, .shift = false,
             .control = false, .character = '\0'
         };
+        uint32_t search_x;
+        uint32_t search_y;
 
-        if (ui_handle_keyboard(&launcher_key) != UI_STATUS_OK) {
-            kernel_test_fail("Phipia paged launcher activation failed");
+        if (taskbar_app_bounds(0U, &first_app) != TASKBAR_STATUS_OK ||
+                first_app.x <= bar.x + 48U || bar.height == 0U) {
+            kernel_test_fail("Phipia taskbar search geometry is unavailable");
         }
-        phipia_proof_process_ui(
-            "Phipia paged launcher activation draw failed");
-        if (ui_get_state()->active_panel != UI_PANEL_STORE) {
-            kernel_test_fail("Phipia launcher page chose wrong app");
+        search_x = bar.x + 48U + (first_app.x - (bar.x + 48U)) / 2U;
+        search_y = bar.y + bar.height / 2U;
+        phipia_proof_click_point(search_x, search_y,
+            "Phipia taskbar search did not open");
+        if (!taskbar_search_panel_open()) {
+            kernel_test_fail("Phipia taskbar search is not open");
         }
-        phipia_proof_settle_ui(
-            "Phipia paged launcher animation did not settle");
-        phipia_proof_click_point(ui->layout.surface.width - 19U, 12U,
-            "Phipia application search did not reopen");
-        static const char query[] = "paint";
-        for (size_t index = 0U; index < sizeof(query) - 1U; ++index) {
-            launcher_key.scancode = 0U;
-            launcher_key.character = query[index];
-            if (ui_handle_keyboard(&launcher_key) != UI_STATUS_OK) {
-                kernel_test_fail("Phipia application filter failed");
+        static const char store_query[] = "store";
+        for (size_t index = 0U; index < sizeof(store_query) - 1U; ++index) {
+            search_key.scancode = 0U;
+            search_key.character = store_query[index];
+            if (ui_handle_keyboard(&search_key) != UI_STATUS_OK) {
+                kernel_test_fail("Phipia Store search failed");
             }
         }
-        phipia_proof_process_ui(
-            "Phipia application filter draw failed");
-        launcher_key.scancode = 0x1CU;
-        launcher_key.character = '\0';
-        if (ui_handle_keyboard(&launcher_key) != UI_STATUS_OK) {
-            kernel_test_fail("Phipia filtered launch failed");
+        phipia_proof_process_ui("Phipia Store search draw failed");
+        search_key.scancode = 0x1CU;
+        search_key.character = '\0';
+        if (ui_handle_keyboard(&search_key) != UI_STATUS_OK) {
+            kernel_test_fail("Phipia Store search activation failed");
         }
-        phipia_proof_process_ui(
-            "Phipia filtered launch draw failed");
+        phipia_proof_process_ui("Phipia Store search activation draw failed");
+        if (ui_get_state()->active_panel != UI_PANEL_STORE) {
+            kernel_test_fail("Phipia search chose the wrong Store app");
+        }
+        phipia_proof_settle_ui(
+            "Phipia Store search animation did not settle");
+        phipia_proof_click_point(search_x, search_y,
+            "Phipia taskbar search did not reopen");
+        if (!taskbar_search_panel_open()) {
+            kernel_test_fail("Phipia taskbar search did not reopen");
+        }
+        static const char paint_query[] = "paint";
+        for (size_t index = 0U; index < sizeof(paint_query) - 1U; ++index) {
+            search_key.scancode = 0U;
+            search_key.character = paint_query[index];
+            if (ui_handle_keyboard(&search_key) != UI_STATUS_OK) {
+                kernel_test_fail("Phipia Paint search failed");
+            }
+        }
+        phipia_proof_process_ui("Phipia Paint search draw failed");
+        search_key.scancode = 0x1CU;
+        search_key.character = '\0';
+        if (ui_handle_keyboard(&search_key) != UI_STATUS_OK) {
+            kernel_test_fail("Phipia Paint search activation failed");
+        }
+        phipia_proof_process_ui("Phipia Paint search activation draw failed");
         char manifest[13U];
         if (ui_get_state()->active_panel != UI_PANEL_PAINT ||
                 ui_application_launch_dequeue(manifest, sizeof(manifest))) {
-            kernel_test_fail("Phipia filtered Paint launch is wrong");
+            kernel_test_fail("Phipia search chose the wrong Paint app");
         }
         phipia_proof_settle_ui(
-            "Phipia filtered Paint animation did not settle");
+            "Phipia Paint search animation did not settle");
     }
 
     for (size_t index = 0U; index < UI_DOCK_ITEM_COUNT; ++index) {
         const enum ui_panel_id expected_panel = panels[index];
 
-        phipia_proof_click_dock_item(&ui->layout.dock_items[index],
-            expected_panel);
+        phipia_proof_click_taskbar_item(index, expected_panel);
         phipia_proof_settle_ui(
-            "Phipia dock application animation did not settle");
+            "Phipia taskbar application animation did not settle");
         ui = ui_get_state();
     }
     if (trail_probe.x < 0 || trail_probe.y < 0 ||
