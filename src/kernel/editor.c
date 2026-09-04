@@ -818,7 +818,7 @@ static enum editor_status draw_caption(struct ui_rect damage)
     }
     if (status == EDITOR_STATUS_OK) {
         status = text_at(damage, bar.x + 32U, bar.y + bar.height / 2U + 5U,
-            "Editor", ink);
+            "Media Editor", ink);
     }
     for (size_t index = 0U; index < 3U && status == EDITOR_STATUS_OK;
          ++index) {
@@ -1367,7 +1367,7 @@ static void copy_text(char *destination, size_t bytes, const char *source)
 enum editor_status editor_set_frame(struct ui_rect frame)
 {
     const uint32_t least_width = EDITOR_BORDER * 2U + EDITOR_LIBRARY +
-        EDITOR_PROPERTIES + 320U;
+        EDITOR_PROPERTIES + 240U;
     const uint32_t least_height = EDITOR_BORDER * 2U + EDITOR_CAPTION +
         EDITOR_TRANSPORT + EDITOR_TIMELINE + 180U;
 

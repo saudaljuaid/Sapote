@@ -2183,12 +2183,15 @@ static void copy_field(char *destination, const char *source)
 
 enum settings_status settings_set_frame(struct ui_rect frame)
 {
-    const uint32_t least_width = SETTINGS_BORDER * 2U + grid_width() +
-        SETTINGS_PAD * 2U;
+    const uint32_t least_width = SETTINGS_BORDER * 2U + 640U;
     const uint32_t least_height = SETTINGS_BORDER * 2U + SETTINGS_CAPTION +
         SETTINGS_ACCOUNT + SETTINGS_HEADING + SETTINGS_SEARCH_BAND +
         SETTINGS_TILE_HEIGHT;
 
+    /* The home grid clips its rightmost column on compact framebuffers; the
+     * category pages and their controls remain fully usable.  Do not reject
+     * Sapote's supported 1024x768 desktop merely because the three-column
+     * home layout is wider than its default window. */
     if (frame.width < least_width || frame.height < least_height) {
         return SETTINGS_STATUS_UNSUPPORTED_GEOMETRY;
     }

@@ -48,6 +48,7 @@ struct keyboard_event {
     bool pressed;       /* false for a release */
     bool shift;         /* modifier snapshot at this exact edge */
     bool control;       /* left Control snapshot at this exact edge */
+    bool alt;           /* left Alt snapshot at this exact edge */
     char character;     /* '\0' when the key produces no character */
 };
 
@@ -60,6 +61,7 @@ struct keyboard_state {
     size_t queued;          /* how many are waiting to be read now */
     bool shift;
     bool control;
+    bool alt;
     bool caps_lock;
 };
 

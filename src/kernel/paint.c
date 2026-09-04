@@ -64,6 +64,8 @@
 /* The zoom slider at the right of the status bar. */
 #define PAINT_ZOOM_TRACK 92U
 #define PAINT_ZOOM_THUMB 7U
+#define PAINT_CANVAS_WIDTH 1024U
+#define PAINT_CANVAS_HEIGHT 768U
 
 /* ================================================================ PALETTE
  *
@@ -134,6 +136,9 @@ static size_t current_shape;
 static size_t colour_one;          /* index into swatches */
 static size_t colour_two = 10U;    /* White, which is Paint's default */
 static uint32_t zoom_percent = 100U;
+static uint32_t canvas_pixels[PAINT_CANVAS_WIDTH * PAINT_CANVAS_HEIGHT];
+static bool painting;
+static struct ui_point last_paint_point;
 static char window_title[48] = "Untitled - Paint";
 static size_t hover_tool = (size_t)-1;
 static size_t hover_shape = (size_t)-1;
@@ -1152,6 +1157,30 @@ static enum paint_status draw_workspace(struct ui_rect damage)
     if (status == PAINT_STATUS_OK) {
         status = fill(page, damage, sheet);
     }
+    const struct ui_rect clipped_page = intersect(page, damage);
+
+    for (uint32_t y = 0U; y < clipped_page.height &&
+            status == PAINT_STATUS_OK; ++y) {
+        const uint32_t source_y = clipped_page.y + y - page.y;
+
+        if (source_y >= PAINT_CANVAS_HEIGHT) {
+            break;
+        }
+        for (uint32_t x = 0U; x < clipped_page.width; ++x) {
+            const uint32_t source_x = clipped_page.x + x - page.x;
+
+            if (source_x >= PAINT_CANVAS_WIDTH) {
+                break;
+            }
+            if (surface_pixel(canvas, clipped_page.x + x,
+                    clipped_page.y + y,
+                    canvas_pixels[(size_t)source_y * PAINT_CANVAS_WIDTH +
+                        source_x]) != SURFACE_STATUS_OK) {
+                status = PAINT_STATUS_SURFACE_FAILURE;
+                break;
+            }
+        }
+    }
     if (status == PAINT_STATUS_OK) {
         status = outline(page, damage, sheet_edge);
     }
@@ -1324,6 +1353,73 @@ enum paint_status paint_draw(struct ui_rect damage)
 
 /* ================================================================== INPUT */
 
+static bool canvas_point(struct ui_point point, uint32_t *x, uint32_t *y)
+{
+    const struct ui_rect page = paint_sheet_bounds();
+
+    if (!holds(page, point)) {
+        return false;
+    }
+    *x = (uint32_t)point.x - page.x;
+    *y = (uint32_t)point.y - page.y;
+    return *x < PAINT_CANVAS_WIDTH && *y < PAINT_CANVAS_HEIGHT;
+}
+
+static void paint_dot(struct ui_point point, uint32_t colour, uint32_t radius)
+{
+    uint32_t center_x;
+    uint32_t center_y;
+
+    if (!canvas_point(point, &center_x, &center_y)) {
+        return;
+    }
+    const uint32_t left = center_x > radius ? center_x - radius : 0U;
+    const uint32_t top = center_y > radius ? center_y - radius : 0U;
+    uint32_t right = center_x + radius + 1U;
+    uint32_t bottom = center_y + radius + 1U;
+
+    if (right > PAINT_CANVAS_WIDTH) {
+        right = PAINT_CANVAS_WIDTH;
+    }
+    if (bottom > PAINT_CANVAS_HEIGHT) {
+        bottom = PAINT_CANVAS_HEIGHT;
+    }
+    for (uint32_t y = top; y < bottom; ++y) {
+        for (uint32_t x = left; x < right; ++x) {
+            canvas_pixels[(size_t)y * PAINT_CANVAS_WIDTH + x] = colour;
+        }
+    }
+}
+
+static void paint_line(struct ui_point from, struct ui_point to,
+    uint32_t colour, uint32_t radius)
+{
+    int32_t x = from.x;
+    int32_t y = from.y;
+    const int32_t dx = to.x > from.x ? to.x - from.x : from.x - to.x;
+    const int32_t dy = to.y > from.y ? from.y - to.y : to.y - from.y;
+    const int32_t step_x = from.x < to.x ? 1 : -1;
+    const int32_t step_y = from.y < to.y ? 1 : -1;
+    int32_t error = dx + dy;
+
+    for (;;) {
+        paint_dot((struct ui_point){ x, y }, colour, radius);
+        if (x == to.x && y == to.y) {
+            break;
+        }
+        const int32_t twice = error * 2;
+
+        if (twice >= dy) {
+            error += dy;
+            x += step_x;
+        }
+        if (twice <= dx) {
+            error += dx;
+            y += step_y;
+        }
+    }
+}
+
 enum paint_status paint_pointer_move(struct ui_point point,
     struct ui_rect *damage)
 {
@@ -1338,6 +1434,15 @@ enum paint_status paint_pointer_move(struct ui_point point,
         return PAINT_STATUS_NOT_INITIALIZED;
     }
     *damage = (struct ui_rect){ 0U, 0U, 0U, 0U };
+    if (painting) {
+        const uint32_t colour = current_tool == PAINT_TOOL_ERASER ?
+            pack_rgb(sheet) : pack_rgb(swatches[colour_one]);
+        const uint32_t radius = current_tool == PAINT_TOOL_ERASER ? 4U : 1U;
+
+        paint_line(last_paint_point, point, colour, radius);
+        last_paint_point = point;
+        *damage = paint_sheet_bounds();
+    }
     hover_tool = (size_t)-1;
     hover_shape = (size_t)-1;
     hover_swatch = (size_t)-1;
@@ -1361,7 +1466,7 @@ enum paint_status paint_pointer_move(struct ui_point point,
     }
     if (was_tool != hover_tool || was_shape != hover_shape ||
             was_swatch != hover_swatch) {
-        *damage = ribbon_rect();
+        *damage = painting ? window_rect : ribbon_rect();
     }
     return PAINT_STATUS_OK;
 }
@@ -1376,6 +1481,45 @@ enum paint_status paint_pointer_press(struct ui_point point,
         return PAINT_STATUS_NOT_INITIALIZED;
     }
     *damage = (struct ui_rect){ 0U, 0U, 0U, 0U };
+    if (holds(paint_sheet_bounds(), point)) {
+        uint32_t x;
+        uint32_t y;
+
+        if (!canvas_point(point, &x, &y)) {
+            return PAINT_STATUS_OK;
+        }
+        if (current_tool == PAINT_TOOL_FILL) {
+            const uint32_t colour = pack_rgb(swatches[colour_one]);
+
+            for (size_t offset = 0U;
+                 offset < (size_t)PAINT_CANVAS_WIDTH * PAINT_CANVAS_HEIGHT;
+                 ++offset) {
+                canvas_pixels[offset] = colour;
+            }
+        } else if (current_tool == PAINT_TOOL_PICKER) {
+            const uint32_t colour = canvas_pixels[
+                (size_t)y * PAINT_CANVAS_WIDTH + x];
+
+            for (size_t index = 0U; index < PAINT_SWATCHES; ++index) {
+                if (pack_rgb(swatches[index]) == colour) {
+                    colour_one = index;
+                    break;
+                }
+            }
+        } else if (current_tool == PAINT_TOOL_MAGNIFIER) {
+            zoom_percent = zoom_percent >= 400U ? 100U :
+                zoom_percent + 25U;
+        } else if (current_tool == PAINT_TOOL_PENCIL ||
+                current_tool == PAINT_TOOL_ERASER) {
+            painting = true;
+            last_paint_point = point;
+            paint_dot(point, current_tool == PAINT_TOOL_ERASER ?
+                pack_rgb(sheet) : pack_rgb(swatches[colour_one]),
+                current_tool == PAINT_TOOL_ERASER ? 4U : 1U);
+        }
+        *damage = window_rect;
+        return PAINT_STATUS_OK;
+    }
     for (size_t tool = 0U; tool < PAINT_TOOL_COUNT; ++tool) {
         if (holds(tool_rect(tool), point)) {
             current_tool = (enum paint_tool)tool;
@@ -1401,19 +1545,33 @@ enum paint_status paint_pointer_press(struct ui_point point,
     return PAINT_STATUS_OK;
 }
 
+enum paint_status paint_pointer_release(struct ui_point point,
+    struct ui_rect *damage)
+{
+    (void)point;
+    if (damage == NULL) {
+        return PAINT_STATUS_NULL_ARGUMENT;
+    }
+    if (!initialized) {
+        return PAINT_STATUS_NOT_INITIALIZED;
+    }
+    painting = false;
+    *damage = (struct ui_rect){ 0U, 0U, 0U, 0U };
+    return PAINT_STATUS_OK;
+}
+
 /* ============================================================== LIFECYCLE */
 
 enum paint_status paint_set_frame(struct ui_rect frame)
 {
-    uint32_t needed = PAINT_PAD * 2U + PAINT_BORDER * 2U;
+    const uint32_t needed = PAINT_BORDER * 2U + 640U;
     const uint32_t least_height = PAINT_BORDER * 2U + PAINT_CAPTION +
         PAINT_TABS + PAINT_RIBBON + PAINT_STATUS + 80U;
 
-    for (enum paint_group group = PAINT_GROUP_CLIPBOARD;
-         group < PAINT_GROUP_COUNT;
-         group = (enum paint_group)(group + 1)) {
-        needed += group_width(group) + PAINT_GROUP_GAP;
-    }
+    /* The ribbon is deliberately clipped by the window at narrow desktop
+     * sizes.  Requiring the sum of every ribbon group made Paint impossible
+     * to open on Sapote's supported 1024x768 framebuffer even though its
+     * canvas and the visible groups fit comfortably. */
     if (frame.width < needed || frame.height < least_height) {
         return PAINT_STATUS_UNSUPPORTED_GEOMETRY;
     }
@@ -1434,6 +1592,11 @@ enum paint_status paint_initialize(struct surface *target,
     if (status != PAINT_STATUS_OK) {
         return status;
     }
+    for (size_t index = 0U;
+         index < (size_t)PAINT_CANVAS_WIDTH * PAINT_CANVAS_HEIGHT; ++index) {
+        canvas_pixels[index] = pack_rgb(sheet);
+    }
+    painting = false;
     initialized = true;
     return PAINT_STATUS_OK;
 }

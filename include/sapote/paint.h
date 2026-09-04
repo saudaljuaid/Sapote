@@ -92,6 +92,8 @@ enum paint_status paint_pointer_move(struct ui_point point,
     struct ui_rect *damage);
 enum paint_status paint_pointer_press(struct ui_point point,
     struct ui_rect *damage);
+enum paint_status paint_pointer_release(struct ui_point point,
+    struct ui_rect *damage);
 
 enum paint_status paint_draw(struct ui_rect damage);
 

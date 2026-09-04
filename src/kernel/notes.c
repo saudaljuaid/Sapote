@@ -96,6 +96,7 @@ static bool initialized;
 static bool focused = true;
 static struct notes_note notes[NOTES_MAX_NOTES];
 static size_t selected;
+static size_t editing_line = (size_t)-1;
 static size_t hover_note = (size_t)-1;
 static size_t hover_line = (size_t)-1;
 static const char *self_test_failure = "notes self-test has not run";
@@ -199,6 +200,26 @@ static enum notes_status text(struct ui_rect damage, uint32_t x,
     return NOTES_STATUS_OK;
 }
 
+static enum notes_status styled_text(struct ui_rect damage, uint32_t x,
+    uint32_t baseline, const char *body, struct notes_rgb colour,
+    uint32_t style)
+{
+    const struct ui_rect clip = intersect(damage, window_rect);
+    const struct surface_rect bounds = {
+        window_rect.x, window_rect.y, window_rect.width, window_rect.height
+    };
+    const struct surface_rect region = {
+        clip.x, clip.y, clip.width, clip.height
+    };
+
+    if (clip.width == 0U || clip.height == 0U) {
+        return NOTES_STATUS_OK;
+    }
+    return ui_font_draw_text_styled_clipped(canvas, bounds, region, x,
+        baseline, body, pack_rgb(colour), style, NULL) == UI_FONT_STATUS_OK ?
+            NOTES_STATUS_OK : NOTES_STATUS_SURFACE_FAILURE;
+}
+
 static uint32_t text_width_of(const char *body)
 {
     uint32_t width = 0U;
@@ -296,6 +317,14 @@ static struct ui_rect check_rect(size_t index)
     return (struct ui_rect){ line.x,
         line.y + (line.height - NOTES_CHECK_BOX) / 2U,
         NOTES_CHECK_BOX, NOTES_CHECK_BOX };
+}
+
+static struct ui_rect new_note_rect(void)
+{
+    const struct ui_rect list = list_rect();
+
+    return (struct ui_rect){ list.x + 6U, list.y + 4U, 40U,
+        NOTES_HEADER_HEIGHT - 8U };
 }
 
 /*
@@ -441,14 +470,21 @@ static enum notes_status draw_header_overflow(struct ui_rect strip,
 {
     const uint32_t centre_y = strip.y + strip.height / 2U;
     const uint32_t cross = 10U;
-    const uint32_t cross_x = strip.x + strip.width - 26U;
+    const uint32_t controls_x = strip.x + strip.width - 138U;
+    const uint32_t cross_x = controls_x + 92U + 18U;
     const uint32_t cross_y = centre_y - cross / 2U;
     enum notes_status status = NOTES_STATUS_OK;
 
-    for (uint32_t dot = 0U; dot < 3U && status == NOTES_STATUS_OK; ++dot) {
-        status = fill((struct ui_rect){
-            strip.x + strip.width - 62U + dot * 7U, centre_y - 1U, 3U, 3U },
-            damage, colour);
+    status = fill((struct ui_rect){ controls_x + 16U, centre_y + 5U,
+        14U, 1U }, damage, colour);
+    if (status == NOTES_STATUS_OK) {
+        status = fill((struct ui_rect){ controls_x + 46U + 16U,
+            centre_y - 7U, 14U, 14U }, damage, colour);
+    }
+    if (status == NOTES_STATUS_OK) {
+        status = fill((struct ui_rect){ controls_x + 46U + 18U,
+            centre_y - 5U, 10U, 10U }, damage,
+            pads[notes[selected].colour].header);
     }
     for (uint32_t step = 0U; step < cross && status == NOTES_STATUS_OK;
          ++step) {
@@ -570,6 +606,44 @@ enum notes_tool_style {
     NOTES_TOOL_LIST
 };
 
+static struct ui_rect toolbar_slot(size_t tool)
+{
+    const struct ui_rect area = pad_rect();
+    const struct ui_rect bar = {
+        area.x, area.y + area.height - NOTES_TOOLBAR_HEIGHT,
+        area.width, NOTES_TOOLBAR_HEIGHT
+    };
+
+    return (struct ui_rect){
+        bar.x + NOTES_TEXT_INSET + (uint32_t)tool * NOTES_TOOL_SIZE,
+        bar.y + (bar.height - NOTES_TOOL_SIZE) / 2U,
+        NOTES_TOOL_SIZE, NOTES_TOOL_SIZE
+    };
+}
+
+static bool toolbar_tool_active(size_t tool)
+{
+    if (editing_line >= NOTES_MAX_LINES ||
+            !notes[selected].lines[editing_line].present) {
+        return false;
+    }
+    const struct notes_line *line = &notes[selected].lines[editing_line];
+
+    if (tool == NOTES_TOOL_BOLD) {
+        return line->bold;
+    }
+    if (tool == NOTES_TOOL_ITALIC) {
+        return line->italic;
+    }
+    if (tool == NOTES_TOOL_UNDERLINE) {
+        return line->underline;
+    }
+    if (tool == NOTES_TOOL_STRIKE) {
+        return line->strike;
+    }
+    return line->checkable;
+}
+
 static const struct notes_mark *notes_mark_named(const char *name)
 {
     for (size_t index = 0U; index < NOTES_MARK_COUNT; ++index) {
@@ -660,11 +734,7 @@ static enum notes_status draw_toolbar(struct ui_rect damage,
 
     for (uint32_t tool = 0U; tool < NOTES_TOOL_COUNT &&
             status == NOTES_STATUS_OK; ++tool) {
-        const struct ui_rect slot = {
-            bar.x + NOTES_TEXT_INSET + tool * NOTES_TOOL_SIZE,
-            bar.y + (bar.height - NOTES_TOOL_SIZE) / 2U,
-            NOTES_TOOL_SIZE, NOTES_TOOL_SIZE
-        };
+        const struct ui_rect slot = toolbar_slot(tool);
         const struct notes_mark *mark = marks[tool] == NULL ? NULL :
             notes_mark_named(marks[tool]);
         uint32_t ink_left = 0U;
@@ -672,6 +742,12 @@ static enum notes_status draw_toolbar(struct ui_rect damage,
         uint32_t baseline_y = 0U;
         uint32_t middle_y = 0U;
 
+        if (toolbar_tool_active(tool)) {
+            status = fill(slot, damage, pad->accent);
+        }
+        if (status != NOTES_STATUS_OK) {
+            return status;
+        }
         if (mark == NULL) {
             uint32_t size = 0U;
             const uint8_t *cell = notes_glyph("list", NOTES_TOOL_GLYPH,
@@ -838,13 +914,31 @@ static enum notes_status draw_pad(struct ui_rect damage)
             }
             left += NOTES_CHECK_BOX + NOTES_CHECK_GAP;
         }
-        status = text(damage, left, row.y + 20U, line->text,
-            line->done ? ink_done : ink);
-        if (status == NOTES_STATUS_OK && line->done) {
+        uint32_t style = UI_FONT_STYLE_REGULAR;
+
+        if (line->bold) {
+            style |= UI_FONT_STYLE_BOLD;
+        }
+        if (line->italic) {
+            style |= UI_FONT_STYLE_ITALIC;
+        }
+        status = styled_text(damage, left, row.y + 20U, line->text,
+            line->done ? ink_done : ink, style);
+        if (status == NOTES_STATUS_OK && (line->done || line->strike)) {
             /* Struck through rather than removed, so a finished list still
              * shows what was on it. */
             status = fill((struct ui_rect){ left, row.y + 14U,
                 text_width_of(line->text), 1U }, damage, ink_done);
+        }
+        if (status == NOTES_STATUS_OK && line->underline) {
+            status = fill((struct ui_rect){ left, row.y + 22U,
+                text_width_of(line->text), 1U }, damage,
+                line->done ? ink_done : ink);
+        }
+        if (status == NOTES_STATUS_OK && index == editing_line && focused) {
+            status = fill((struct ui_rect){
+                left + text_width_of(line->text) + 1U, row.y + 4U,
+                1U, NOTES_LINE_HEIGHT - 8U }, damage, ink);
         }
     }
     if (status == NOTES_STATUS_OK) {
@@ -917,24 +1011,65 @@ enum notes_status notes_pointer_press(struct ui_point point,
         return NOTES_STATUS_NOT_INITIALIZED;
     }
     *damage = (struct ui_rect){ 0U, 0U, 0U, 0U };
+    if (holds(new_note_rect(), point)) {
+        return notes_new(damage);
+    }
+    for (size_t tool = 0U; tool < NOTES_TOOL_COUNT; ++tool) {
+        if (!holds(toolbar_slot(tool), point)) {
+            continue;
+        }
+        if (editing_line >= NOTES_MAX_LINES ||
+                !notes[selected].lines[editing_line].present) {
+            for (size_t line = 0U; line < NOTES_MAX_LINES; ++line) {
+                if (!notes[selected].lines[line].present) {
+                    notes[selected].lines[line].present = true;
+                    editing_line = line;
+                    break;
+                }
+            }
+        }
+        if (editing_line < NOTES_MAX_LINES) {
+            struct notes_line *line = &notes[selected].lines[editing_line];
+
+            if (tool == NOTES_TOOL_BOLD) {
+                line->bold = !line->bold;
+            } else if (tool == NOTES_TOOL_ITALIC) {
+                line->italic = !line->italic;
+            } else if (tool == NOTES_TOOL_UNDERLINE) {
+                line->underline = !line->underline;
+            } else if (tool == NOTES_TOOL_STRIKE) {
+                line->strike = !line->strike;
+            } else {
+                line->checkable = !line->checkable;
+                if (!line->checkable) {
+                    line->done = false;
+                }
+            }
+        }
+        *damage = window_rect;
+        return NOTES_STATUS_OK;
+    }
     for (size_t index = 0U; index < NOTES_MAX_NOTES; ++index) {
         if (notes[index].present && holds(list_row_rect(index), point)) {
             selected = index;
+            editing_line = (size_t)-1;
             *damage = window_rect;
             return NOTES_STATUS_OK;
         }
     }
     /*
-     * Anywhere on a checkable line toggles it, not only the box itself.  A
-     * sixteen-pixel target is a poor one, and the whole row is unambiguous
-     * because nothing else on it is clickable.
+     * The box toggles checklist state; the rest of the row selects the real
+     * insertion line so keyboard input and formatting have an unambiguous
+     * destination.
      */
     for (size_t index = 0U; index < NOTES_MAX_LINES; ++index) {
         struct notes_line *line = &notes[selected].lines[index];
 
-        if (line->present && line->checkable &&
-                holds(line_rect(index), point)) {
-            line->done = !line->done;
+        if (line->present && holds(line_rect(index), point)) {
+            editing_line = index;
+            if (line->checkable && holds(check_rect(index), point)) {
+                line->done = !line->done;
+            }
             *damage = window_rect;
             return NOTES_STATUS_OK;
         }
@@ -953,6 +1088,142 @@ static void copy_text(char *destination, const char *source)
         ++index;
     }
     destination[index] = '\0';
+}
+
+enum notes_status notes_new(struct ui_rect *damage)
+{
+    if (damage == NULL) {
+        return NOTES_STATUS_NULL_ARGUMENT;
+    }
+    if (!initialized) {
+        return NOTES_STATUS_NOT_INITIALIZED;
+    }
+    for (size_t index = 0U; index < NOTES_MAX_NOTES; ++index) {
+        if (notes[index].present) {
+            continue;
+        }
+        notes[index] = (struct notes_note){
+            .present = true,
+            .colour = (enum notes_colour)(index % NOTES_COLOUR_COUNT)
+        };
+        copy_text(notes[index].title, "New note");
+        notes[index].lines[0].present = true;
+        selected = index;
+        editing_line = 0U;
+        *damage = window_rect;
+        return NOTES_STATUS_OK;
+    }
+    *damage = (struct ui_rect){ 0U, 0U, 0U, 0U };
+    return NOTES_STATUS_BAD_INDEX;
+}
+
+enum notes_status notes_text_input(char character, struct ui_rect *damage)
+{
+    if (damage == NULL) {
+        return NOTES_STATUS_NULL_ARGUMENT;
+    }
+    if (!initialized) {
+        return NOTES_STATUS_NOT_INITIALIZED;
+    }
+    if (character < ' ' || character > '~') {
+        *damage = (struct ui_rect){ 0U, 0U, 0U, 0U };
+        return NOTES_STATUS_OK;
+    }
+    if (editing_line >= NOTES_MAX_LINES ||
+            !notes[selected].lines[editing_line].present) {
+        for (size_t index = 0U; index < NOTES_MAX_LINES; ++index) {
+            if (!notes[selected].lines[index].present) {
+                notes[selected].lines[index].present = true;
+                editing_line = index;
+                break;
+            }
+        }
+    }
+    if (editing_line >= NOTES_MAX_LINES) {
+        return NOTES_STATUS_BAD_INDEX;
+    }
+    struct notes_line *line = &notes[selected].lines[editing_line];
+    size_t length = 0U;
+
+    while (length < NOTES_TEXT_BYTES && line->text[length] != '\0') {
+        ++length;
+    }
+    if (length + 1U >= NOTES_TEXT_BYTES) {
+        return NOTES_STATUS_BAD_INDEX;
+    }
+    line->text[length] = character;
+    line->text[length + 1U] = '\0';
+    *damage = window_rect;
+    return NOTES_STATUS_OK;
+}
+
+enum notes_status notes_key_backspace(struct ui_rect *damage)
+{
+    if (damage == NULL) {
+        return NOTES_STATUS_NULL_ARGUMENT;
+    }
+    if (!initialized) {
+        return NOTES_STATUS_NOT_INITIALIZED;
+    }
+    *damage = (struct ui_rect){ 0U, 0U, 0U, 0U };
+    if (editing_line >= NOTES_MAX_LINES ||
+            !notes[selected].lines[editing_line].present) {
+        return NOTES_STATUS_OK;
+    }
+    struct notes_line *line = &notes[selected].lines[editing_line];
+    size_t length = 0U;
+
+    while (length < NOTES_TEXT_BYTES && line->text[length] != '\0') {
+        ++length;
+    }
+    if (length != 0U) {
+        line->text[length - 1U] = '\0';
+        *damage = window_rect;
+    }
+    return NOTES_STATUS_OK;
+}
+
+enum notes_status notes_key_enter(struct ui_rect *damage)
+{
+    if (damage == NULL) {
+        return NOTES_STATUS_NULL_ARGUMENT;
+    }
+    if (!initialized) {
+        return NOTES_STATUS_NOT_INITIALIZED;
+    }
+    const size_t start = editing_line < NOTES_MAX_LINES ?
+        editing_line + 1U : 0U;
+
+    for (size_t index = start; index < NOTES_MAX_LINES; ++index) {
+        if (!notes[selected].lines[index].present) {
+            struct notes_line inherit = { .present = true };
+
+            if (editing_line < NOTES_MAX_LINES) {
+                inherit.checkable = notes[selected].lines[editing_line].checkable;
+                inherit.bold = notes[selected].lines[editing_line].bold;
+                inherit.italic = notes[selected].lines[editing_line].italic;
+                inherit.underline = notes[selected].lines[editing_line].underline;
+                inherit.strike = notes[selected].lines[editing_line].strike;
+            }
+            notes[selected].lines[index] = inherit;
+            editing_line = index;
+            *damage = window_rect;
+            return NOTES_STATUS_OK;
+        }
+    }
+    return NOTES_STATUS_BAD_INDEX;
+}
+
+enum notes_status notes_get_note(size_t index, struct notes_note *note)
+{
+    if (note == NULL) {
+        return NOTES_STATUS_NULL_ARGUMENT;
+    }
+    if (index >= NOTES_MAX_NOTES || !notes[index].present) {
+        return NOTES_STATUS_BAD_INDEX;
+    }
+    *note = notes[index];
+    return NOTES_STATUS_OK;
 }
 
 enum notes_status notes_set_frame(struct ui_rect frame)
@@ -982,6 +1253,8 @@ enum notes_status notes_initialize(struct surface *target,
         return status;
     }
     canvas = target;
+    selected = 0U;
+    editing_line = (size_t)-1;
     initialized = true;
     return NOTES_STATUS_OK;
 }
@@ -1026,6 +1299,7 @@ enum notes_status notes_select(size_t index)
         return NOTES_STATUS_BAD_INDEX;
     }
     selected = index;
+    editing_line = (size_t)-1;
     return NOTES_STATUS_OK;
 }
 

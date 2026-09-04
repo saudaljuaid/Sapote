@@ -128,6 +128,7 @@ static enum ui_font_status draw_with_metrics(
     uint32_t baseline,
     const char *text,
     uint32_t foreground,
+    uint32_t style,
     size_t *glyphs_drawn
 )
 {
@@ -179,31 +180,44 @@ static enum ui_font_status draw_with_metrics(
 
         for (uint32_t row = 0U; row < metrics->height; ++row) {
             for (uint32_t column = 0U; column < metrics->width; ++column) {
-                uint32_t destination_x;
                 const uint8_t alpha =
                     bitmap[row * metrics->row_bytes + column];
-
                 const uint32_t destination_y = glyph_top + row;
+                const uint32_t slant = (style & UI_FONT_STYLE_ITALIC) != 0U ?
+                    (metrics->height - 1U - row) / 5U : 0U;
+                const uint32_t weights =
+                    (style & UI_FONT_STYLE_BOLD) != 0U ? 2U : 1U;
 
-                if (alpha == 0U || !add_u32(pen, column, &destination_x) ||
-                    destination_x < bounds.x || destination_x >= bounds_right ||
-                    destination_x < clip.x || destination_x >= clip_right ||
-                    destination_y < clip.y || destination_y >= clip_bottom) {
+                if (alpha == 0U || destination_y < clip.y ||
+                        destination_y >= clip_bottom) {
                     continue;
                 }
-                uint32_t pixel = foreground;
-                if (alpha != UINT8_MAX) {
-                    uint32_t under;
+                for (uint32_t weight = 0U; weight < weights; ++weight) {
+                    uint32_t destination_x;
 
-                    if (surface_read_pixel(surface, destination_x,
-                            destination_y, &under) != SURFACE_STATUS_OK) {
+                    if (!add_u32(pen, column, &destination_x) ||
+                            !add_u32(destination_x, slant + weight,
+                                &destination_x) ||
+                            destination_x < bounds.x ||
+                            destination_x >= bounds_right ||
+                            destination_x < clip.x ||
+                            destination_x >= clip_right) {
+                        continue;
+                    }
+                    uint32_t pixel = foreground;
+                    if (alpha != UINT8_MAX) {
+                        uint32_t under;
+
+                        if (surface_read_pixel(surface, destination_x,
+                                destination_y, &under) != SURFACE_STATUS_OK) {
+                            return UI_FONT_STATUS_DESTINATION_CLIPPING_FAILURE;
+                        }
+                        pixel = blend_alpha(under, foreground, alpha);
+                    }
+                    if (surface_pixel(surface, destination_x, destination_y,
+                            pixel) != SURFACE_STATUS_OK) {
                         return UI_FONT_STATUS_DESTINATION_CLIPPING_FAILURE;
                     }
-                    pixel = blend_alpha(under, foreground, alpha);
-                }
-                if (surface_pixel(surface, destination_x, destination_y,
-                        pixel) != SURFACE_STATUS_OK) {
-                    return UI_FONT_STATUS_DESTINATION_CLIPPING_FAILURE;
                 }
             }
         }
@@ -234,7 +248,7 @@ enum ui_font_status ui_font_draw_text(
         return UI_FONT_STATUS_NOT_VERIFIED;
     }
     return draw_with_metrics(&installed_metrics, surface, bounds, bounds, x,
-        baseline, text, foreground, glyphs_drawn);
+        baseline, text, foreground, UI_FONT_STYLE_REGULAR, glyphs_drawn);
 }
 
 enum ui_font_status ui_font_draw_text_clipped(
@@ -252,7 +266,30 @@ enum ui_font_status ui_font_draw_text_clipped(
         return UI_FONT_STATUS_NOT_VERIFIED;
     }
     return draw_with_metrics(&installed_metrics, surface, bounds, clip, x,
-        baseline, text, foreground, glyphs_drawn);
+        baseline, text, foreground, UI_FONT_STYLE_REGULAR, glyphs_drawn);
+}
+
+enum ui_font_status ui_font_draw_text_styled_clipped(
+    struct surface *surface,
+    struct surface_rect bounds,
+    struct surface_rect clip,
+    uint32_t x,
+    uint32_t baseline,
+    const char *text,
+    uint32_t foreground,
+    uint32_t style,
+    size_t *glyphs_drawn
+)
+{
+    if (!verified) {
+        return UI_FONT_STATUS_NOT_VERIFIED;
+    }
+    if ((style & ~(uint32_t)(UI_FONT_STYLE_BOLD | UI_FONT_STYLE_ITALIC)) !=
+            0U) {
+        return UI_FONT_STATUS_BAD_METRICS;
+    }
+    return draw_with_metrics(&installed_metrics, surface, bounds, clip, x,
+        baseline, text, foreground, style, glyphs_drawn);
 }
 
 static uint64_t pixel_hash(const uint32_t *pixels, size_t count)
@@ -298,19 +335,22 @@ bool ui_font_self_test(void)
         return false;
     }
     if (draw_with_metrics(&metrics, &surface, whole, whole, 0U, 15U, "SAPOTE",
-            UINT32_C(0x00008E92), NULL) != UI_FONT_STATUS_OK ||
+            UINT32_C(0x00008E92), UI_FONT_STYLE_REGULAR, NULL) !=
+                UI_FONT_STATUS_OK ||
         pixel_hash(pixels, sizeof(pixels) / sizeof(pixels[0])) !=
             LABEL_PIXEL_HASH) {
         self_test_failure = "UI font representative label pixels changed";
         return false;
     }
     if (draw_with_metrics(&metrics, &surface, short_box, short_box, 0U, 15U, "P",
-            1U, NULL) != UI_FONT_STATUS_DESTINATION_CLIPPING_FAILURE) {
+            1U, UI_FONT_STYLE_REGULAR, NULL) !=
+                UI_FONT_STATUS_DESTINATION_CLIPPING_FAILURE) {
         self_test_failure = "UI font destination clipping refusal failed";
         return false;
     }
     if (draw_with_metrics(&metrics, &surface, whole, whole, 0U, 15U, "\x01",
-            1U, NULL) != UI_FONT_STATUS_MISSING_GLYPH) {
+            1U, UI_FONT_STYLE_REGULAR, NULL) !=
+                UI_FONT_STATUS_MISSING_GLYPH) {
         self_test_failure = "UI font missing-glyph refusal failed";
         return false;
     }

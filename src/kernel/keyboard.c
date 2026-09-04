@@ -71,6 +71,7 @@
 #define KEYBOARD_SCANCODE_LEFT_SHIFT UINT8_C(0x2A)
 #define KEYBOARD_SCANCODE_RIGHT_SHIFT UINT8_C(0x36)
 #define KEYBOARD_SCANCODE_LEFT_CONTROL UINT8_C(0x1D)
+#define KEYBOARD_SCANCODE_LEFT_ALT UINT8_C(0x38)
 #define KEYBOARD_SCANCODE_CAPS_LOCK UINT8_C(0x3A)
 
 /*
@@ -281,6 +282,8 @@ static void handle_byte(uint8_t byte)
     } else if (make == KEYBOARD_SCANCODE_LEFT_CONTROL) {
         /* Only the ordinary set-1 code is the bounded left-Control contract. */
         state.control = !extended && event.pressed;
+    } else if (make == KEYBOARD_SCANCODE_LEFT_ALT) {
+        state.alt = !extended && event.pressed;
     } else if (make == KEYBOARD_SCANCODE_CAPS_LOCK && event.pressed) {
         state.caps_lock = !state.caps_lock;
     }
@@ -290,6 +293,7 @@ static void handle_byte(uint8_t byte)
         : '\0';
     event.shift = state.shift;
     event.control = state.control;
+    event.alt = state.alt;
 
     enqueue(&event);
 }

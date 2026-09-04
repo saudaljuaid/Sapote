@@ -26,6 +26,12 @@ enum ui_font_status {
     UI_FONT_STATUS_NOT_VERIFIED = 10
 };
 
+enum ui_font_style {
+    UI_FONT_STYLE_REGULAR = 0,
+    UI_FONT_STYLE_BOLD = 1U << 0,
+    UI_FONT_STYLE_ITALIC = 1U << 1
+};
+
 struct ui_font_metrics {
     uint32_t width;
     uint32_t height;
@@ -81,6 +87,17 @@ enum ui_font_status ui_font_draw_text_clipped(
     uint32_t baseline,
     const char *text,
     uint32_t foreground,
+    size_t *glyphs_drawn
+);
+enum ui_font_status ui_font_draw_text_styled_clipped(
+    struct surface *surface,
+    struct surface_rect bounds,
+    struct surface_rect clip,
+    uint32_t x,
+    uint32_t baseline,
+    const char *text,
+    uint32_t foreground,
+    uint32_t style,
     size_t *glyphs_drawn
 );
 

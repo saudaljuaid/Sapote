@@ -61,6 +61,10 @@ struct notes_line {
     bool present;
     bool checkable;
     bool done;
+    bool bold;
+    bool italic;
+    bool underline;
+    bool strike;
     char text[NOTES_TEXT_BYTES];
 };
 
@@ -86,6 +90,11 @@ enum notes_status notes_set_line(size_t note, size_t line,
     const struct notes_line *value);
 enum notes_status notes_select(size_t index);
 size_t notes_selected(void);
+enum notes_status notes_new(struct ui_rect *damage);
+enum notes_status notes_text_input(char character, struct ui_rect *damage);
+enum notes_status notes_key_backspace(struct ui_rect *damage);
+enum notes_status notes_key_enter(struct ui_rect *damage);
+enum notes_status notes_get_note(size_t index, struct notes_note *note);
 enum notes_status notes_set_focus(bool focused);
 
 /* Which line the pointer is over, so a hover can be drawn; -1 for none. */

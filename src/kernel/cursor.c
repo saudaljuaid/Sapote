@@ -93,9 +93,12 @@ enum cursor_status cursor_initialize(struct surface *target)
 struct ui_rect cursor_placement(enum cursor_kind kind, struct ui_point at)
 {
     const struct ui_point hotspot = cursor_hotspot[kind];
+    const int32_t left = at.x - hotspot.x;
+    const int32_t top = at.y - hotspot.y;
 
     return (struct ui_rect){
-        (uint32_t)(at.x - hotspot.x), (uint32_t)(at.y - hotspot.y),
+        left > 0 ? (uint32_t)left : 0U,
+        top > 0 ? (uint32_t)top : 0U,
         CURSOR_ART_SIZE, CURSOR_ART_SIZE };
 }
 
