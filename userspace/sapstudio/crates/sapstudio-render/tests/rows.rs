@@ -550,6 +550,222 @@ fn a_turn_wide_enough_to_need_them_is_drawn_in_more_than_one_strip() {
 }
 
 #[test]
+fn a_band_of_a_turn_reads_its_source_once_instead_of_once_a_row() {
+    // The whole of the milestone, counted rather than claimed.
+    //
+    // Drawn a row at a time, a turn re-reads: neighbouring strips have
+    // overlapping bands, so the same source rows are fetched again for every
+    // destination row. Drawn a band at a time, each tile's band is fetched
+    // **once** and every row of the tile is drawn from it.
+    //
+    // So the same sixteen rows, produced two ways, and the number of source
+    // rows fetched is the difference. Both produce identical pixels, which is
+    // why counting is the only way to see it.
+    //
+    // The numbers below are worked out from the map, not read back out of the
+    // code. The three-four-five turn about the centre of a hundred-and-sixty
+    // square gives v(x, y) = -3(x - 80)/5 + 4(y - 80)/5 + 80, so a tile of w
+    // columns and h rows spans 3w/5 + 4h/5 in v. The width halves from 160
+    // until the band fits in sixty-four:
+    //
+    //   together, h = 16 : w = 160 -> 96 + 12.8 = 108.8, too tall
+    //                      w =  80 -> 48 + 12.8 =  60.8, which fits
+    //     columns   0..80 : v spans 73.6 .. 134.4 -> rows 73..=134 = 62
+    //     columns 80..160 : v spans 25.6 ..  86.4 -> rows 25..= 86 = 62
+    //                                                       total = 124
+    //
+    //   apart, h = 1     : w = 160 -> 96 +  0.8 =  96.8, too tall
+    //                      w =  80 -> 48 +  0.8 =  48.8, which fits
+    //     two strips of about fifty rows is about a hundred a row, and
+    //     sixteen rows is about 1,600 -- 1,594 once the rows near the top and
+    //     bottom of the picture clamp against its edges.
+    //
+    // A hundred and twenty-four against one thousand five hundred and
+    // ninety-four.
+    let wide = FrameDescription::square(
+        Geometry::new(160, 160).expect("a geometry"),
+        PixelFormat::Rgba8,
+        ColourDescription::srgb_full(),
+        None,
+        Some(AlphaState::Premultiplied),
+    )
+    .expect("a description");
+    let media = Digest::of(b"a wide shot");
+    let mut graph = Graph::new();
+    let source = graph
+        .add(Node::Source {
+            media,
+            tick: 0,
+            description: wide,
+        })
+        .expect("a node");
+    let moved = graph
+        .add(Node::Transform {
+            input: source,
+            linear: turned(),
+            offset: (Rational::ZERO, Rational::ZERO),
+            anchor: (
+                Rational::new(1, 2).expect("an anchor"),
+                Rational::new(1, 2).expect("an anchor"),
+            ),
+            bilinear: false,
+        })
+        .expect("a node");
+    let mut library = Pictures::new(std::vec![(media, picture(wide, 9))]);
+
+    let mut apart = std::vec::Vec::new();
+    for row in 72..88 {
+        apart.push(graph.row(moved, row, &mut library).expect("a row"));
+    }
+    let one_at_a_time = library.rows_asked;
+
+    library.rows_asked = 0;
+    let together = graph.rows(moved, 72, 88, &mut library).expect("a band");
+    let all_at_once = library.rows_asked;
+
+    // The rows are the same rows: a tile is a rectangle of columns and rows,
+    // not a different arithmetic.
+    let packed = together.to_packed().expect("bytes");
+    let stride = packed.len() / 16;
+    for (index, row) in apart.iter().enumerate() {
+        assert_eq!(
+            row.to_packed().expect("bytes"),
+            packed[index * stride..(index + 1) * stride],
+            "row {index} of the band is not the row drawn alone"
+        );
+    }
+    // And the band read far fewer of them. Sixteen rows drawn one at a time
+    // fetch about sixteen times what one row fetches; drawn together they
+    // fetch about what one row fetches, because the band is the same band.
+    assert_eq!(one_at_a_time, 1_594, "sixteen rows apart");
+    assert_eq!(all_at_once, 124, "and together");
+    assert!(
+        all_at_once * 7 < one_at_a_time,
+        "sixteen rows read {all_at_once} source rows together against \
+         {one_at_a_time} apart, which is not a saving worth having"
+    );
+}
+
+#[test]
+fn a_band_of_a_flat_map_costs_no_more_than_its_rows_and_usually_less() {
+    // Tiles were built for turns, and it turns out they help everything, for
+    // a reason worth writing down: consecutive destination rows have
+    // *overlapping* bands under almost any map, and a tile fetches the union
+    // once instead of each row's share separately.
+    //
+    // This is a bilinear move down by a fifth of a five-row frame, which is
+    // one pixel, so the inverse is v = y - 1. Bilinear takes the sample above
+    // each centre and the one below, and the centre of row y sits at
+    // v = y - 1/2, so the sample above it is floor(y - 1):
+    //
+    //   row 0 : floor(-1) = -1, rows -1 and 0, clamped to the picture = 1
+    //   row 1 : floor( 0) =  0, rows  0 and 1                         = 2
+    //   row 2 : floor( 1) =  1, rows  1 and 2                         = 2
+    //                                                        apart    = 5
+    //
+    // Together, the tile's corners are rows 0 and 2, whose samples are -1 and
+    // 1, so the band is [-1, 2] and clamps to rows 0, 1 and 2 -- **three**.
+    // Two rows saved out of five, on a map with no slope at all.
+    let description = described(PixelFormat::Rgba8);
+    let media = Digest::of(b"a shot");
+    let mut graph = Graph::new();
+    let source = graph
+        .add(Node::Source {
+            media,
+            tick: 0,
+            description,
+        })
+        .expect("a node");
+    let moved = graph
+        .add(Node::Transform {
+            input: source,
+            linear: [Rational::ONE, Rational::ZERO, Rational::ZERO, Rational::ONE],
+            offset: (Rational::ZERO, Rational::new(1, 5).expect("a move")),
+            anchor: (
+                Rational::new(1, 2).expect("an anchor"),
+                Rational::new(1, 2).expect("an anchor"),
+            ),
+            bilinear: true,
+        })
+        .expect("a node");
+    let mut library = Pictures::new(std::vec![(media, picture(description, 5))]);
+    library.rows_asked = 0;
+    graph.rows(moved, 0, 3, &mut library).expect("a band");
+    let together = library.rows_asked;
+    library.rows_asked = 0;
+    for row in 0..3 {
+        graph.row(moved, row, &mut library).expect("a row");
+    }
+    assert_eq!(
+        together, 3,
+        "the band is the union of the three rows' bands"
+    );
+    assert_eq!(library.rows_asked, 5, "and apart they are one, two and two");
+}
+
+#[test]
+fn a_band_and_its_rows_are_the_same_picture_for_every_node() {
+    // `Graph::rows` is the band form of `Graph::row`, and for everything but a
+    // transform it *is* the rows stacked. This is that, held for one of each
+    // kind, so a future arm that made a band differently would be caught here
+    // rather than by somebody comparing two exports.
+    let description = described(PixelFormat::Rgba8);
+    let media = Digest::of(b"a shot");
+    let mut graph = Graph::new();
+    let source = graph
+        .add(Node::Source {
+            media,
+            tick: 0,
+            description,
+        })
+        .expect("a node");
+    let faded = graph
+        .add(Node::Fade {
+            input: source,
+            opacity: Rational::new(1, 3).expect("an opacity"),
+        })
+        .expect("a node");
+    let blank = graph.add(Node::Blank { description }).expect("a node");
+    let over = graph
+        .add(Node::Over {
+            layers: [blank, faded],
+        })
+        .expect("a node");
+    let pattern = graph
+        .add(Node::Pattern {
+            pattern: sapstudio_media::TestPattern::Checkerboard { square: 2 },
+            description,
+        })
+        .expect("a node");
+    let mut library = Pictures::new(std::vec![(media, picture(description, 11))]);
+    for id in [source, faded, blank, over, pattern] {
+        let band = graph.rows(id, 1, 4, &mut library).expect("a band");
+        let packed = band.to_packed().expect("bytes");
+        let stride = packed.len() / 3;
+        for (index, row) in (1..4).enumerate() {
+            assert_eq!(
+                graph
+                    .row(id, row, &mut library)
+                    .expect("a row")
+                    .to_packed()
+                    .expect("bytes"),
+                packed[index * stride..(index + 1) * stride],
+                "row {row} of a band"
+            );
+        }
+    }
+    // And an empty or backwards range is refused rather than answered.
+    assert_eq!(
+        graph.rows(source, 2, 2, &mut library).err(),
+        Some(RenderStatus::OutsideDomain)
+    );
+    assert_eq!(
+        graph.rows(source, 3, 1, &mut library).err(),
+        Some(RenderStatus::OutsideDomain)
+    );
+}
+
+#[test]
 fn every_generator_agrees_row_for_row() {
     // These three refused with `NoRowForm` until this milestone, and the
     // refusal was always a statement about the build rather than about the

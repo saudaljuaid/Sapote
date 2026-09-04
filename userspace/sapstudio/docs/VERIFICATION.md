@@ -840,6 +840,14 @@ Examples this project will need:
 | A band taller than its bound is refused | Multiply `MAX_BAND_ROWS` by 1024 at the check | Three tests fail; a downscale of any steepness is admitted |
 | A strip of no columns is refused | Drop the empty-range check in `rows_under` | One test fails; a strip from a column to itself is answered for |
 | A subsampled format still has no row | Drop the subsampling check in `row_description` | Four tests fail; a 4:2:0 frame is scanned a luma row at a time |
+| A tile's band spans all of its rows | Measure the band across the tile's first row | Two tests fail; every row but the first reaches past the band |
+| A bilinear tile looks at all four of its corners | Sample the top edge twice | One test fails; a tile's band misses the rows its lower edge reads |
+| Each row of a tile is drawn at its own row | Draw every row of the tile as its first | One test fails; the band repeats down the picture |
+| A tile writes one buffer a row | Drop the count check | One test fails; mismatched buffers are accepted and rows go missing |
+| A band of a turn is drawn as one tile per strip | Measure each tile across one row | Two tests fail; each row fetches its own band and the saving is gone |
+| A band of a row-local node is its rows stacked | Stack the first row every time | Eight tests fail; a band is the first row repeated |
+| An empty band is refused rather than answered | Drop the range check in `Graph::rows` | One test fails; an empty or backwards range is answered |
+| The export writes every row of every band | Drop the last row of each band | Seventeen tests fail; the reel is short of rows |
 
 ### A rule stated in a comment is not a rule
 

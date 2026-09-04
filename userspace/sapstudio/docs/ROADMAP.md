@@ -5511,6 +5511,113 @@ smaller, because the general form does less work per corner.
 **building the card once a stretch**; **reading** a sidecar back; **SCC**;
 **cue positioning**; and a caption on a **nest or a title**.
 
+## M8.49 — Tiles
+
+*Requires nothing new.*
+
+M8.48 made a turn scannable and said plainly what it cost: **a turn re-reads**.
+Drawn a row at a time, neighbouring strips have overlapping bands, so the same
+source rows are fetched again for every destination row — about `m · width`
+rows for each of `height` rows. That milestone recorded tiles as the way to do
+better. This is that.
+
+### One band, many rows
+
+A **tile** is a rectangle of the destination: a range of columns *and* a range
+of rows. Its preimage is one parallelogram, so it has one band — fetched once,
+and drawn from once per row of the tile. The re-reading falls by a factor of
+the tile's height.
+
+`preimage_of` had already been generalised twice for this. M8.44 gave it a
+pixel; M8.48 gave it a range of columns, which is what made a turn drawable at
+all; this gives it a range of rows, which is what makes it affordable. The two
+generalisations buy different things and the doc comment says which.
+
+### The measurement, worked out by hand
+
+The three-four-five turn about the centre of a hundred-and-sixty square gives
+`v(x, y) = −3(x − 80)/5 + 4(y − 80)/5 + 80`, so a tile of `w` columns and `h`
+rows spans `3w/5 + 4h/5` in `v`. The width halves from 160 until the band fits
+in sixty-four:
+
+```
+together, h = 16 : w = 160 -> 96 + 12.8 = 108.8, too tall
+                   w =  80 -> 48 + 12.8 =  60.8, which fits
+  columns   0..80 : v spans 73.6 .. 134.4 -> rows 73..=134 = 62
+  columns 80..160 : v spans 25.6 ..  86.4 -> rows 25..= 86 = 62
+                                                    total = 124
+
+apart, h = 1     : w =  80 -> 48 +  0.8 =  48.8, which fits
+  two strips of about fifty rows, about a hundred a row, sixteen rows
+  is about 1,600 -- 1,594 once the rows near the edges clamp
+```
+
+**124 against 1,594.** Both produce identical pixels, which is why counting is
+the only way to see it, and the test asserts both numbers.
+
+### What the flat case turned out to be
+
+The second test was written to say "and tiles do nothing for a map with no
+slope". It failed, and the failure was the better result.
+
+A bilinear move down by one pixel reads two source rows per destination row,
+and consecutive rows' bands **overlap by one**. Three rows apart read 1 + 2 + 2
+= 5; together they read 3. Two rows saved out of five, on a map with no slope
+at all. So the saving is not about turns: it is about consecutive rows sharing
+source, which nearly every map does. Turns are only where it is dramatic.
+
+### One buffer a row
+
+A rectangle is not contiguous in a row-major picture, so `resample_tile` hands
+back **one buffer per destination row** rather than one buffer with a stride.
+That is not a compromise: it is the shape the caller wants anyway, because what
+it does next is hand those rows to a sink one at a time. The count has to match
+the tile's height and a mismatch is refused — fewer buffers would silently drop
+rows and more would leave gaps, and both look like a picture.
+
+### `Graph::rows`, and what it promises
+
+The band form of `Graph::row`. For `Node::Transform` it tiles; for everything
+else it is the rows stacked, because every other node here is row-local and
+there is nothing to share. It makes **no promise** about being cheaper — the
+saving is a property of the map, not of the method — and the two measurement
+tests are the two answers.
+
+There is no bound on how many rows to ask for, and that is deliberate. A band
+of `h` rows is `h` rows of memory, and how much memory there is is the
+caller's to know. `MAX_TILE_ROWS` says how tall a tile *may* be; nothing says
+how tall it should be.
+
+The export takes the largest tile the renderer admits, because it is the one
+caller that walks a whole picture in order: it pays the memory once and gets
+every row of the saving. The winder still takes rows, and that is the point —
+what changed is how many are computed at once, not how many are held for
+writing. Every read of the store still stays inside one window, and the test
+that says so is unchanged.
+
+### What it cost
+
+**No page.** 111 both sides, `.text` 352,256 both sides; `.rodata` +40 and
+attributed +277, all absorbed by the page M8.45 opened, which now has 3,808
+bytes of headroom.
+
+Not one tile function carries a name in the image: `tile`, `rows_under`,
+`resample_tile`, `Graph::rows`, `Graph::banded` and `rows_of` are in none of
+the 547 symbols. The two new symbols are the *shapes* the change needs rather
+than the change itself — drop glue for `Vec<Frame>` +255, which the export's
+row-splitting builds, and `RawVec<Vec<u8>>::grow_one` +110 for the
+buffer-a-row a tile writes into. Against them, `Reel`'s drop glue −207 and
+`preimage_of` −45 for taking a rectangle rather than a row of columns;
+`resample` +110 and `area_at` +38 for passing one.
+
+What it bought is not in the image at all. It is 124 against 1,594.
+
+**State: done.** Not done: **a tile that is not a band of full rows** — the
+column split is chosen per band and thrown away, so a caller that wanted a
+rectangle of a picture rather than a run of its rows still cannot ask;
+**building the caption card once a stretch**; **reading** a sidecar back;
+**SCC**; **cue positioning**; and a caption on a **nest or a title**.
+
 ## M7 — Speed
 
 *Requires `SAP-04`, then `SAP-10` and `SAP-11`.*

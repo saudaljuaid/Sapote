@@ -45,7 +45,7 @@
 
 use sapstudio_audio::{MixReport, SampleRate};
 use sapstudio_core::{Digest, Instant, TimeRange};
-use sapstudio_media::FrameDescription;
+use sapstudio_media::{Frame, FrameDescription};
 use sapstudio_model::{Project, SequenceId};
 use sapstudio_render::Library;
 
@@ -80,6 +80,16 @@ pub struct Job<'a> {
     /// Which committed slot the finished reel goes into.
     pub into: Slot,
 }
+
+/// How many rows an export computes at once.
+///
+/// [`sapstudio_render::resample::MAX_TILE_ROWS`], because a band of rows is
+/// held while it is drawn and that constant is where the trade between memory
+/// and re-reading is written down. The export takes the largest tile the
+/// renderer admits, which is the right default for the one caller that walks a
+/// whole picture in order: it pays the memory once and gets every row of the
+/// saving.
+const TILE: usize = sapstudio_render::resample::MAX_TILE_ROWS;
 
 /// The sound to lay against the picture, and where its samples come from.
 ///
@@ -190,9 +200,24 @@ pub fn export(
                 job.description,
                 library,
             )?;
-            for row in 0..instant.height() {
-                let line = instant.row(row, library)?;
-                winder.row(&mut sink, index, row, &line)?;
+            // A band at a time rather than a row at a time, and the rows
+            // are handed to the winder out of it one by one. A framing
+            // resamples, and consecutive rows read overlapping bands of the
+            // source -- so a band of `TILE` fetches the union once instead of
+            // each row's share separately, which on a turn is more than a
+            // tenfold difference in rows read.
+            //
+            // The winder still takes rows, and that is the point: what
+            // changed is how many are computed at once, not how many are
+            // held for writing.
+            let mut row = 0;
+            while row < instant.height() {
+                let last = (row + TILE).min(instant.height());
+                let band = instant.rows(row, last, library)?;
+                for (offset, line) in rows_of(&band, last - row)?.into_iter().enumerate() {
+                    winder.row(&mut sink, index, row + offset, &line)?;
+                }
+                row = last;
             }
         }
         if let Some(dub) = dub.as_mut() {
@@ -262,6 +287,38 @@ pub fn spot(
         spotter.cue(sink, caption, timebase)?;
     }
     Ok(spotter.count())
+}
+
+/// One frame per row of a band, in order.
+///
+/// The band is the frame the scan produced; these are its rows, which is what
+/// the winder takes. Each is built from the band's own bytes rather than
+/// copied out of a re-packed whole (M8.45), so a band of sixteen rows is one
+/// allocation a row and none of them is the band again.
+///
+/// # Errors
+///
+/// [`IoStatus::Media`] wrapping whatever the frame types refuse.
+fn rows_of(band: &Frame, count: usize) -> Result<alloc::vec::Vec<Frame>, SlateStatus> {
+    let described = *band.description();
+    let one = sapstudio_render::row_description(described, 0)?;
+    let line = one.packed_bytes().map_err(IoStatus::Media)?;
+    let packed = band.packed().map_err(IoStatus::Media)?;
+    let mut found = alloc::vec::Vec::new();
+    found
+        .try_reserve(count)
+        .map_err(|_| IoStatus::OutOfMemory)?;
+    for index in 0..count {
+        let mut held = alloc::vec::Vec::new();
+        held.try_reserve(line).map_err(|_| IoStatus::OutOfMemory)?;
+        held.extend_from_slice(
+            packed
+                .get(index * line..(index + 1) * line)
+                .ok_or(IoStatus::TruncatedPayload)?,
+        );
+        found.push(Frame::from_owned(one, held).map_err(IoStatus::Media)?);
+    }
+    Ok(found)
 }
 
 /// The programme's own words over the span, rebased to the reel's nought.

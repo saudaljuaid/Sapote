@@ -699,6 +699,34 @@ impl Scan {
         Ok(self.graph.row(self.root, row, library)?)
     }
 
+    /// A band of rows of the programme, as one frame that many rows tall.
+    ///
+    /// Byte for byte the rows [`Scan::row`] would have produced one at a time,
+    /// and the reason to ask for several is that they can be **cheaper
+    /// together**. A framing resamples, and consecutive destination rows read
+    /// overlapping bands of the source; a band fetches the union once instead
+    /// of each row's share separately. On a turn that is more than a tenfold
+    /// difference in rows read.
+    ///
+    /// How many to ask for is the caller's decision, because the caller is the
+    /// one that knows what it can hold: a band of `h` rows is `h` rows of
+    /// memory. [`sapstudio_render::resample::MAX_TILE_ROWS`] says how tall a
+    /// tile *may* be; nothing here says how tall it should be.
+    ///
+    /// # Errors
+    ///
+    /// As [`Scan::row`], plus
+    /// [`sapstudio_render::RenderStatus::OutsideDomain`] for an empty or
+    /// backwards range or one past the bottom of the picture.
+    pub fn rows(
+        &self,
+        from: usize,
+        to: usize,
+        library: &mut dyn Library,
+    ) -> Result<Frame, SlateStatus> {
+        Ok(self.graph.rows(self.root, from, to, library)?)
+    }
+
     /// The graph this scan renders through.
     ///
     /// Here because a caller that wanted to know what an instant *is* before

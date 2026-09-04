@@ -14,7 +14,8 @@ use sapstudio_media::{
 };
 use sapstudio_render::RenderStatus;
 use sapstudio_render::resample::{
-    Filter, MAX_BAND_ROWS, Mapping, Strip, resample, resample_row, resample_strip, strip,
+    Filter, MAX_BAND_ROWS, MAX_TILE_ROWS, Mapping, Tile, resample, resample_row, resample_tile,
+    tile,
 };
 
 fn r(numerator: i64, denominator: i64) -> Rational {
@@ -744,17 +745,7 @@ fn a_scanned_resample_is_the_resampled_picture_row_for_row() {
         for (name, mapping) in &maps {
             let whole = resample(&source, target, *mapping, filter).expect("a frame");
             for row in 0..6 {
-                let (from, to) = strip(
-                    *mapping,
-                    filter,
-                    Strip {
-                        row,
-                        from: 0,
-                        to: 6,
-                    },
-                    6,
-                )
-                .expect("a band");
+                let (from, to) = tile(*mapping, filter, Tile::row(row, 6), 6).expect("a band");
                 let held = if from < to {
                     let packed = source.to_packed().expect("bytes");
                     Some(
@@ -786,13 +777,12 @@ fn a_band_that_is_short_of_what_the_row_reads_is_refused() {
     let source = flat(4, 4, [10, 20, 30, 255]);
     let target = described(4, 4);
     let mapping = Mapping::scaled(Rational::ONE, r(1, 2), (n(0), n(0))).expect("a map");
-    let (from, to) = strip(
+    let (from, to) = tile(
         mapping,
         Filter::Area,
-        Strip {
-            row: 1,
-            from: 0,
-            to: 4,
+        Tile {
+            rows: (1, 2),
+            columns: (0, 4),
         },
         4,
     )
@@ -812,7 +802,7 @@ fn a_band_that_is_short_of_what_the_row_reads_is_refused() {
 }
 
 #[test]
-fn a_turn_needs_strips_and_the_width_decides_how_many() {
+fn a_turn_needs_tiles_and_the_width_decides_how_many() {
     // `NotRowLocal` used to say a turn's row "needs more than a band of input
     // rows", and that was **overclaiming**. It is not a property of the map.
     // The preimage of a destination row under a turn is a segment of some
@@ -849,26 +839,24 @@ fn a_turn_needs_strips_and_the_width_decides_how_many() {
     )
     .expect("a map");
     assert_eq!(
-        strip(
+        tile(
             mapping,
             Filter::Area,
-            Strip {
-                row: 100,
-                from: 0,
-                to: 200
+            Tile {
+                rows: (100, 101),
+                columns: (0, 200),
             },
             200
         ),
         Err(RenderStatus::BandTooTall)
     );
     assert_eq!(
-        strip(
+        tile(
             mapping,
             Filter::Area,
-            Strip {
-                row: 100,
-                from: 0,
-                to: 100
+            Tile {
+                rows: (100, 101),
+                columns: (0, 100),
             },
             200
         ),
@@ -891,23 +879,21 @@ fn a_turn_needs_strips_and_the_width_decides_how_many() {
         [n(-1), n(0), n(0), n(-1)],
     ] {
         let flat = Mapping::new(linear, (n(0), n(0))).expect("a map");
-        let whole = strip(
+        let whole = tile(
             flat,
             Filter::Area,
-            Strip {
-                row: 4,
-                from: 0,
-                to: 64,
+            Tile {
+                rows: (4, 5),
+                columns: (0, 64),
             },
             64,
         );
-        let part = strip(
+        let part = tile(
             flat,
             Filter::Area,
-            Strip {
-                row: 4,
-                from: 7,
-                to: 9,
+            Tile {
+                rows: (4, 5),
+                columns: (7, 9),
             },
             64,
         );
@@ -928,13 +914,12 @@ fn a_band_past_its_bound_is_refused_and_an_empty_one_is_not() {
     )
     .expect("a map");
     assert_eq!(
-        strip(
+        tile(
             steep,
             Filter::Area,
-            Strip {
-                row: 0,
-                from: 0,
-                to: 4
+            Tile {
+                rows: (0, 1),
+                columns: (0, 4),
             },
             1024,
         ),
@@ -956,20 +941,19 @@ fn a_band_past_its_bound_is_refused_and_an_empty_one_is_not() {
     )
     .expect("a map");
     assert_eq!(
-        strip(
+        tile(
             allowed,
             Filter::Area,
-            Strip {
-                row: 0,
-                from: 0,
-                to: 4
+            Tile {
+                rows: (0, 1),
+                columns: (0, 4),
             },
             1024,
         ),
         Ok((0, MAX_BAND_ROWS))
     );
     assert_eq!(
-        strip(
+        tile(
             Mapping::scaled(
                 Rational::ONE,
                 r(1, i64::try_from(MAX_BAND_ROWS).expect("a bound")),
@@ -977,10 +961,9 @@ fn a_band_past_its_bound_is_refused_and_an_empty_one_is_not() {
             )
             .expect("a map"),
             Filter::Area,
-            Strip {
-                row: 0,
-                from: 0,
-                to: 4
+            Tile {
+                rows: (0, 1),
+                columns: (0, 4),
             },
             1024
         ),
@@ -989,13 +972,12 @@ fn a_band_past_its_bound_is_refused_and_an_empty_one_is_not() {
 
     let away = Mapping::new([n(1), n(0), n(0), n(1)], (n(0), n(100))).expect("a map");
     assert_eq!(
-        strip(
+        tile(
             away,
             Filter::Area,
-            Strip {
-                row: 0,
-                from: 0,
-                to: 4
+            Tile {
+                rows: (0, 1),
+                columns: (0, 4),
             },
             4,
         ),
@@ -1048,40 +1030,38 @@ fn a_band_of_a_different_picture_is_refused_rather_than_resampled() {
 }
 
 #[test]
-fn a_strip_of_no_columns_is_refused_rather_than_measured() {
-    // `strip` is public, and a strip from a column to itself has no preimage
+fn a_tile_of_no_pixels_is_refused_rather_than_measured() {
+    // `tile` is public, and a tile from a column to itself has no preimage
     // to measure: the parallelogram is degenerate and `bounds` would happily
     // report a band for it. Nothing inside this crate asks — `Graph::banded`
-    // never makes an empty strip — so a control found the check changed no
+    // never makes an empty tile — so a control found the check changed no
     // answer, and it stayed anyway for the reason M8.42 kept `Run::plane_row`'s
     // bound: a public function that silently answers a meaningless question is
     // a hazard however well its callers behave. This is the test that holds it.
     let mapping = identity();
     for over in [
-        Strip {
-            row: 0,
-            from: 3,
-            to: 3,
+        Tile {
+            rows: (0, 1),
+            columns: (3, 3),
         },
-        Strip {
-            row: 0,
-            from: 4,
-            to: 2,
+        Tile {
+            rows: (0, 1),
+            columns: (4, 2),
         },
     ] {
         assert_eq!(
-            strip(mapping, Filter::Area, over, 8),
+            tile(mapping, Filter::Area, over, 8),
             Err(RenderStatus::OutsideDomain),
             "{over:?}"
         );
         assert_eq!(
-            strip(mapping, Filter::Bilinear, over, 8),
+            tile(mapping, Filter::Bilinear, over, 8),
             Err(RenderStatus::OutsideDomain),
             "{over:?}"
         );
-        let mut out = Vec::new();
+        let mut out = std::vec![Vec::new(); 1];
         assert_eq!(
-            resample_strip(
+            resample_tile(
                 None,
                 described(8, 8),
                 0,
@@ -1092,6 +1072,66 @@ fn a_strip_of_no_columns_is_refused_rather_than_measured() {
             ),
             Err(RenderStatus::OutsideDomain)
         );
-        assert!(out.is_empty(), "an empty strip wrote pixels");
+        assert!(out[0].is_empty(), "an empty tile wrote pixels");
     }
+}
+
+#[test]
+fn a_tile_writes_one_buffer_a_row_and_refuses_any_other_number() {
+    // A rectangle is not contiguous in a row-major picture, so a tile hands
+    // back one buffer a row rather than one buffer with a stride. The count
+    // has to match, and a mismatch is a caller error rather than something to
+    // paper over: fewer buffers than rows would silently drop rows, and more
+    // would leave some empty and look like a picture with gaps.
+    let source = flat(8, 8, [10, 20, 30, 255]);
+    let target = described(8, 8);
+    let mapping = identity();
+    let over = Tile {
+        rows: (2, 5),
+        columns: (0, 8),
+    };
+    let (from, to) = tile(mapping, Filter::Area, over, 8).expect("a band");
+    let packed = source.to_packed().expect("bytes");
+    let band = Frame::from_packed(
+        described(8, u32::try_from(to - from).expect("a height")),
+        &packed[from * 32..to * 32],
+    )
+    .expect("a band");
+    for count in [0, 2, 4] {
+        let mut out = std::vec![Vec::new(); count];
+        assert_eq!(
+            resample_tile(
+                Some(&band),
+                target,
+                from,
+                mapping,
+                Filter::Area,
+                over,
+                &mut out
+            ),
+            Err(RenderStatus::OutsideDomain),
+            "{count} buffers for three rows"
+        );
+    }
+    let mut out = std::vec![Vec::new(); 3];
+    resample_tile(
+        Some(&band),
+        target,
+        from,
+        mapping,
+        Filter::Area,
+        over,
+        &mut out,
+    )
+    .expect("a tile");
+    // The identity map, so each row of the tile is the row of the source it
+    // sits on, byte for byte.
+    for (index, buffer) in out.iter().enumerate() {
+        assert_eq!(
+            buffer[..],
+            packed[(2 + index) * 32..(3 + index) * 32],
+            "row {index} of the tile"
+        );
+    }
+    assert_eq!(MAX_TILE_ROWS, 16);
 }

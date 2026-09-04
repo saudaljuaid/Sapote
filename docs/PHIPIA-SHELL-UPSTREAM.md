@@ -37,12 +37,12 @@ with this image in the `editor` slot.
 
 The complete portable editor source in `userspace/sapstudio/` is synchronized
 from that repository's `engineering-foundation` branch at commit
-`b495f174b2fd63e1f62eba78432a23bc3401c147`. The mirrored application keeps
+`c06bda4f0b61d1dfb8780c551485dd7bc4882d4b`. The mirrored application keeps
 its stable crate, file-format, and ABI identifiers for compatibility while the
 desktop presents it as **Media Editor**. This snapshot includes nested
-sequences, bounded row and frame-window rendering, storage-backed media,
-strip-scanned transforms, streamed reel and audio export, captions, VTT
-sidecars, and caption burn-in.
+sequences, bounded row, frame-window, and tiled rendering, storage-backed
+media, strip-scanned transforms, streamed reel and audio export, captions,
+VTT sidecars, and caption burn-in.
 The Phipia window in `src/kernel/editor.c` is the interactive platform surface;
 `src/kernel/ui.c` owns the durable FAT32 adapter until the native image can use
 the full framebuffer, input, storage, and audio seams directly.

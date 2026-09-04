@@ -468,6 +468,78 @@ fn exporting_never_holds_more_than_one_row() {
 }
 
 #[test]
+fn an_export_taller_than_a_tile_is_the_render_of_it_band_by_band() {
+    // The export computes a band of rows at a time and hands them to the
+    // winder one at a time. A picture taller than one tile therefore crosses
+    // a band boundary — several, here — and the property that matters is that
+    // nothing about the answer changes: the reel is the frames `render`
+    // makes, whatever the boundaries fall between.
+    //
+    // It is a turn, because a turn is what bands are for: consecutive rows of
+    // one read overlapping bands of the source, and a band fetches the union
+    // once. Forty rows against a tile of sixteen is three bands, the last of
+    // them short.
+    let cosine = Rational::new(4, 5).expect("a cosine");
+    let sine = Rational::new(3, 5).expect("a sine");
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let shot = media(&mut project, 11);
+    let framed = Clip::new(shot, 0, frames(20))
+        .expect("a clip")
+        .with_transform(Some(
+            sapstudio_model::Transform::new(
+                [cosine, sine.checked_neg().expect("a sine"), sine, cosine],
+                (Rational::ZERO, Rational::ZERO),
+                sapstudio_model::Resampling::Area,
+            )
+            .expect("a transform"),
+        ));
+    lay(&mut project, sequence, 0, &[Item::Clip(framed)]);
+    let deep = FrameDescription::square(
+        Geometry::new(12, 40).expect("a geometry"),
+        PixelFormat::Rgba8,
+        ColourDescription::srgb_full(),
+        None,
+        Some(AlphaState::Premultiplied),
+    )
+    .expect("a description");
+    let mut library = Flat {
+        colours: std::vec![(digest_of(&project, shot), [70, 120, 30, 255])],
+    };
+    let mut storage = MemoryStorage::new(1 << 20);
+    export::export(
+        &job(&project, sequence, span(0, 2), deep),
+        &mut library,
+        None,
+        None,
+        &mut storage,
+    )
+    .expect("an export");
+    let reel = sprw::decode(storage.stored().expect("a reel")).expect("a reel");
+    assert_eq!(reel.len(), 2);
+    for (index, frame) in reel.frames().iter().enumerate() {
+        let whole = timeline::render(
+            &project,
+            sequence,
+            at(i64::try_from(index).expect("a frame")),
+            deep,
+            &mut FramePool::new(64, 1 << 20),
+            &mut library,
+        )
+        .expect("a render");
+        assert_eq!(frame, &whole, "frame {index} of a banded export");
+    }
+    // And it still never held a frame: every read of the store stayed inside
+    // one window. A band is rows of *output* held while they are drawn, not a
+    // frame read back.
+    assert!(
+        storage.largest_read() <= WINDOW_BYTES,
+        "a read of {} bytes is larger than the window",
+        storage.largest_read()
+    );
+}
+
+#[test]
 fn a_framed_programme_exports_a_row_at_a_time_and_is_the_render_of_it() {
     // What the band bought, at the top of the program rather than in the
     // middle of it: a shot scaled down and moved -- the commonest thing a

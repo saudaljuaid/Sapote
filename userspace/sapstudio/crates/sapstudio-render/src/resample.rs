@@ -346,11 +346,8 @@ pub fn resample(
             &table,
             mapping,
             filter,
-            Strip {
-                row: y,
-                from: 0,
-                to: width,
-            },
+            Tile::row(y, width),
+            y,
             &mut out,
         )?;
     }
@@ -389,28 +386,30 @@ pub fn resample_row(
             .ok_or(RenderStatus::OutsideDomain)?,
     )
     .map_err(|_| RenderStatus::OutOfMemory)?;
-    resample_strip(
+    resample_tile(
         band,
         source,
         from,
         mapping,
         filter,
-        Strip {
-            row,
-            from: 0,
-            to: width,
-        },
-        &mut out,
+        Tile::row(row, width),
+        core::slice::from_mut(&mut out),
     )?;
     Ok(Frame::from_owned(one_row_of(target)?, out)?)
 }
 
-/// Move one strip of one destination row, appending its pixels.
+/// Move one tile of a premultiplied frame, appending each of its rows.
 ///
-/// The band is what [`strip`] said this strip reads, fetched by whoever is
+/// The band is what [`tile`] said this tile reads, fetched by whoever is
 /// scanning; `from` is the first picture row it holds and `described` is the
 /// **whole** picture it came out of, which is what tells a sample landing past
 /// the band's edge whether it is off the picture or off the band.
+///
+/// `out` is one buffer per destination row of the tile, in order, and each
+/// row's pixels are appended to its own. A rectangle is not contiguous in a
+/// row-major picture, so a single buffer would need a stride and a caller that
+/// understood it; a buffer a row is the shape the caller wants anyway, because
+/// what it does next is hand those rows to a sink one at a time.
 ///
 /// One description rather than a source and a target, because a transform
 /// resamples into its source's own description and this exists for a
@@ -418,7 +417,7 @@ pub fn resample_row(
 ///
 /// `None` is an **empty** band, which happens legitimately and often — a
 /// picture moved off the top of its own frame contributes nothing to the rows
-/// it has left — and the answer is a transparent strip rather than a refusal.
+/// it has left — and the answer is a transparent tile rather than a refusal.
 /// It is spelled as an absent frame rather than as a frame of no rows because
 /// a picture with no rows is not a picture: [`sapstudio_media::Geometry`]
 /// refuses one, so there would be nothing for a caller to pass.
@@ -426,33 +425,44 @@ pub fn resample_row(
 /// # Errors
 ///
 /// Everything [`resample`] refuses, plus [`RenderStatus::RowOutsideBand`] for
-/// a band that does not hold what this strip reads — which is a wrong answer
-/// from [`strip`] rather than a bad argument from a caller — and
+/// a band that does not hold what this tile reads — which is a wrong answer
+/// from [`tile`] rather than a bad argument from a caller —
 /// [`RenderStatus::NotComposable`] for a band that does not describe the
-/// picture it claims to be part of.
-pub fn resample_strip(
+/// picture it claims to be part of, and [`RenderStatus::OutsideDomain`] for a
+/// tile outside the picture or a set of buffers that is not one a row.
+pub fn resample_tile(
     band: Option<&Frame>,
     described: FrameDescription,
     from: usize,
     mapping: Mapping,
     filter: Filter,
-    over: Strip,
-    out: &mut Vec<u8>,
+    over: Tile,
+    out: &mut [Vec<u8>],
 ) -> Result<()> {
     agreed(described, described)?;
     let (width, height) = extent(described)?;
-    if over.row >= height || over.to > width || over.from >= over.to {
+    if over.rows.1 > height
+        || over.columns.1 > width
+        || over.rows.0 >= over.rows.1
+        || over.columns.0 >= over.columns.1
+        || out.len() != over.height()
+    {
         return Err(RenderStatus::OutsideDomain);
     }
-    let columns = over.to - over.from;
-    out.try_reserve(
-        columns
-            .checked_mul(CHANNELS)
-            .ok_or(RenderStatus::OutsideDomain)?,
-    )
-    .map_err(|_| RenderStatus::OutOfMemory)?;
+    let columns = over.width();
+    for buffer in out.iter_mut() {
+        buffer
+            .try_reserve(
+                columns
+                    .checked_mul(CHANNELS)
+                    .ok_or(RenderStatus::OutsideDomain)?,
+            )
+            .map_err(|_| RenderStatus::OutOfMemory)?;
+    }
     let Some(band) = band else {
-        out.resize(out.len() + columns * CHANNELS, 0);
+        for buffer in out.iter_mut() {
+            buffer.resize(buffer.len() + columns * CHANNELS, 0);
+        }
         return Ok(());
     };
     if band.description().geometry().width() != described.geometry().width()
@@ -467,7 +477,18 @@ pub fn resample_strip(
     }
     let held = Picture::banded(band, from, height)?;
     let table = TransferTable::build(described.colour())?;
-    drawn(&held, &table, mapping, filter, over, out)
+    for (index, buffer) in out.iter_mut().enumerate() {
+        drawn(
+            &held,
+            &table,
+            mapping,
+            filter,
+            over,
+            over.rows.0 + index,
+            buffer,
+        )?;
+    }
+    Ok(())
 }
 
 /// The checks a resample makes before it moves a pixel.
@@ -524,11 +545,12 @@ fn drawn(
     table: &TransferTable,
     mapping: Mapping,
     filter: Filter,
-    over: Strip,
+    over: Tile,
+    at: usize,
     out: &mut Vec<u8>,
 ) -> Result<()> {
-    let row = i64::try_from(over.row).map_err(|_| RenderStatus::OutsideDomain)?;
-    for x in over.from..over.to {
+    let row = i64::try_from(at).map_err(|_| RenderStatus::OutsideDomain)?;
+    for x in over.columns.0..over.columns.1 {
         let column = i64::try_from(x).map_err(|_| RenderStatus::OutsideDomain)?;
         let pixel = match filter {
             Filter::Area => area_at(source, table, mapping, column, row)?,
@@ -658,22 +680,33 @@ impl<'a> Picture<'a> {
     }
 }
 
-/// A run of destination pixels, taken back into the source.
+/// A rectangle of destination pixels, taken back into the source.
 ///
 /// An affine map sends a rectangle to a parallelogram, so this is exact and
-/// has four corners however the picture is turned. `from..to` is a range of
-/// columns: one pixel is `x..x + 1`, and a whole strip is the range it covers.
-/// That generality is the milestone that made a rotation scannable — the
-/// vertical extent of this parallelogram is what a band has to hold, and it
-/// shrinks as the range narrows.
-fn preimage_of(mapping: Mapping, from: i64, to: i64, y: i64) -> Result<Vec<(Rational, Rational)>> {
+/// has four corners however the picture is turned. One pixel is `(x, x + 1)`
+/// by `(y, y + 1)`; a strip widens the columns; a **tile** widens both.
+///
+/// The vertical extent of this parallelogram is what a band has to hold, and
+/// the two generalisations buy different things. Widening the columns is what
+/// made a turn scannable at all — narrow the strip and the band shrinks.
+/// Widening the rows is what stops it re-reading: one band that covers many
+/// destination rows is fetched once and drawn from many times.
+fn preimage_of(
+    mapping: Mapping,
+    columns: (i64, i64),
+    rows: (i64, i64),
+) -> Result<Vec<(Rational, Rational)>> {
     let mut preimage = Vec::new();
     preimage
         .try_reserve(4)
         .map_err(|_| RenderStatus::OutOfMemory)?;
-    for (x, dy) in [(from, 0), (to, 0), (to, 1), (from, 1)] {
-        preimage
-            .push(mapping.source_of(Rational::from_integer(x), Rational::from_integer(y + dy))?);
+    for (x, y) in [
+        (columns.0, rows.0),
+        (columns.1, rows.0),
+        (columns.1, rows.1),
+        (columns.0, rows.1),
+    ] {
+        preimage.push(mapping.source_of(Rational::from_integer(x), Rational::from_integer(y))?);
     }
     Ok(preimage)
 }
@@ -721,88 +754,133 @@ fn landing_of(mapping: Mapping, x: i64, y: i64) -> Result<Landing> {
     })
 }
 
-/// Which part of which destination row a strip covers.
+/// How many destination rows one tile may cover.
 ///
-/// The unit a resampled row is actually drawn in. A whole row is the strip
-/// from nought to the width, and for a map that takes horizontals to
-/// horizontals that is the only strip anybody needs. For a turn it is not,
-/// and [`strip`] says why.
+/// Sixteen, and the number is a trade rather than a limit. A tile of `h` rows
+/// holds `h` rows of output while it is drawn, so `h` is memory; and it
+/// divides the re-reading a turn does by roughly `h`, so `h` is also speed.
+/// Sixteen rows of a 1,920-wide picture is 122,880 bytes — more than a
+/// Sapote program is mapped at, which is why the *caller* decides how tall a
+/// tile it can afford and this only says how tall one may be.
+///
+/// It is not [`MAX_BAND_ROWS`] and must not be confused with it. That bounds
+/// the **source** rows one tile reads; this bounds the **destination** rows
+/// one tile writes. A tile of sixteen rows may read sixty-four.
+pub const MAX_TILE_ROWS: usize = 16;
+
+/// A rectangle of a destination picture.
+///
+/// The unit a resampled picture is actually drawn in. A whole row is
+/// `rows: (y, y + 1), columns: (0, width)`, and for a map that takes
+/// horizontals to horizontals that is the only tile anybody needs. For a turn
+/// it is not, and [`tile`] says why.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Strip {
-    /// The destination row.
-    pub row: usize,
-    /// The first destination column.
-    pub from: usize,
-    /// One past the last destination column.
-    pub to: usize,
+pub struct Tile {
+    /// The destination rows, half-open.
+    pub rows: (usize, usize),
+    /// The destination columns, half-open.
+    pub columns: (usize, usize),
 }
 
-/// The source rows one strip of one destination row reads, inclusive at both
-/// ends and before any clamping to the picture.
+impl Tile {
+    /// One whole row.
+    #[must_use]
+    pub const fn row(row: usize, width: usize) -> Self {
+        Self {
+            rows: (row, row + 1),
+            columns: (0, width),
+        }
+    }
+
+    /// How many rows it covers.
+    #[must_use]
+    pub const fn height(&self) -> usize {
+        self.rows.1.saturating_sub(self.rows.0)
+    }
+
+    /// How many columns it covers.
+    #[must_use]
+    pub const fn width(&self) -> usize {
+        self.columns.1.saturating_sub(self.columns.0)
+    }
+}
+
+/// The source rows one tile reads, inclusive at both ends and before any
+/// clamping to the picture.
 ///
 /// The arithmetic is not this function's: it is `preimage_of` and
 /// `landing_of`, the same two the samplers use, so a band and the pixels drawn
 /// inside it cannot disagree about which rows those are.
-fn rows_under(mapping: Mapping, filter: Filter, over: Strip) -> Result<(i64, i64)> {
-    let from = i64::try_from(over.from).map_err(|_| RenderStatus::OutsideDomain)?;
-    let to = i64::try_from(over.to).map_err(|_| RenderStatus::OutsideDomain)?;
-    let y = i64::try_from(over.row).map_err(|_| RenderStatus::OutsideDomain)?;
-    if to <= from {
+fn rows_under(mapping: Mapping, filter: Filter, over: Tile) -> Result<(i64, i64)> {
+    let whole = |value: usize| i64::try_from(value).map_err(|_| RenderStatus::OutsideDomain);
+    let (left, right) = (whole(over.columns.0)?, whole(over.columns.1)?);
+    let (top, bottom) = (whole(over.rows.0)?, whole(over.rows.1)?);
+    if right <= left || bottom <= top {
         return Err(RenderStatus::OutsideDomain);
     }
     match filter {
         Filter::Area => {
-            let (_, top, _, bottom) = bounds(&preimage_of(mapping, from, to, y)?)?;
-            Ok((top, bottom))
+            let (_, first, _, last) = bounds(&preimage_of(mapping, (left, right), (top, bottom))?)?;
+            Ok((first, last))
         }
         // Bilinear reads the sample above each centre and the one below it,
         // and no more. The source's vertical coordinate is affine in the
-        // column, so over a run of columns its extremes are at the two ends —
-        // there is nothing in the middle to check.
+        // column and in the row, so over a rectangle its extremes are at the
+        // four corner pixels — there is nothing in the middle to check.
         Filter::Bilinear => {
-            let first = landing_of(mapping, from, y)?.corner.1;
-            let last = landing_of(mapping, to - 1, y)?.corner.1;
-            Ok((first.min(last), first.max(last).saturating_add(1)))
+            let mut least = i64::MAX;
+            let mut most = i64::MIN;
+            for (x, y) in [
+                (left, top),
+                (right - 1, top),
+                (left, bottom - 1),
+                (right - 1, bottom - 1),
+            ] {
+                let at = landing_of(mapping, x, y)?.corner.1;
+                least = least.min(at);
+                most = most.max(at);
+            }
+            Ok((least, most.saturating_add(1)))
         }
     }
 }
 
-/// The source rows one strip of one destination row reads, half-open and
-/// inside the picture.
+/// The source rows one tile reads, half-open and inside the picture.
 ///
 /// Asked **before** the rows are fetched, which is the whole point: a caller
 /// that scans gathers exactly this band and no more, and a caller that cannot
 /// afford the band learns so before it has spent a row on it.
 ///
-/// ## Why a strip and not a row
+/// ## Why a tile and not a row
 ///
 /// A destination row's preimage is a segment of the source. When the map takes
 /// horizontals to horizontals that segment lies flat, so the whole row reads
 /// one short band and there is nothing to slice. When it does not — a rotation,
 /// a vertical shear — the segment has a slope, and a segment of slope `m`
-/// across a picture `w` wide crosses about `m · w` rows. For a picture of any
-/// size that is more than a band may hold.
+/// across `w` columns crosses about `m · w` rows. For a picture of any size
+/// that is more than a band may hold.
 ///
-/// But a *part* of that segment crosses proportionally fewer, and the part is
-/// what a strip is. So a turn is scanned in strips narrow enough that each
-/// one's band fits, and the pixels are identical either way — a strip is a
-/// range of columns, not a different arithmetic.
+/// Narrowing the columns fixes that, and a **strip** — a tile one row tall —
+/// is all it takes to make a turn drawable at all. What it does not fix is the
+/// *re-reading*: neighbouring strips have overlapping bands, so a whole frame
+/// drawn strip by strip fetches about `m · width` rows for every one of its
+/// rows.
 ///
-/// The band is empty when the strip's preimage misses the picture altogether,
+/// Widening the rows is what fixes that, and it is why this takes a rectangle.
+/// One band that covers `h` destination rows is fetched once and drawn from
+/// `h` times, so the re-reading falls by a factor of about `h` — for the price
+/// of holding `h` rows of output. That is the trade [`MAX_TILE_ROWS`] bounds.
+///
+/// The band is empty when the tile's preimage misses the picture altogether,
 /// and an empty band is not an error: there is nothing there, and a resampled
-/// strip of nothing is transparent.
+/// tile of nothing is transparent.
 ///
 /// # Errors
 ///
 /// [`RenderStatus::BandTooTall`] past [`MAX_BAND_ROWS`],
-/// [`RenderStatus::OutsideDomain`] for a strip of no columns, and
+/// [`RenderStatus::OutsideDomain`] for a tile of no pixels, and
 /// [`RenderStatus::Time`] wrapping an overflow.
-pub fn strip(
-    mapping: Mapping,
-    filter: Filter,
-    over: Strip,
-    height: usize,
-) -> Result<(usize, usize)> {
+pub fn tile(mapping: Mapping, filter: Filter, over: Tile, height: usize) -> Result<(usize, usize)> {
     let tall = i64::try_from(height).map_err(|_| RenderStatus::OutsideDomain)?;
     let (top, bottom) = rows_under(mapping, filter, over)?;
     let from = top.clamp(0, tall);
@@ -825,7 +903,7 @@ fn area_at(
     x: i64,
     y: i64,
 ) -> Result<[u8; CHANNELS]> {
-    let preimage = preimage_of(mapping, x, x + 1, y)?;
+    let preimage = preimage_of(mapping, (x, x + 1), (y, y + 1))?;
     let (left, top, right, bottom) = bounds(&preimage)?;
     let mut light = [Fixed::ZERO; CHANNELS];
     for row in top..=bottom {

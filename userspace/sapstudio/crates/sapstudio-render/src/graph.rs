@@ -902,7 +902,7 @@ impl Graph {
                 )?;
                 composite::masked(&source, &coverage)
             }
-            Node::Transform { .. } => self.banded(&node, row, library),
+            Node::Transform { .. } => self.banded(&node, (row, row + 1), library),
             Node::Pattern {
                 pattern,
                 description,
@@ -985,48 +985,49 @@ impl Graph {
         }
     }
 
-    /// One row of a resampled node, drawn in strips from bands of its input's
-    /// rows.
+    /// A band of rows of a resampled node, drawn in tiles from bands of its
+    /// input's rows.
     ///
-    /// The band is asked for **first** and fetched second, so a strip that
+    /// The band is asked for **first** and fetched second, so a tile that
     /// cannot be scanned costs nothing and one that can costs exactly the rows
-    /// it reads. A map that takes horizontals to horizontals needs one strip
-    /// for the whole row; a turn needs several, because its row's preimage is
-    /// a slope and a slope crosses more rows than a band may hold.
+    /// it reads. A map that takes horizontals to horizontals needs one tile
+    /// for the whole band; a turn needs several across, because its row's
+    /// preimage is a slope and a slope crosses more rows than a band may hold.
+    ///
+    /// ## Why a band of rows and not one
+    ///
+    /// Because of what a turn costs otherwise. Drawn a row at a time, strip by
+    /// strip, neighbouring strips have overlapping bands and the same source
+    /// rows are fetched again for every destination row — about `m · width`
+    /// rows for each of `height` rows, where `m` is the slope.
+    ///
+    /// A tile `h` rows tall fetches its band **once** and draws `h`
+    /// destination rows from it, so the whole picture costs about
+    /// `m · width · height / h` instead. The saving is the whole of this
+    /// milestone and it is exactly the height of the tile.
     ///
     /// ## The width tunes itself
     ///
     /// It starts optimistic — the whole row — and halves whenever
-    /// [`crate::resample::strip`] says the band would be too tall, keeping
-    /// whatever width worked for the strips after it. So a scale pays one
-    /// probe a row and a turn pays about fourteen once, and neither has to be
-    /// told which it is.
+    /// [`crate::resample::tile`] says the band would be too tall, keeping
+    /// whatever width worked for the tiles after it. So a scale pays one probe
+    /// a band and a turn pays about fourteen once, and neither has to be told
+    /// which it is.
     ///
     /// Correctness does not depend on the width at all, and that is what makes
-    /// the tuning safe: a strip is a range of columns, not a different
-    /// arithmetic, so where the boundaries fall changes nothing about the
-    /// pixels.
-    ///
-    /// ## What it costs, honestly
-    ///
-    /// A turn re-reads. Strip *s* and strip *s + 1* have overlapping bands, so
-    /// a row drawn in strips fetches more source rows than the picture has.
-    /// How many is not up to the slicing: a strip of *w* columns reads about
-    /// `|m|·w` rows for a slope *m*, and there are `width / w` of them, so the
-    /// total is about `|m|·width` however wide the strips are. That is the
-    /// number of rows the row's preimage genuinely crosses, so no
-    /// row-at-a-time evaluator can read fewer. Reading fewer means not working
-    /// a row at a time — tiles, which is a different design and is recorded as
-    /// not done.
-    ///
-    /// The rows are stitched into one frame rather than handed over one at a
-    /// time because a resampled pixel reads from two of them at once, and a
-    /// sampler that took a slice of rows would be a second sampler.
+    /// the tuning safe: a tile is a rectangle of columns and rows, not a
+    /// different arithmetic, so where the boundaries fall changes nothing
+    /// about the pixels.
     ///
     /// It takes the node rather than its five fields, which is what `carded`
     /// settled on for the same reason: five parameters in a fixed order are
     /// five chances to hand a transform somebody else's anchor.
-    fn banded(&self, node: &Node, row: usize, library: &mut dyn Library) -> Result<Frame> {
+    fn banded(
+        &self,
+        node: &Node,
+        rows: (usize, usize),
+        library: &mut dyn Library,
+    ) -> Result<Frame> {
         let Node::Transform {
             input,
             linear,
@@ -1053,24 +1054,32 @@ impl Graph {
         };
         let height = usize::try_from(geometry.height()).map_err(|_| RenderStatus::OutsideDomain)?;
         let width = usize::try_from(geometry.width()).map_err(|_| RenderStatus::OutsideDomain)?;
+        if rows.1 > height || rows.0 >= rows.1 {
+            return Err(RenderStatus::OutsideDomain);
+        }
         let mut out = Vec::new();
-        out.try_reserve(
-            row_description(described, row)?
-                .packed_bytes()
-                .map_err(RenderStatus::Media)?,
-        )
-        .map_err(|_| RenderStatus::OutOfMemory)?;
+        out.try_reserve(rows.1 - rows.0)
+            .map_err(|_| RenderStatus::OutOfMemory)?;
+        let line = row_description(described, rows.0)?
+            .packed_bytes()
+            .map_err(RenderStatus::Media)?;
+        for _ in rows.0..rows.1 {
+            let mut buffer = Vec::new();
+            buffer
+                .try_reserve(line)
+                .map_err(|_| RenderStatus::OutOfMemory)?;
+            out.push(buffer);
+        }
         let mut wide = width;
         let mut at = 0;
         while at < width {
             let mut span = wide.min(width - at);
             let (from, to) = loop {
-                let over = crate::resample::Strip {
-                    row,
-                    from: at,
-                    to: at + span,
+                let over = crate::resample::Tile {
+                    rows,
+                    columns: (at, at + span),
                 };
-                match crate::resample::strip(mapping, filter, over, height) {
+                match crate::resample::tile(mapping, filter, over, height) {
                     Ok(found) => break found,
                     Err(RenderStatus::BandTooTall) if span > 1 => span = span.div_ceil(2),
                     Err(other) => return Err(other),
@@ -1078,28 +1087,39 @@ impl Graph {
             };
             wide = span;
             let band = self.gathered(input, from, to, library)?;
-            crate::resample::resample_strip(
+            crate::resample::resample_tile(
                 band.as_ref(),
                 described,
                 from,
                 mapping,
                 filter,
-                crate::resample::Strip {
-                    row,
-                    from: at,
-                    to: at + span,
+                crate::resample::Tile {
+                    rows,
+                    columns: (at, at + span),
                 },
                 &mut out,
             )?;
             at += span;
         }
-        Ok(Frame::from_owned(row_description(described, row)?, out)?)
+        let mut packed = Vec::new();
+        packed
+            .try_reserve(line * (rows.1 - rows.0))
+            .map_err(|_| RenderStatus::OutOfMemory)?;
+        for buffer in out {
+            packed.extend_from_slice(&buffer);
+        }
+        Ok(Frame::from_owned(
+            stacked(described, rows.1 - rows.0)?,
+            packed,
+        )?)
     }
 
-    /// Rows `from..to` of a node, as one frame that many rows tall.
+    /// Rows `from..to` of a node, as one frame that many rows tall, or
+    /// nothing at all for an empty range.
     ///
-    /// Nothing at all for an empty range, which is what a destination row
-    /// whose preimage misses the picture asks for.
+    /// Nothing rather than a refusal, because a destination tile whose
+    /// preimage misses the picture asks for an empty band and that is not an
+    /// error — there is simply nothing there.
     fn gathered(
         &self,
         input: NodeId,
@@ -1110,12 +1130,49 @@ impl Graph {
         if from >= to {
             return Ok(None);
         }
-        let described = row_description(self.described(input)?, from)?;
+        Ok(Some(self.rows(input, from, to, library)?))
+    }
+
+    /// Rows `from..to` of a node, as one frame that many rows tall.
+    ///
+    /// The band form of [`Graph::row`], and the reason it exists is
+    /// [`Node::Transform`]: a turn drawn a row at a time re-reads its source
+    /// once per row, and a turn drawn a band at a time reads it once per band.
+    /// Everything else here is row-local — its output row is a function of the
+    /// same row of its inputs — so for every other node this is the rows,
+    /// stacked, and costs exactly what asking for them one at a time would.
+    ///
+    /// A caller that wants one row asks [`Graph::row`]; a caller that is going
+    /// to want all of them asks for as many as it can hold. How many that is
+    /// is the caller's to know, which is why there is no bound here:
+    /// [`crate::resample::MAX_TILE_ROWS`] says how tall a tile *may* be and
+    /// this says nothing about how tall it *should*.
+    ///
+    /// # Errors
+    ///
+    /// As [`Graph::row`], plus [`RenderStatus::OutsideDomain`] for an empty or
+    /// backwards range.
+    pub fn rows(
+        &self,
+        id: NodeId,
+        from: usize,
+        to: usize,
+        library: &mut dyn Library,
+    ) -> Result<Frame> {
+        if from >= to {
+            return Err(RenderStatus::OutsideDomain);
+        }
+        let node = self.node(id)?.clone();
+        if matches!(node, Node::Transform { .. }) {
+            return self.banded(&node, (from, to), library);
+        }
+        let described = row_description(self.described(id)?, from)?;
+        let line = described.packed_bytes().map_err(RenderStatus::Media)?;
         let mut packed = Vec::new();
         packed
             .try_reserve(
                 (to - from)
-                    .checked_mul(described.packed_bytes().map_err(RenderStatus::Media)?)
+                    .checked_mul(line)
                     .ok_or(RenderStatus::OutsideDomain)?,
             )
             .map_err(|_| RenderStatus::OutOfMemory)?;
@@ -1125,24 +1182,11 @@ impl Graph {
             // of the node's description and not of the row, so every row of
             // one node carries the same one. A guard here would be a guard
             // whose absence changes no answer, and this project has deleted
-            // seven of those. What a row of the wrong *size* would do is
-            // refuse at `from_packed` below, on the byte count.
-            packed.extend_from_slice(&self.row(input, at, library)?.to_packed()?);
+            // nine of those. What a row of the wrong *size* would do is refuse
+            // at `from_owned` below, on the byte count.
+            packed.extend_from_slice(&self.row(id, at, library)?.packed()?);
         }
-        let stacked = FrameDescription::new(
-            sapstudio_media::Geometry::new(
-                described.geometry().width(),
-                u32::try_from(to - from).map_err(|_| RenderStatus::OutsideDomain)?,
-            )
-            .map_err(RenderStatus::Media)?,
-            described.format(),
-            described.colour(),
-            described.siting(),
-            described.alpha(),
-            described.pixel_aspect(),
-        )
-        .map_err(RenderStatus::Media)?;
-        Ok(Some(Frame::from_owned(stacked, packed)?))
+        Ok(Frame::from_owned(stacked(described, to - from)?, packed)?)
     }
 
     /// The full geometry a node produces, without producing it.
@@ -1224,6 +1268,30 @@ pub fn row_description(description: FrameDescription, row: usize) -> Result<Fram
         description.siting(),
         description.alpha(),
         description.pixel_aspect(),
+    )
+    .map_err(RenderStatus::Media)
+}
+
+/// The same picture, some number of rows high.
+///
+/// The other half of [`row_description`]: that one cuts a picture into rows
+/// and this one says what a stack of them is described as.
+///
+/// # Errors
+///
+/// [`RenderStatus::Media`] for a height that is not a geometry.
+fn stacked(described: FrameDescription, rows: usize) -> Result<FrameDescription> {
+    FrameDescription::new(
+        sapstudio_media::Geometry::new(
+            described.geometry().width(),
+            u32::try_from(rows).map_err(|_| RenderStatus::OutsideDomain)?,
+        )
+        .map_err(RenderStatus::Media)?,
+        described.format(),
+        described.colour(),
+        described.siting(),
+        described.alpha(),
+        described.pixel_aspect(),
     )
     .map_err(RenderStatus::Media)
 }
