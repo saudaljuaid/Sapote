@@ -14,6 +14,20 @@ namespaced; its generated artwork and behavior otherwise remain upstream.
 The repository and public C include namespace remain `Sapote` and `sapote/`
 for source compatibility. User-visible product and shell identity is Phipia.
 
+The global Phipia identity assets also come from that pinned shell commit. The
+logo is copied byte-for-byte from `assets/logo/phipia.png` to
+`assets/phipia/logo.png` (SHA-256
+`6a07abe324c2d80aa0f1dd3a318c103c3b6a81fef1f72d5f4808d589626b1e88`).
+The default wallpaper is derived deterministically from
+`assets/wallpaper/phipia-lake.jpg` (source SHA-256
+`b98c9301b1bf86b7d3ee9fa943644cc0ed5052b25822082075abc628b3e176f6`):
+it is center-cropped to 4:3 and bilinear-resized to 1024x768 as
+`assets/phipia/wallpaper.png` (SHA-256
+`ce1df11fa3a5575b55b47a2fba7216216b21ce09c53824d85610515848184981`).
+The normal asset generators convert those two files into the boot/runtime
+formats. Existing optional wallpapers remain selectable; the Phipia lake is
+the default frame.
+
 The Media Editor icon is imported from the private SapStudio repository at
 commit `f205f90c6842ecf1b0e3e6f8bb8b41f8136ebf26` and retained at
 `assets/phipia/media-editor.png` with SHA-256

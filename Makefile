@@ -95,8 +95,8 @@ RUST_MANIFEST := src/rust/Cargo.toml
 RUST_LOCKFILE := src/rust/Cargo.lock
 RUST_VENDOR_SOURCES := $(shell find vendor/ext4plus vendor/rust-crates \
 	-type f -print 2>/dev/null)
-LOGO_CANONICAL_SOURCE := assets/sapote-logo-source.png
-LOGO_SOURCE := assets/sapote-logo.png
+LOGO_CANONICAL_SOURCE := assets/phipia/logo.png
+LOGO_SOURCE := assets/phipia/logo.png
 LOGO_BLOB := $(BUILD_DIR)/logo.srl
 LOGO_MAX_DIMENSION := 280
 STUDIO_ICON_SOURCE := assets/sapstudio-icon.png
@@ -133,7 +133,7 @@ SETTINGS_CATEGORY_ICONS_SOURCE := assets/settings-category-icons.png
 SETTINGS_CATEGORY_ICONS_BLOB := $(BUILD_DIR)/settings-category-icons.srl
 SETTINGS_CATEGORY_ICONS_MAX_DIMENSION := 256
 SETTINGS_CATEGORY_ICONS_LICENSE := assets/icons/lucide/LICENSE
-WALLPAPER_SOURCES := assets/sapote-redwood-wallpaper.png \
+WALLPAPER_SOURCES := assets/phipia/wallpaper.png \
 	$(sort $(wildcard assets/wallpapers/*.png))
 WALLPAPER_BLOB := $(BUILD_DIR)/wallpaper.spw
 FONT_SOURCE := tools/font8x16.txt
