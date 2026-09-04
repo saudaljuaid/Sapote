@@ -3,9 +3,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/clock.h>
-#include <sapote/cpu.h>
-#include <sapote/random.h>
+#include <phipia/clock.h>
+#include <phipia/cpu.h>
+#include <phipia/random.h>
 
 #define CPUID_BASIC UINT32_C(0)
 #define CPUID_FEATURES UINT32_C(1)

@@ -2,7 +2,7 @@
 #![cfg_attr(not(test), no_std)]
 #![allow(
     clippy::doc_markdown,
-    reason = "SapStudio and Sapote are product names, not identifiers"
+    reason = "SapStudio and Phipia are product names, not identifiers"
 )]
 //! Frames, and everything true about them.
 //!

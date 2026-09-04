@@ -19,7 +19,7 @@
  * The bar is drawn with three primitives and nothing else: an anti-aliased
  * rectangle that may be rounded, an alpha-composited image, and text.  Curves
  * are rasterized by counting sixteen coverage samples per pixel, the same
- * technique the surrounding Sapote UI already uses for its capsule fills,
+ * technique the surrounding Phipia UI already uses for its capsule fills,
  * which keeps a glyph's arcs smooth without a scanline converter - and which
  * costs nothing on Windows 10's square corners, where the coverage is simply
  * full.
@@ -33,15 +33,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/clock.h>
-#include <sapote/framebuffer.h>
-#include <sapote/rtc.h>
-#include <sapote/surface.h>
-#include <sapote/taskbar.h>
+#include <phipia/clock.h>
+#include <phipia/framebuffer.h>
+#include <phipia/rtc.h>
+#include <phipia/surface.h>
+#include <phipia/taskbar.h>
 
-#include <sapote/cursor.h>
-#include <sapote/ui.h>
-#include <sapote/ui_font.h>
+#include <phipia/cursor.h>
+#include <phipia/ui.h>
+#include <phipia/ui_font.h>
 
 #include "ui_motion.h"
 
@@ -49,7 +49,7 @@
  *
  * All lengths are device-independent pixels at 100% scale, which on a 96 DPI
  * screen are physical pixels.  Windows scales the whole bar by the display
- * scale factor; Sapote runs QEMU's framebuffer at 100%, so the two coincide.
+ * scale factor; Phipia runs QEMU's framebuffer at 100%, so the two coincide.
  */
 
 /*
@@ -253,7 +253,7 @@
  *
  * WinUI's theme resources name every one of these.  The hex values are the
  * ones the light and dark resource dictionaries assign, and the alpha is
- * carried separately because Sapote's surface has no alpha channel: colours
+ * carried separately because Phipia's surface has no alpha channel: colours
  * are composited as they are drawn rather than stored.
  */
 
@@ -438,7 +438,7 @@ static enum taskbar_search_mode search_mode = TASKBAR_SEARCH_BOX;
 static enum taskbar_search_mode search_mode_effective = TASKBAR_SEARCH_BOX;
 /*
  * Windows 10 pins a Task View button beside the search box.  This bar
- * leaves it out for the same reason it leaves out Action Center: Sapote
+ * leaves it out for the same reason it leaves out Action Center: Phipia
  * has no timeline and no virtual desktops behind it, so the button would
  * stand for a whole feature that is not there.
  * taskbar_set_task_view_visible(true) puts it back in its Windows 10
@@ -1623,7 +1623,7 @@ static enum taskbar_status draw_glyph(
 /* ================================================================== TEXT
  *
  * Windows sets the taskbar in Segoe UI Variable Text at twelve pixels.  Segoe
- * cannot be redistributed, and Sapote's own font service carries exactly one
+ * cannot be redistributed, and Phipia's own font service carries exactly one
  * UI face at one size: Inter at fifteen pixels, in a nineteen-pixel cell.
  *
  * This used to take that cell and RESAMPLE it - four fifths of fifteen is
@@ -2058,7 +2058,7 @@ static void layout(void)
 
     /*
      * Windows 10 puts an Action Center button to the right of the clock.
-     * This bar leaves it out: Sapote has no notification centre for it to
+     * This bar leaves it out: Phipia has no notification centre for it to
      * open, and a button that does nothing is worse than no button.
      */
     if (action_centre_visible) {

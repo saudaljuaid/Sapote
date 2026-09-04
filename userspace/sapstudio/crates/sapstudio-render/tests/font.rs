@@ -301,7 +301,7 @@ fn a_run_is_as_wide_as_its_characters() {
     assert_eq!(face.measure("").expect("a width"), Rational::ZERO);
     assert_eq!(face.measure("A").expect("a width"), r(ADVANCE, GRID));
     assert_eq!(
-        face.measure("SAPSTUDIO").expect("a width"),
+        face.measure("MEDIAEDTO").expect("a width"),
         r(9 * ADVANCE, GRID)
     );
 }
@@ -421,7 +421,7 @@ fn a_run_placed_off_the_picture_draws_what_is_on_it() {
     // else; refusing would make a long file name unprintable rather than
     // truncated.
     let face = face();
-    let run = font::place(face, "SAPSTUDIO", r(20, 1), (r(-30, 1), r(-4, 1))).expect("a run");
+    let run = font::place(face, "MEDIAEDTO", r(20, 1), (r(-30, 1), r(-4, 1))).expect("a run");
     let plane = run.plane(40, 20).expect("a plane");
     assert!(plane.iter().any(|value| *value > 0), "some of it lands");
     assert!(plane.contains(&0), "and some does not");
@@ -624,7 +624,7 @@ fn a_row_of_a_run_is_that_row_of_the_whole_plane() {
     // belongs to, so both are asked for the same extent and only the range
     // differs.
     let run = sapstudio_render::font::title(
-        &["SAPSTUDIO", "take two"],
+        &["MEDIAEDTO", "take two"],
         Rational::new(1, 4).expect("a size"),
         Rational::new(1, 2).expect("a place"),
         Rational::new(1, 2).expect("a place"),

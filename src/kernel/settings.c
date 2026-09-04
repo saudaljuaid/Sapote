@@ -1,16 +1,16 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /*
- * Settings.  See include/sapote/settings.h for the shape and for what Phipia
+ * Settings.  See include/phipia/settings.h for the shape and for what Phipia
  * does differently.
  */
 
-#include <sapote/settings.h>
+#include <phipia/settings.h>
 
-#include <sapote/cursor.h>
+#include <phipia/cursor.h>
 
-#include <sapote/clock.h>
-#include <sapote/framebuffer.h>
-#include <sapote/ui_font.h>
+#include <phipia/clock.h>
+#include <phipia/framebuffer.h>
+#include <phipia/ui_font.h>
 
 #include "heading_font.h"
 #include "settings_glyphs.h"
@@ -456,7 +456,7 @@ static enum settings_status text_at(struct ui_rect damage, uint32_t x,
 /*
  * The heading, in the larger face.
  *
- * Sapote's font service hands out one size, which is right for a list row
+ * Phipia's font service hands out one size, which is right for a list row
  * and wrong for a title: a window whose heading is body-sized has no
  * hierarchy and reads as a page somebody forgot to finish.  This draws from
  * a second Inter face carried beside the shell - the same typeface as the

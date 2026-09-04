@@ -107,7 +107,7 @@ Native dependencies follow these additional rules:
 - Every buffer it writes into is validated over its complete range by Rust
   before the call (R-3.2.5).
 - Its assembly is audited for instructions the platform does not support, using
-  the same disassembly scan Sapote runs on BusyBox.
+  the same disassembly scan Phipia runs on BusyBox.
 - It is presumed hostile: R-11 applies to it exactly as it applies to a file.
 
 ## Removal

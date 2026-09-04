@@ -7,12 +7,12 @@
  * each resampled from the original rather than from a larger cell,
  * because a picture reduced twice is a picture blurred twice.
  *
- * Channels are packed 0x00RRGGBB.  Sapote learns its real channel
+ * Channels are packed 0x00RRGGBB.  Phipia learns its real channel
  * positions from the loader at boot; the drawing code repacks these
  * if the device it finds disagrees.
  */
-#ifndef SAPOTE_DIALOG_ART_H
-#define SAPOTE_DIALOG_ART_H
+#ifndef PHIPIA_DIALOG_ART_H
+#define PHIPIA_DIALOG_ART_H
 
 #include <stddef.h>
 #include <stdint.h>

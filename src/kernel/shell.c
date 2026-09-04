@@ -3,24 +3,24 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/clock.h>
-#include <sapote/boot_ledger.h>
-#include <sapote/console.h>
-#include <sapote/cpu.h>
-#include <sapote/framebuffer.h>
-#include <sapote/fat32_fs.h>
-#include <sapote/heap.h>
-#include <sapote/keyboard.h>
-#include <sapote/linux_userland.h>
-#include <sapote/linux_syscall.h>
-#include <sapote/memory.h>
-#include <sapote/native_process.h>
-#include <sapote/network.h>
-#include <sapote/pci.h>
-#include <sapote/screen.h>
-#include <sapote/shell.h>
-#include <sapote/thread.h>
-#include <sapote/ui.h>
+#include <phipia/clock.h>
+#include <phipia/boot_ledger.h>
+#include <phipia/console.h>
+#include <phipia/cpu.h>
+#include <phipia/framebuffer.h>
+#include <phipia/fat32_fs.h>
+#include <phipia/heap.h>
+#include <phipia/keyboard.h>
+#include <phipia/linux_userland.h>
+#include <phipia/linux_syscall.h>
+#include <phipia/memory.h>
+#include <phipia/native_process.h>
+#include <phipia/network.h>
+#include <phipia/pci.h>
+#include <phipia/screen.h>
+#include <phipia/shell.h>
+#include <phipia/thread.h>
+#include <phipia/ui.h>
 
 /*
  * A command line.
@@ -40,7 +40,7 @@
  * mistakes, so an unknown command is a line of output and not an incident.
  */
 
-#define SHELL_PROMPT "sap> "
+#define SHELL_PROMPT "phip> "
 #define SHELL_NETWORK_OWNER UINT64_C(1)
 
 /* What splits a command from its arguments. Nothing exotic; space and tab. */
@@ -213,7 +213,7 @@ static void command_linux(const char *arguments)
         console_serial_write("RW USERLAND unsupported profile refused\n");
         return;
     }
-    console_serial_write("RW USERLAND command accepted through Sapote Redwood shell linux ");
+    console_serial_write("RW USERLAND command accepted through Phipia shell linux ");
     console_serial_write(linux_userland_profile_name(profile));
     console_serial_write("\n");
     status = linux_userland_launch(profile, &result);
@@ -1399,7 +1399,7 @@ static void write_prompt_restored(void)
 {
     console_write(SHELL_PROMPT);
     if (linux_prompt_evidence_pending) {
-        console_serial_write("\nRW USERLAND Sapote Redwood prompt restored\n");
+        console_serial_write("\nRW USERLAND Phipia prompt restored\n");
         console_serial_write(SHELL_PROMPT);
         linux_prompt_evidence_pending = false;
     }
@@ -1690,7 +1690,7 @@ _Noreturn void shell_run(void)
                 (void)screen_set_viewport((struct surface_rect){
                     0U, 0U, framebuffer.width, framebuffer.height
                 }, true);
-                console_write("Sapote: Redwood runtime disabled: ");
+                console_write("Phipia: runtime disabled: ");
                 console_write(ui_status_string(status));
                 console_putc('\n');
             }

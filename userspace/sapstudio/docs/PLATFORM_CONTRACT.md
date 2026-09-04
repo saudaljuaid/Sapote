@@ -2,13 +2,13 @@
 
 # Platform contract
 
-SapStudio runs on Sapote. This document records what Sapote provides today,
-what SapStudio proved by experiment, and the numbered capabilities Sapote must
-grow before the *whole* editor can exist on it. It is written against **Sapote
+SapStudio runs on Phipia. This document records what Phipia provides today,
+what SapStudio proved by experiment, and the numbered capabilities Phipia must
+grow before the *whole* editor can exist on it. It is written against **Phipia
 2.1.0** at commit `8fe1817`, read rather than remembered.
 
-Nothing here asks Sapote to become a general-purpose operating system. Each
-request is shaped the way Sapote already works: a typed boot-ledger stage, a
+Nothing here asks Phipia to become a general-purpose operating system. Each
+request is shaped the way Phipia already works: a typed boot-ledger stage, a
 measured profile with an allowlist, an installed proof, and a negative control
 capable of failing.
 
@@ -16,18 +16,18 @@ capable of failing.
 
 Every version of this document until now was written against **v1.1.0** and
 said, in its own first paragraph and in the charter and in the README, that
-*Sapote cannot run SapStudio*. That was true when it was written and stopped
-being true without anybody here re-reading Sapote.
+*Phipia cannot run SapStudio*. That was true when it was written and stopped
+being true without anybody here re-reading Phipia.
 
-**Sapote runs SapStudio today.** First Environment — Sapote's graphical shell —
+**Phipia runs SapStudio today.** First Environment — Phipia's graphical shell —
 ships a SapStudio editing workspace beside its Files, Notes and Terminal apps:
 it opens and saves a project on the read-write FAT32 data volume, imports
 24-bit BMP frames from it, holds clips on a timeline with a playhead, trims a
 selected clip against a one-second minimum, and writes `EXPORT.BMP` back out.
-Sapote mirrors this repository's source under `userspace/sapstudio/` at an
+Phipia mirrors this repository's source under `userspace/sapstudio/` at an
 upstream commit named in its README.
 
-**That mirror needs re-pointing, and this is where it is written down.** Sapote
+**That mirror needs re-pointing, and this is where it is written down.** Phipia
 2.1.0 names upstream commit `70295ebc08a1825452f7c08256aac14270f4cc7b`. This
 branch's history was rewritten afterwards — every commit message carried a
 trailer that had to come out — so that hash is no longer reachable from
@@ -39,7 +39,7 @@ the next one.
 
 So the honest statement is narrower than the one this document made, and it is
 the narrow one that is worth keeping: **the Rust freestanding image does not
-fit Sapote's Ring 3 process layout.** The workspace that runs today is written
+fit Phipia's Ring 3 process layout.** The workspace that runs today is written
 in C inside `src/kernel/ui.c`, where the memory it uses is the kernel's rather
 than a program's 76 KiB. The numbered capabilities below are what the *image*
 needs, and several of them have since arrived — each is marked with what it is
@@ -47,24 +47,24 @@ now, against the source.
 
 A version number in a document is a claim about somebody else's repository, and
 this one went eleven releases stale. It is stated at the top so that the next
-person to read Sapote can see at a glance what this was checked against.
+person to read Phipia can see at a glance what this was checked against.
 
-## What Sapote provides today
+## What Phipia provides today
 
-Read from the source, not from expectations — `saudaljuaid/sapote` at `8fe1817`:
+Read from the source, not from expectations — `saudaljuaid/phipia` at `8fe1817`:
 
 | Facility | State in 2.1.0 | Source |
 | --- | --- | --- |
-| Ring 3 execution | Private address spaces and checked ELF64 loading, at fixed per-profile page layouts | `src/kernel/process.c`, `include/sapote/paging.h` |
-| Application ABI | No *generally stable* native userspace ABI. An experimental versioned native boundary exists for networking — ABI version 1, authenticated process generation, checked user ranges, bounded transfers — beside a Linux compatibility boundary admitting measured `echo`, `uname` and interactive `cat` | `include/sapote/network_syscall.h`, `docs/LINUX_SYSCALL_ABI.md` |
+| Ring 3 execution | Private address spaces and checked ELF64 loading, at fixed per-profile page layouts | `src/kernel/process.c`, `include/phipia/paging.h` |
+| Application ABI | No *generally stable* native userspace ABI. An experimental versioned native boundary exists for networking — ABI version 1, authenticated process generation, checked user ranges, bounded transfers — beside a Linux compatibility boundary admitting measured `echo`, `uname` and interactive `cat` | `include/phipia/network_syscall.h`, `docs/LINUX_SYSCALL_ABI.md` |
 | Storage | **FAT32** on emulated NVMe: a read-only system volume and a separate **read-write** data volume, with nested directories, file growth and truncation, random access, rename, deletion and clean persistence | `src/kernel/fat32_fs.c` |
-| Memory to a program | 12 image pages, 4 stack, 2 heap, 1 anonymous — **76 KiB**, at the widest layout any profile is admitted at. `PAGING_PROCESS_EXPECTED_MAX_PAGES` is 24, which is 96 KiB | `include/sapote/paging.h` |
+| Memory to a program | 12 image pages, 4 stack, 2 heap, 1 anonymous — **76 KiB**, at the widest layout any profile is admitted at. `PAGING_PROCESS_EXPECTED_MAX_PAGES` is 24, which is 96 KiB | `include/phipia/paging.h` |
 | Framebuffer | Kernel-owned, mapped write-combining, presented through a cached surface with damage tracking | `src/kernel/framebuffer.c`, `src/kernel/surface.c` |
 | Input | Kernel-owned PS/2 keyboard and three-byte pointer, consumed by First Environment | `src/kernel/keyboard.c`, `src/kernel/pointer.c` |
-| Time | `clock_monotonic_ns()` from a calibrated TSC, cross-checked against the ACPI PM timer — and now reachable from a program, through `NETWORK_SYSCALL_QUERY_TIME` | `src/kernel/clock.c`, `include/sapote/network_syscall.h` |
-| Entropy | Bounded random bytes to a program, through `NETWORK_SYSCALL_RANDOM` | `include/sapote/network_syscall.h` |
-| Threads | Kernel threads with guarded stacks and preemption, capacity 8; no userspace threads | `include/sapote/thread.h` |
-| Cores | One. Sapote states plainly that it has no SMP | `docs/ARCHITECTURE.md` |
+| Time | `clock_monotonic_ns()` from a calibrated TSC, cross-checked against the ACPI PM timer — and now reachable from a program, through `NETWORK_SYSCALL_QUERY_TIME` | `src/kernel/clock.c`, `include/phipia/network_syscall.h` |
+| Entropy | Bounded random bytes to a program, through `NETWORK_SYSCALL_RANDOM` | `include/phipia/network_syscall.h` |
+| Threads | Kernel threads with guarded stacks and preemption, capacity 8; no userspace threads | `include/phipia/thread.h` |
+| Cores | One. Phipia states plainly that it has no SMP | `docs/ARCHITECTURE.md` |
 | Audio | None. No driver, no device, no mixer, no clock domain | — |
 | GPU | None. No accelerator of any kind | — |
 | Networking | virtio-net with Ethernet, ARP, IPv4, ICMP, UDP, DHCP, DNS, TCP and HTTP/1.1 — and SapStudio still wants none of it | `src/kernel/virtio_net.c` |
@@ -74,10 +74,10 @@ Read from the source, not from expectations — `saudaljuaid/sapote` at `8fe1817
 
 **Re-checked against 2.1.0 and unchanged**, which is worth saying because
 everything around it in this document moved. `OSFXSR`, `OSXSAVE`, `fxsave` and
-`xsave` appear nowhere in Sapote's source or headers, and the kernel is still
+`xsave` appear nowhere in Phipia's source or headers, and the kernel is still
 built `-mno-sse -mno-sse2 -msoft-float -fno-tree-vectorize`.
 
-Sapote never sets `CR4.OSFXSR` or `CR4.OSXSAVE`, never executes `fxsave`,
+Phipia never sets `CR4.OSFXSR` or `CR4.OSXSAVE`, never executes `fxsave`,
 `xsave`, or any of their partners, and saves no x87 or SSE register state at
 interrupt entry, at the syscall boundary, or across a context switch. Its build
 rejects any floating-point, MMX, SSE, or AVX instruction found in the kernel
@@ -88,11 +88,11 @@ The consequence for an editor is not small. Video and audio work is arithmetic,
 and every unit of that arithmetic must currently be scalar and software-float.
 SapStudio's first milestones are therefore written to be correct rather than
 fast, and the capability that changes this — `SAP-04` below — is the single
-highest-value item Sapote can add for SapStudio's sake.
+highest-value item Phipia can add for SapStudio's sake.
 
 ### The memory finding
 
-A Sapote program is mapped 76 KiB of address space today, at the widest layout
+A Phipia program is mapped 76 KiB of address space today, at the widest layout
 any profile is admitted at; the constant that bounds a process is 24 pages, or
 96 KiB. One 1920×1080
 frame in 8-bit RGBA is 8,294,400 bytes: about 106 times that entire envelope.
@@ -111,7 +111,7 @@ predictions. They fix the shape of the first native program.
 declares `position-independent-executables: true` and
 `static-position-independent-executables: true`, and a freestanding binary
 built for it links as `Type: DYN (Position-Independent Executable file)`.
-Sapote's ELF validation refuses interpreter, dynamic, relocation, PIE,
+Phipia's ELF validation refuses interpreter, dynamic, relocation, PIE,
 executable-stack, and W+X shapes. A stock-target binary is refused before it is
 ever mapped.
 
@@ -137,16 +137,16 @@ new native profile would be measured against.
 compiler emits `.ltext`, `.lrodata`, `.ldata`, and `.lbss`. A linker script
 that names only the ordinary spellings silently drops executable code into a
 read-only segment. `--orphan-handling=error` is what catches it — the same
-lesson Sapote learned when a Rust static library first opened a gap between
+lesson Phipia learned when a Rust static library first opened a gap between
 data and bss.
 
 **GNU `ld` is the supported linker.** `ld.lld` refuses `--orphan-handling=error`
-unless `.symtab`, `.strtab`, and `.shstrtab` are named by the script. Sapote
+unless `.symtab`, `.strtab`, and `.shstrtab` are named by the script. Phipia
 links with GNU `ld`; SapStudio does the same rather than maintaining two
 scripts.
 
-**The image base is forced, and it forces everything else.** Sapote's
-`SAPOTE_EARLY_PHYSICAL_LIMIT` is `0x100000000`: the kernel identity-maps the
+**The image base is forced, and it forces everything else.** Phipia's
+`PHIPIA_EARLY_PHYSICAL_LIMIT` is `0x100000000`: the kernel identity-maps the
 whole low 4 GiB, supervisor-only, in every address space. A user image cannot
 live below that line, so it lives at `0x0000400001000000` — about 70 TiB —
 where no address fits a 32-bit displacement. Three consequences follow, and
@@ -164,17 +164,17 @@ none of them is a preference:
   section and no relocation record.
 
 The alternative to all three is rebuilding the standard library from source on
-a nightly toolchain. SapStudio does not, for the same reason Sapote pins a
+a nightly toolchain. SapStudio does not, for the same reason Phipia pins a
 stable compiler: a toolchain requirement is a promise to everyone who ever
 builds the thing.
 
-**The image does not fit Sapote's Ring 3 layout.** The current build is 111
+**The image does not fit Phipia's Ring 3 layout.** The current build is 111
 pages, 444 KiB in total, against the 76 KiB a program is mapped at the widest
 admitted profile — and that is an image with no picture and no interface, whose
 frames are sixteen pixels wide because that is what fits.
 
-This is the sentence that used to read *"the image already exceeds what Sapote
-can map"*, and the difference matters. Sapote maps plenty; what it does not yet
+This is the sentence that used to read *"the image already exceeds what Phipia
+can map"*, and the difference matters. Phipia maps plenty; what it does not yet
 do is admit an arbitrary Ring 3 image at a page count of its own choosing. The
 workspace in First Environment runs in the kernel, where this ceiling does not
 apply. `SAP-02` and `SAP-03` are what the *image* needs, and until they exist
@@ -298,7 +298,7 @@ list, and it is a place to look when the image has to come down. The larger
 half is that **its size is not a property of the code alone**, and neither is
 any other single figure in this document.
 
-**The heap is eighty-four per cent of what a Sapote program is given, on its
+**The heap is eighty-four per cent of what a Phipia program is given, on its
 own.** That reframes the problem: the largest single question about this
 image's size is not which crates it links, it is how much arena to reserve —
 and that number was chosen before anything measured what the program uses.
@@ -431,7 +431,7 @@ went from 80 pages to **87**. `Face::stencil` alone is 15,919 bytes: it is a
 table of forty-five glyphs built with literal coordinates, and the compiler
 emits every one of them as code.
 
-That is nine per cent of a Sapote program's whole address space spent on being
+That is nine per cent of a Phipia program's whole address space spent on being
 able to write eight characters on a slate, and it is the clearest case yet for
 the split this section keeps arriving at. The face is exactly the kind of thing
 an editing program loads *when it needs it* — and the image cannot, today,
@@ -511,7 +511,7 @@ after every change rather than assuming the direction, which is now what
 **The trajectory is the thing to watch, not any single row.** The two real
 answers stay what they were. `SAP-03` is the one that fixes it. Splitting the
 program so the freestanding image links only what it starts with is the one
-that does not need Sapote — and the breakdown above is what that decision has
+that does not need Phipia — and the breakdown above is what that decision has
 been missing, since it says which crates are actually worth splitting off and
 that the arena is a larger question than any of them.
 
@@ -539,31 +539,31 @@ bytes.
 
 ## The capability ladder
 
-Each item is a request to Sapote, in dependency order. Priority is what it
+Each item is a request to Phipia, in dependency order. Priority is what it
 blocks, not how hard it is. "Measured shape" is the narrowest version that
 unblocks the milestone — deliberately smaller than a general facility, because
-that is how Sapote grows.
+that is how Phipia grows.
 
 **Five of these have moved since the list was written**, and each says so under
 its own heading rather than being quietly deleted: `SAP-01` and `SAP-02` in
 part, `SAP-05`, `SAP-08` and `SAP-14` in full. A request that has been answered
-is worth keeping with its answer beside it, because the shape Sapote actually
+is worth keeping with its answer beside it, because the shape Phipia actually
 built is more informative than the shape this document asked for.
 
 ### SAP-01 — Native application ABI
 
 *Blocks: everything. Priority: first.* **Part of this exists at 2.1.0.**
 
-Sapote has an experimental native syscall boundary of exactly the shape asked
+Phipia has an experimental native syscall boundary of exactly the shape asked
 for below — its own entry, its own versioned request and response records, its
 own status enum, authenticated process generations, checked user ranges,
 bounded transfers and timeouts — and it is not the Linux boundary. What it
 carries is networking, time and entropy rather than an application ABI, and
-Sapote states plainly that it has no *generally stable* native userspace ABI.
+Phipia states plainly that it has no *generally stable* native userspace ABI.
 So the pattern is proven and the surface is not general yet, which is a much
 better position than this document assumed.
 
-A native Sapote syscall surface distinct from the Linux compatibility boundary:
+A native Phipia syscall surface distinct from the Linux compatibility boundary:
 its own entry, its own numbering, its own errno space, its own allowlist, its
 own installed proof. The Linux boundary is a measured compatibility artefact
 and must not become SapStudio's ABI — widening it to fit an application would
@@ -577,13 +577,13 @@ initial allowlist of `exit`, `write_console`, and `monotonic_ns`.
 
 *Blocks: every milestone after the first. Priority: first.* **Partly moved.**
 
-Sapote validates ELF64 in Rust and loads into private address spaces, so the
+Phipia validates ELF64 in Rust and loads into private address spaces, so the
 checking half of this exists. What has not moved is the part that matters here:
 an image is still admitted at a *fixed page layout named per profile* in
 `paging.h`, so a program's size is a constant somebody wrote down rather than
 something the loader computes. That is the half a developed editor needs.
 
-An editor is developed, so its image changes on every commit. Sapote needs a
+An editor is developed, so its image changes on every commit. Phipia needs a
 way to admit an image by *shape* —
 validated ELF64, `ET_EXEC`, static, non-PIE, W^X, bounded segment count, known
 base — with the checksum pinned per release rather than per build.
@@ -622,7 +622,7 @@ negative control that corrupts the save area and observes the named refusal.
 *Blocks: playback, scheduling, profiling.* **Done at 2.1.0.**
 
 Asked for as "`clock_monotonic_ns()` exposed to a program, with the same
-monotonicity guarantee `clock.c` already proves, and no other clock". Sapote
+monotonicity guarantee `clock.c` already proves, and no other clock". Phipia
 built exactly that, as `NETWORK_SYSCALL_QUERY_TIME` on the native boundary —
 one clock, the kernel's own, reached through a checked request record. The only
 thing to note is where it lives: a program gets the time by asking the
@@ -660,7 +660,7 @@ the filesystem was a read-only FAT16 proof with three frozen root entries. It
 asked for two steps: a bounded single-file rewrite first, a real directory and
 allocation path later.
 
-Sapote skipped straight to the second. There is now a **FAT32** implementation
+Phipia skipped straight to the second. There is now a **FAT32** implementation
 with a read-only system volume and a separate read-write data volume: nested
 directories, file growth and truncation, random access, rename, deletion and
 clean persistence, with the pointer-free metadata validated in Rust and the
@@ -670,16 +670,16 @@ workspace already opens and saves a project on it and writes `EXPORT.BMP` back.
 What the *image* still lacks is a way to reach that from Ring 3 — the write
 path is the kernel's, not a program's — which is `SAP-01` rather than this.
 
-**M8.32 answered the other half of it.** Sapote's filesystem is now stated in
+**M8.32 answered the other half of it.** Phipia's filesystem is now stated in
 SapStudio's own types, name rule for name rule, bound for bound, in
-`sapstudio-io::sapote` — so a name a person types is refused at the moment they
-type it rather than at the moment they save, and refused for the reason Sapote
+`sapstudio-io::phipia` — so a name a person types is refused at the moment they
+type it rather than at the moment they save, and refused for the reason Phipia
 would refuse it. Beside it is `sapstudio-io::vault`, which is what those bounds
 require rather than what a filesystem would prefer:
 
 > A directory holds **sixty-four** entries, so a hundred photographs cannot be
 > a hundred files. A name is **eight and three**, so even if they could be,
-> they could not keep their names. So the media library is **one** of Sapote's
+> they could not keep their names. So the media library is **one** of Phipia's
 > files with a store inside it — content-addressed, sealed, and carrying
 > sixty-two bytes of name where the filesystem carries eleven.
 
@@ -691,7 +691,7 @@ bounded at 512 MiB against a program mapped 76 KiB, so a `write` that takes the
 whole file in one slice is off by four orders of magnitude, and a file extended
 a row at a time is not.
 
-Nothing in `SAP-08` had to move for it. Sapote's FAT32 already has "file growth
+Nothing in `SAP-08` had to move for it. Phipia's FAT32 already has "file growth
 and truncation" as well as "random access", so both the appending shape and the
 write-at-an-offset shape were available, and **appending is the weaker of the
 two**. That was the choice: a writer that cannot seek backwards cannot damage
@@ -706,12 +706,12 @@ project or the committed vault would be an operation that could write a live
 file in place — the one thing the whole protocol exists to prevent. Refusing it
 at run time would be strictly worse than not being able to ask.
 
-**M8.33 connected it to the seam, and one of Sapote's numbers decided the
+**M8.33 connected it to the seam, and one of Phipia's numbers decided the
 shape.** A file holds sixteen mebibytes; a program is mapped seventy-six
 kilobytes. Reading a whole vault on the target is off by **220×**, so the seam
 grew a ranged read and the vault grew a `Catalogue` that holds a count, a
 payload length and nothing else. That is not a concession to a small machine —
-it is the same decision Sapote's own bitmap reader already made one layer down,
+it is the same decision Phipia's own bitmap reader already made one layer down,
 issuing random row reads through the filesystem rather than holding a picture.
 
 Which is worth stating as a general finding about this platform: **`SAP-03`
@@ -745,7 +745,7 @@ scheduled on several.
 
 *Blocks: real-time playback of anything demanding. Priority: fifth.*
 
-Sapote is single-core. Video decode and render scale with cores more cleanly
+Phipia is single-core. Video decode and render scale with cores more cleanly
 than with anything else. Until this exists, SapStudio's job graph is written to
 be *order-independent and deterministic* so that the day cores arrive, nothing
 in the model has to change.
@@ -761,13 +761,13 @@ that is not a fixed 24-entry array.
 
 *Blocks: audio monitoring, therefore editing. Priority: fourth.*
 
-Sapote has no audio anything — re-checked at 2.1.0, and the one item on this
+Phipia has no audio anything — re-checked at 2.1.0, and the one item on this
 list that has not moved an inch in eleven releases.
 
 The smallest useful device is an emulated Intel HDA or AC'97 output stream
 with a ring buffer, a period interrupt, and a presentation clock a program can
 query. Audio is the hardest real-time contract
-in the application, and Sapote's existing DMA ownership discipline is exactly
+in the application, and Phipia's existing DMA ownership discipline is exactly
 the right foundation for it.
 
 ### SAP-14 — Entropy for a program
@@ -800,7 +800,7 @@ the render graph keeps a device-agnostic seam, not because it is planned.
 
 *Blocks: safe capture hardware. Priority: last.*
 
-Sapote states plainly that a bus-mastering device can reach all physical
+Phipia states plainly that a bus-mastering device can reach all physical
 memory. That is acceptable for emulated fixtures and unacceptable for capture
 hardware. Recorded for completeness.
 

@@ -3,9 +3,9 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![allow(
     clippy::doc_markdown,
-    reason = "SapStudio and Sapote are product names, not identifiers"
+    reason = "SapStudio and Phipia are product names, not identifiers"
 )]
-//! Where SapStudio meets Sapote.
+//! Where SapStudio meets Phipia.
 //!
 //! This is one of the two crates permitted to contain `unsafe` (R-3.1.4), and
 //! it is deliberately the smallest thing that can be a boundary: the raw
@@ -14,7 +14,7 @@
 //!
 //! # Status
 //!
-//! Sapote 2.1.0 has **no generally stable native application ABI**. It does
+//! Phipia 2.1.0 has **no generally stable native application ABI**. It does
 //! have an experimental versioned native boundary — its own entry, its own
 //! request and response records, authenticated process generations, checked
 //! user ranges — and what that boundary carries is networking, time and
@@ -26,7 +26,7 @@
 //! So the numbers in [`syscall`] are still a *proposal*: they are `SAP-01` in
 //! `docs/PLATFORM_CONTRACT.md`, written down here in the shape SapStudio needs
 //! so that the kernel work has something exact to implement against. The
-//! encouraging part is that Sapote has since built a boundary of very nearly
+//! encouraging part is that Phipia has since built a boundary of very nearly
 //! this shape for another purpose, so the pattern is proven rather than
 //! hypothetical.
 //!

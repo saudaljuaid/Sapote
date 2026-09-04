@@ -6,7 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The SapStudio application: what runs on Sapote."
+description = "The SapStudio application: what runs on Phipia."
 
 [dependencies]
 sapstudio-abi = { path = "../sapstudio-abi" }

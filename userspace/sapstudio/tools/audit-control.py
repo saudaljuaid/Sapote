@@ -20,7 +20,7 @@ from pathlib import Path
 
 AUDIT = Path(__file__).resolve().parent / "elf-audit.py"
 
-# movaps %xmm0,%xmm0 - three bytes, valid, and exactly what Sapote's own scan
+# movaps %xmm0,%xmm0 - three bytes, valid, and exactly what Phipia's own scan
 # of a userspace image is looking for.
 MOVAPS = bytes((0x0F, 0x28, 0xC0))
 

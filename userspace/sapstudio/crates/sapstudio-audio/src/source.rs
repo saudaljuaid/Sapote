@@ -12,7 +12,7 @@
 //! source node's identity is a digest: a name that means "the fourth asset in
 //! this file" is a name that means something different in the next file.
 //!
-//! A vault is **shared**. It is one of Sapote's files holding material that
+//! A vault is **shared**. It is one of Phipia's files holding material that
 //! several projects refer to, keyed by what the material *is*. A sound source
 //! reading from one cannot be asked for "media four" — there is no four — and
 //! an adapter that translated per project would be a translation layer whose

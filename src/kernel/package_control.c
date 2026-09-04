@@ -5,16 +5,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/heap.h>
-#include <sapote/package_builder.h>
-#include <sapote/package_control.h>
-#include <sapote/package_generation.h>
-#include <sapote/package_manager.h>
-#include <sapote/package_platform_trust.h>
-#include <sapote/package_service.h>
-#include <sapote/package_state.h>
-#include <sapote/package_upload.h>
-#include <sapote/wall_clock.h>
+#include <phipia/heap.h>
+#include <phipia/package_builder.h>
+#include <phipia/package_control.h>
+#include <phipia/package_generation.h>
+#include <phipia/package_manager.h>
+#include <phipia/package_platform_trust.h>
+#include <phipia/package_service.h>
+#include <phipia/package_state.h>
+#include <phipia/package_upload.h>
+#include <phipia/wall_clock.h>
 
 struct control_session {
     struct package_manager_policy policy;

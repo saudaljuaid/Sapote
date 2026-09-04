@@ -2,7 +2,7 @@
 #![cfg_attr(not(test), no_std)]
 #![allow(
     clippy::doc_markdown,
-    reason = "SapStudio and Sapote are product names, not identifiers"
+    reason = "SapStudio and Phipia are product names, not identifiers"
 )]
 //! The project file, and the save that cannot lose the last one.
 //!
@@ -26,7 +26,7 @@ pub mod format;
 pub mod memory;
 pub mod peaks;
 pub mod png;
-pub mod sapote;
+pub mod phipia;
 pub mod save;
 pub mod sprw;
 pub mod status;

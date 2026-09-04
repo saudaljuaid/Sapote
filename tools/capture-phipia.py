@@ -25,8 +25,8 @@ from pathlib import Path
 import fat32_image
 
 
-PROOF_LINE = b"Sapote: Boot Ledger installed proof passed"
-PROMPT = b"sap> "
+PROOF_LINE = b"Phipia: Boot Ledger installed proof passed"
+PROMPT = b"phip> "
 RUNTIME_FAILURE = b"runtime disabled"
 WIDTH = 1024
 HEIGHT = 768
@@ -171,13 +171,13 @@ def storage_arguments(system, data):
         "-blockdev",
         "driver=raw,file=system-file,node-name=system-raw,read-only=on",
         "-device",
-        "nvme,serial=sapote-system-fat32,drive=system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1",
+        "nvme,serial=phipia-system-fat32,drive=system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1",
         "-blockdev",
         f"driver=file,filename={data.resolve()},node-name=data-file,read-only=off,auto-read-only=off",
         "-blockdev",
         "driver=raw,file=data-file,node-name=data-raw,read-only=off",
         "-device",
-        "nvme,serial=sapote-data-fat32,drive=data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1",
+        "nvme,serial=phipia-data-fat32,drive=data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1",
     ]
 
 
@@ -929,7 +929,7 @@ def main():
             live_crop = None
             if args.live_window:
                 # Size the SDL client before the guest draws the desktop.  A
-                # later host resize leaves regions that Sapote has no reason
+                # later host resize leaves regions that Phipia has no reason
                 # to repaint and produces misleading partial capture frames.
                 live_crop = prepare_live_window("QEMU (PhipiaCapture-0)")
             wait_serial(serial, (PROOF_LINE, PROMPT))
@@ -1229,8 +1229,8 @@ def main():
         expected_sizes = {
             "PHIPIA.BMP": 54 + 320 * 180 * 3,
             "PAINT.BMP": 54 + 320 * 180 * 3,
-            "SAPSTUDI.SAP": 424,
-            "PHIPMED.SAP": 688,
+            "MEDIAEDT.PHI": 424,
+            "PHIPMED.PHI": 688,
             "EXPORT.BMP": 54 + 320 * 180 * 3,
         }
         for name, size in expected_sizes.items():

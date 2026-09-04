@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Run one deterministic Sapote networking scenario under QEMU."""
+"""Run one deterministic Phipia networking scenario under QEMU."""
 
 from __future__ import annotations
 
@@ -39,12 +39,12 @@ STORAGE = {
     "network-persistence",
     "network-native",
     "native-https",
-    "native-sap",
+    "native-phip",
 }
 
 FIXTURE_MODE = {
     "native-https": "https",
-    "native-sap": "packages",
+    "native-phip": "packages",
     "network-dhcp-timeout": "dhcp-timeout",
     "network-icmp-timeout": "silent",
     "network-dns-cname": "dns-cname",
@@ -151,10 +151,10 @@ def storage_arguments(args: argparse.Namespace, output: Path) -> list[str]:
         "-boot", "order=d",
         "-blockdev", f"driver=file,filename={args.system},node-name=system-file,read-only=on,auto-read-only=off",
         "-blockdev", "driver=raw,file=system-file,node-name=system-raw,read-only=on",
-        "-device", "nvme,serial=sapote-system-fat32,drive=system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1",
+        "-device", "nvme,serial=phipia-system-fat32,drive=system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1",
         "-blockdev", f"driver=file,filename={data},node-name=data-file,read-only=off,auto-read-only=off",
         "-blockdev", "driver=raw,file=data-file,node-name=data-raw,read-only=off",
-        "-device", "nvme,serial=sapote-data-fat32,drive=data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1",
+        "-device", "nvme,serial=phipia-data-fat32,drive=data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1",
     ]
 
 
@@ -184,12 +184,12 @@ def boot_arguments(args: argparse.Namespace, output: Path) -> list[str]:
     if root.exists():
         shutil.rmtree(root)
     shutil.copytree(args.efi_root, root)
-    shutil.copyfile(args.kernel, root / "boot" / "sapote.elf")
+    shutil.copyfile(args.kernel, root / "boot" / "phipia.elf")
     configuration = (
         "set default=0\n"
         "set timeout=0\n\n"
-        'menuentry "Sapote test" {\n'
-        f"    multiboot2 /boot/sapote.elf sapote.test={args.scenario}\n"
+        'menuentry "Phipia test" {\n'
+        f"    multiboot2 /boot/phipia.elf phipia.test={args.scenario}\n"
         "    boot\n"
         "}\n"
     )
@@ -229,11 +229,11 @@ def run(args: argparse.Namespace) -> int:
         "-monitor", "none", "-serial", "stdio", "-device",
         "isa-debug-exit,iobase=0xf4,iosize=0x04",
     ]
-    if args.scenario in ("native-https", "native-sap"):
+    if args.scenario in ("native-https", "native-phip"):
         qemu.extend([
             "-cpu", "max",
             "-rtc", "base=" + (
-                "2027-01-15T08:01:00" if args.scenario == "native-sap"
+                "2027-01-15T08:01:00" if args.scenario == "native-phip"
                 else "2026-08-31T00:00:00"
             ) + ",clock=vm",
         ])
@@ -297,28 +297,28 @@ def run(args: argparse.Namespace) -> int:
     passed = transcript.count(f"ST PASS {args.scenario}\n")
     healthy = (result == args.expected and begin == expected_begins and
                passed == 1 and "ST FAIL" not in transcript and
-               "Sapote PANIC" not in transcript and
+               "Phipia PANIC" not in transcript and
                "ST NETWORK production path bounded and recoverable" in transcript)
     if args.scenario == "network-native" and healthy:
         healthy = (
             transcript.count(
-                "SAPOTE NETAPP PASS dns=10.0.2.20 http=30 udp=echo "
+                "PHIPIA NETAPP PASS dns=10.0.2.20 http=30 udp=echo "
                 "timeout reset cancel malformed-dns\n"
             ) == 1
             and transcript.count(
-                "Sapote: native DNS, TCP, UDP, timeout, reset and "
+                "Phipia: native DNS, TCP, UDP, timeout, reset and "
                 "cancellation passed\n"
             ) == 1
         )
     if args.scenario == "native-https" and healthy:
         required = (
-            "SAPOTE HTTPSAPP PHASE start\n",
-            "SAPOTE HTTPSAPP PHASE authenticated-download PASS\n",
-            "SAPOTE HTTPSAPP PHASE durable-output PASS\n",
-            "SAPOTE HTTPSAPP PHASE kernel-upload PASS\n",
-            "SAPOTE HTTPSAPP PASS hostname time trust length close upload\n",
-            "Sapote: HTTPS strong hardware entropy passed\n",
-            "Sapote: HTTPS TLS 1.2 hostname time trust framing close and "
+            "PHIPIA HTTPSAPP PHASE start\n",
+            "PHIPIA HTTPSAPP PHASE authenticated-download PASS\n",
+            "PHIPIA HTTPSAPP PHASE durable-output PASS\n",
+            "PHIPIA HTTPSAPP PHASE kernel-upload PASS\n",
+            "PHIPIA HTTPSAPP PASS hostname time trust length close upload\n",
+            "Phipia: HTTPS strong hardware entropy passed\n",
+            "Phipia: HTTPS TLS 1.2 hostname time trust framing close and "
             "teardown passed\n",
         )
         healthy = all(transcript.count(marker) == 1 for marker in required)
@@ -328,14 +328,14 @@ def run(args: argparse.Namespace) -> int:
                 "--https", "--json", str(audit),
             ], check=False)
             healthy = audited.returncode == 0
-    if args.scenario == "native-sap" and healthy:
+    if args.scenario == "native-phip" and healthy:
         required = (
-            "SAPOTE SAP PHASE start\n",
-            "SAPOTE SAP PHASE signed-plan PASS\n",
-            "SAPOTE SAP PHASE payloads-authenticated PASS\n",
-            "SAPOTE SAP PHASE committed generation=1 PASS\n",
-            "SAPOTE SAP PASS https trust plan payload transaction cleanup\n",
-            "Sapote: signed HTTPS package install and cleanup passed\n",
+            "PHIPIA PHIP PHASE start\n",
+            "PHIPIA PHIP PHASE signed-plan PASS\n",
+            "PHIPIA PHIP PHASE payloads-authenticated PASS\n",
+            "PHIPIA PHIP PHASE committed generation=1 PASS\n",
+            "PHIPIA PHIP PASS https trust plan payload transaction cleanup\n",
+            "Phipia: signed HTTPS package install and cleanup passed\n",
         )
         healthy = all(transcript.count(marker) == 1 for marker in required)
         if healthy:

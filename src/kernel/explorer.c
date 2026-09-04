@@ -1,15 +1,15 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /*
- * File Explorer.  See include/sapote/explorer.h for the shape and for what
+ * File Explorer.  See include/phipia/explorer.h for the shape and for what
  * Phipia does differently.
  */
 
-#include <sapote/explorer.h>
+#include <phipia/explorer.h>
 
-#include <sapote/clock.h>
-#include <sapote/cursor.h>
-#include <sapote/framebuffer.h>
-#include <sapote/ui_font.h>
+#include <phipia/clock.h>
+#include <phipia/cursor.h>
+#include <phipia/framebuffer.h>
+#include <phipia/ui_font.h>
 
 #include "explorer_art.h"
 #include "explorer_glyphs.h"

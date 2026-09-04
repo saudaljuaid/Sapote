@@ -42,7 +42,7 @@ fn asset(words: &str) -> MediaAsset {
 fn project() -> (Project, SequenceId) {
     let mut project = Project::new();
     let sequence = project.add_sequence(RATE).expect("room");
-    let media = project.add_media(asset("SAPSTUDIO")).expect("room");
+    let media = project.add_media(asset("MEDIAEDTO")).expect("room");
     project
         .apply(
             sequence,
@@ -87,11 +87,11 @@ fn a_title_is_named_by_what_it_says() {
     // makes a *different* asset rather than quietly changing what every clip
     // of it shows.
     assert_eq!(
-        asset("SAPSTUDIO").digest(),
-        asset("SAPSTUDIO").digest(),
+        asset("MEDIAEDTO").digest(),
+        asset("MEDIAEDTO").digest(),
         "the same words are the same asset"
     );
-    assert_ne!(asset("SAPSTUDIO").digest(), asset("SAPSTUDID").digest());
+    assert_ne!(asset("MEDIAEDTO").digest(), asset("MEDIAEDTD").digest());
 }
 
 #[test]
@@ -298,11 +298,11 @@ fn two_clips_of_one_card_are_two_clips_of_one_asset() {
     // card twice is adding it once, so a project with a lower third at the top
     // and the bottom of a programme holds one asset and caches one picture.
     let (mut project, _) = project();
-    let again = project.add_media(asset("SAPSTUDIO")).expect("room");
+    let again = project.add_media(asset("MEDIAEDTO")).expect("room");
     assert_eq!(project.media().iter().count(), 1, "one asset");
     assert_eq!(
         project.media().get(again).expect("an asset").digest(),
-        asset("SAPSTUDIO").digest()
+        asset("MEDIAEDTO").digest()
     );
 }
 

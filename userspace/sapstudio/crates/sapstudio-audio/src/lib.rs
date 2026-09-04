@@ -2,7 +2,7 @@
 #![cfg_attr(not(test), no_std)]
 #![allow(
     clippy::doc_markdown,
-    reason = "SapStudio and Sapote are product names, not identifiers"
+    reason = "SapStudio and Phipia are product names, not identifiers"
 )]
 //! Sound, computed with integers.
 //!
@@ -12,7 +12,7 @@
 //! that reports what full scale cost rather than reaching it quietly.
 //!
 //! There is no floating point in this crate, and that is not a stylistic
-//! choice twice over. Sapote enables neither `CR4.OSFXSR` nor `CR4.OSXSAVE`
+//! choice twice over. Phipia enables neither `CR4.OSFXSR` nor `CR4.OSXSAVE`
 //! and preserves no floating-point state anywhere, so a Ring 3 program has no
 //! guarantee it may execute a single such instruction (`SAP-04`). And even on
 //! a machine that could, `pow` and `log` are not specified bit-for-bit by IEEE

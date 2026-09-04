@@ -3,14 +3,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/clock.h>
-#include <sapote/console.h>
-#include <sapote/cpu.h>
-#include <sapote/heap.h>
-#include <sapote/memory.h>
-#include <sapote/paging.h>
-#include <sapote/thread.h>
-#include <sapote/timer.h>
+#include <phipia/clock.h>
+#include <phipia/console.h>
+#include <phipia/cpu.h>
+#include <phipia/heap.h>
+#include <phipia/memory.h>
+#include <phipia/paging.h>
+#include <phipia/thread.h>
+#include <phipia/timer.h>
 
 /*
  * Single-core thread scheduler. Scheduling begins cooperatively and becomes

@@ -5,9 +5,9 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <sapote/fat32_fs.h>
-#include <sapote/package_state.h>
-#include <sapote/package_upload.h>
+#include <phipia/fat32_fs.h>
+#include <phipia/package_state.h>
+#include <phipia/package_upload.h>
 
 #define MOCK_FILE_BYTES 16384U
 #define NO_WRITE_FAILURE SIZE_MAX

@@ -217,7 +217,7 @@ def verify(path: Path, profile: str = "native-audio") -> dict[str, int | str]:
 def self_test() -> None:
     prefix = bytes(37 * CHANNELS * SAMPLE_BYTES)
     suffix = bytes(19 * CHANNELS * SAMPLE_BYTES)
-    with tempfile.TemporaryDirectory(prefix="sapote-audio-") as directory:
+    with tempfile.TemporaryDirectory(prefix="phipia-audio-") as directory:
         root = Path(directory)
         fixture = root / "proof.wav"
         with wave.open(str(fixture), "wb") as output:
@@ -415,17 +415,17 @@ def main() -> int:
     arguments = parser.parse_args()
     if arguments.self_test:
         self_test()
-        print("Sapote audio WAV host self-test passed")
+        print("Phipia audio WAV host self-test passed")
         return 0
     if arguments.wav is None:
         parser.error("wav is required without --self-test")
     try:
         report = verify(arguments.wav, arguments.profile)
     except VerificationError as error:
-        print(f"Sapote audio WAV refused: {error}")
+        print(f"Phipia audio WAV refused: {error}")
         return 1
     label = "AUDIO" if arguments.profile == "native-audio" else "SDL"
-    print(f"SAPOTE {label} WAV PASS " + " ".join(
+    print(f"PHIPIA {label} WAV PASS " + " ".join(
         f"{name}={value}" for name, value in report.items()))
     return 0
 

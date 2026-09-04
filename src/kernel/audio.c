@@ -2,9 +2,9 @@
 /*
  * Intel High Definition Audio: codec control and one kernel-owned PCM stream.
  *
- * This is the first Sapote driver whose device writes into kernel memory for
+ * This is the first Phipia driver whose device writes into kernel memory for
  * something other than storage or networking, and the ordering that makes that
- * safe is the whole point of the file. Sapote has no IOMMU. A device with bus
+ * safe is the whole point of the file. Phipia has no IOMMU. A device with bus
  * mastering enabled can write anywhere, so bus mastering is enabled only after
  * every ring, BDL and PCM region is a typed DMA allocation declared to the
  * claim, and it is withdrawn only after the stream and ring engines have been
@@ -21,16 +21,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/audio.h>
-#include <sapote/clock.h>
-#include <sapote/cpu.h>
-#include <sapote/dma.h>
-#include <sapote/interrupt_vector.h>
-#include <sapote/memory.h>
-#include <sapote/msix.h>
-#include <sapote/paging.h>
-#include <sapote/pci.h>
-#include <sapote/pci_resource.h>
+#include <phipia/audio.h>
+#include <phipia/clock.h>
+#include <phipia/cpu.h>
+#include <phipia/dma.h>
+#include <phipia/interrupt_vector.h>
+#include <phipia/memory.h>
+#include <phipia/msix.h>
+#include <phipia/paging.h>
+#include <phipia/pci.h>
+#include <phipia/pci_resource.h>
 
 /* PCI Code and ID Assignment Specification 1.19: multimedia, HD Audio. */
 #define AUDIO_PCI_VENDOR UINT16_C(0x8086)

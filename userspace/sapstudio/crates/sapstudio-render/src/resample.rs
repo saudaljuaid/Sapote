@@ -760,7 +760,7 @@ fn landing_of(mapping: Mapping, x: i64, y: i64) -> Result<Landing> {
 /// holds `h` rows of output while it is drawn, so `h` is memory; and it
 /// divides the re-reading a turn does by roughly `h`, so `h` is also speed.
 /// Sixteen rows of a 1,920-wide picture is 122,880 bytes — more than a
-/// Sapote program is mapped at, which is why the *caller* decides how tall a
+/// Phipia program is mapped at, which is why the *caller* decides how tall a
 /// tile it can afford and this only says how tall one may be.
 ///
 /// It is not [`MAX_BAND_ROWS`] and must not be confused with it. That bounds

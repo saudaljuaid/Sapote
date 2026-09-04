@@ -2,7 +2,7 @@
 
 # C runtime coverage
 
-The Sapote SDK is a scoped freestanding runtime, not a complete ISO C, POSIX,
+The Phipia SDK is a scoped freestanding runtime, not a complete ISO C, POSIX,
 musl, or glibc implementation.
 
 | Area | Available | Important limits |
@@ -17,7 +17,7 @@ musl, or glibc implementation.
 | Events | native multi-handle wait, timer create/set/cancel, explicit timeout results | At most eight wait items; supported readiness is defined per typed handle. |
 | Threads | `pthread_create/join/exit/self/equal`, attributes, mutex, once, local-exec `_Thread_local` | One process, single core, at most eight threads; no cancellation API or condition variables yet. |
 | Math | scalar functions required by Lua/SQLite and compiler support | Userspace x87/SSE is preserved; kernel code never uses it. Coverage is not a full libm claim. |
-| Networking | Sapote DNS, TCP, UDP, deadlines, address query, cancellation, bounded BearSSL TLS 1.2 and strict HTTPS GET | Typed native handles; no POSIX socket namespace, general Internet/security suite, HTTP/2, IPv6, or mutable host trust store. |
+| Networking | Phipia DNS, TCP, UDP, deadlines, address query, cancellation, bounded BearSSL TLS 1.2 and strict HTTPS GET | Typed native handles; no POSIX socket namespace, general Internet/security suite, HTTP/2, IPv6, or mutable host trust store. |
 | Graphics/input | window, xRGB surface, bounded damage, event read/wait, pointer capture | One native window per process in ABI v1. |
 | Locale/signals | C locale stubs and the narrow signal surface needed by ports | No asynchronous Unix signal delivery. |
 | Absent | `fork`, `exec`, pipes, Unix IPC, runtime `dlopen`/`dlsym`, terminal ioctls, users/groups | Manifest-authenticated startup DSOs are supported, but ports requiring a hosted dynamic-loader API still need deliberate native services. |

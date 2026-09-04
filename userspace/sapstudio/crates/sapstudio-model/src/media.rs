@@ -68,7 +68,7 @@ pub enum MediaSource {
 
 /// How many bytes a location hint may be.
 ///
-/// Two hundred and fifty-five: longer than any path Sapote's FAT32 volumes can
+/// Two hundred and fifty-five: longer than any path Phipia's FAT32 volumes can
 /// express in the ASCII 8.3 subset they admit, and a bound a hostile project
 /// file cannot talk its way past (R-11.2).
 pub const MAX_LOCATION_BYTES: usize = 255;
@@ -83,7 +83,7 @@ pub const MAX_LOCATION_BYTES: usize = 255;
 /// cannot be recovered by guessing.
 ///
 /// It is bytes rather than a string because a path is whatever the platform
-/// says it is, and Sapote's is not decided yet. Refusing to interpret it here
+/// says it is, and Phipia's is not decided yet. Refusing to interpret it here
 /// is what keeps this crate free of the operating system.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Location {

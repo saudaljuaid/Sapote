@@ -10,7 +10,7 @@ IMAGE := $(IMAGE_DIR)/target/$(IMAGE_TARGET)/release/sapstudio
 LINKER_SCRIPT := targets/sapstudio.ld
 
 # Every flag here is load-bearing, and docs/PLATFORM_CONTRACT.md records the
-# experiment that established it. The short version: Sapote identity-maps the
+# experiment that established it. The short version: Phipia identity-maps the
 # whole low 4 GiB for itself, so a user image lives at 70 TiB, where no address
 # fits a 32-bit displacement - which forces the large code model, forces GNU ld
 # over lld, and forbids link-time optimisation against the precompiled
@@ -54,7 +54,7 @@ check:
 test:
 	$(CARGO) test --offline --locked
 
-# The program image Sapote will run, once SAP-01 and SAP-02 exist.
+# The program image Phipia will run, once SAP-01 and SAP-02 exist.
 image:
 	RUSTFLAGS='$(IMAGE_RUSTFLAGS)' \
 		$(CARGO) build --release --offline --locked \

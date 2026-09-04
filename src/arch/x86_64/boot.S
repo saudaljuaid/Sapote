@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Sapote: Multiboot2 entry and the controlled transition to long mode. */
+/* Phipia: Multiboot2 entry and the controlled transition to long mode. */
 .set MB2_HEADER_MAGIC, 0xE85250D6
 .set MB2_BOOT_MAGIC,   0x36D76289
 .set MB2_ARCH_I386,    0

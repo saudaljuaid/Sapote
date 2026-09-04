@@ -1,15 +1,15 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /*
- * The Store.  See include/sapote/store.h for the shape and for what Phipia
+ * The Store.  See include/phipia/store.h for the shape and for what Phipia
  * does differently.
  */
 
-#include <sapote/store.h>
+#include <phipia/store.h>
 
-#include <sapote/clock.h>
-#include <sapote/framebuffer.h>
-#include <sapote/taskbar.h>
-#include <sapote/ui_font.h>
+#include <phipia/clock.h>
+#include <phipia/framebuffer.h>
+#include <phipia/taskbar.h>
+#include <phipia/ui_font.h>
 
 #include "explorer_glyphs.h"
 #include "ui_motion.h"

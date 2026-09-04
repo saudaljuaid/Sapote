@@ -436,7 +436,7 @@ fn a_title_card_animates_exactly_as_a_shot_does() {
 
     let mut project = Project::new();
     let sequence = project.add_sequence(RATE).expect("room");
-    let title = Title::line("SAPSTUDIO".into(), r(1, 6), r(1, 2), r(1, 2)).expect("a card");
+    let title = Title::line("MEDIAEDTO".into(), r(1, 6), r(1, 2), r(1, 2)).expect("a card");
     let media = project
         .add_media(MediaAsset::titled(title, RATE, frames(1_000)).expect("an asset"))
         .expect("room");

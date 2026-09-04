@@ -2,7 +2,7 @@
 
 # High Definition Audio
 
-Sapote has a bounded PCM path for the QEMU ICH9 controller and
+Phipia has a bounded PCM path for the QEMU ICH9 controller and
 `hda-duplex` codec. The boot proof remains a one-shot kernel-owned stream. The
 native ABI now reuses the same controller route through a persistent bounded
 owner; applications never see its DMA pages or registers.
@@ -58,7 +58,7 @@ mastering be enabled. The BDL and PCM allocation are never modified while the
 device owns them.
 
 The first output stream descriptor is located after all input descriptors, as
-required by GCAP. Sapote stops and resets it, programs BDL base, cyclic buffer
+required by GCAP. Phipia stops and resets it, programs BDL base, cyclic buffer
 length, LVI 1, format and tag, then sets RUN. The proof accepts playback only
 after both forms of independent controller evidence appear within one second:
 
@@ -73,11 +73,11 @@ were made available to the device; it is not an acoustic-capture claim.
 ## Native ABI, queueing and mixing
 
 An admitted application must request the distinct `audio` capability. It can
-open at most two generation-protected `SAPOTE_HANDLE_AUDIO_OUTPUT` objects. One
+open at most two generation-protected `PHIPIA_HANDLE_AUDIO_OUTPUT` objects. One
 process owns the controller at a time; another process receives `EBUSY`, not an
 implicitly shared global device.
 
-The public format is exactly the fixed profile above. `sapote_audio_submit()`
+The public format is exactly the fixed profile above. `phipia_audio_submit()`
 accepts one complete 4,096-byte chunk. Lengths, request versions, flags, handle
 types, generations, and every input page are validated before the kernel copies
 the chunk into its own bounded queue. Submitting while that handle already owns
@@ -96,8 +96,8 @@ queued handle starts after the grace/window expires; a single open handle starts
 without the two-handle coalescing delay. At most two 4,096-byte source chunks and
 one 8,192-byte DMA payload-and-guard mix exist.
 
-`SAPOTE_WAIT_WRITABLE` means the handle can accept another chunk;
-`SAPOTE_WAIT_CLOSED` reports cancellation or a stream error. Drain blocks only
+`PHIPIA_WAIT_WRITABLE` means the handle can accept another chunk;
+`PHIPIA_WAIT_CLOSED` reports cancellation or a stream error. Drain blocks only
 the calling native thread and has an absolute monotonic deadline. Cancel removes
 a chunk that has not entered DMA. Once a mixed chunk is device-owned it is
 atomic: cancel marks that handle canceled when the current 21.3 ms chunk

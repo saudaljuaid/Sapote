@@ -8,7 +8,7 @@ checks the active slot, generation, expected type, and referenced object. A
 file handle therefore cannot be used as a timer or stream, and a closed value
 cannot name a later object reusing the same slot.
 
-Version 1 types are file, directory, Redwood window, event queue, TCP stream,
+Version 1 types are file, directory, Phipia window, event queue, TCP stream,
 UDP endpoint, timer, thread, bounded PCM output, and kernel-owned package
 upload and package transaction control. Process handles are not
 exposed. Duplicate creates a new generated slot referencing the same typed object. Close

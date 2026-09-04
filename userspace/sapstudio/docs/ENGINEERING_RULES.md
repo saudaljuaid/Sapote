@@ -53,24 +53,24 @@ unopenable. On failure, keep the last good state.
 
 ---
 
-## 2. Sapote target
+## 2. Phipia target
 
-**R-2.1** SapStudio targets Sapote. Shipping code MUST NOT contain a
+**R-2.1** SapStudio targets Phipia. Shipping code MUST NOT contain a
 conditional, abstraction, or dependency whose purpose is another operating
 system.
 
 **R-2.2** Host builds exist only to run pure logic under test. A crate that
 compiles for the host MUST compile for the host with the same source that runs
-on Sapote — differing only by which crates are linked in, never by `#[cfg]`
+on Phipia — differing only by which crates are linked in, never by `#[cfg]`
 that changes behaviour.
 
 **R-2.3** No POSIX assumption. No file descriptors, no `errno` semantics, no
 signals, no `fork`, no paths, no environment variables, no locale, no TTY,
-unless and until Sapote defines that concept natively and measures it.
+unless and until Phipia defines that concept natively and measures it.
 
-**R-2.4** When Sapote lacks a capability, the response is to specify it in
-[`PLATFORM_CONTRACT.md`](PLATFORM_CONTRACT.md) and build it in Sapote. It is
-never to emulate it inside SapStudio, and never to widen Sapote's measured
+**R-2.4** When Phipia lacks a capability, the response is to specify it in
+[`PLATFORM_CONTRACT.md`](PLATFORM_CONTRACT.md) and build it in Phipia. It is
+never to emulate it inside SapStudio, and never to widen Phipia's measured
 Linux compatibility boundary, which exists to be narrow.
 
 **R-2.5** SapStudio MUST NOT link against a libc, a hosted runtime, or any
@@ -114,7 +114,7 @@ runtime panics and are encouraged — R-3.2.4 requires them.
 comment when the choice is not obvious. Implicit `as` casts that can truncate
 or change sign are forbidden; use `try_into` with a typed refusal.
 
-**R-3.1.7** Errors are typed enums per subsystem, in Sapote's style: one
+**R-3.1.7** Errors are typed enums per subsystem, in Phipia's style: one
 `enum ...Status` with a variant per distinguishable refusal, `#[non_exhaustive]`
 only where the crate is public, and a `&'static str` description function.
 `Box<dyn Error>`, stringly-typed errors, and error types that lose the cause
@@ -143,7 +143,7 @@ carries an inline reason.
 `extern "C"` declaration, every raw pointer that came from outside Rust, and
 every conversion from a foreign pointer into a slice lives there. Nowhere else.
 
-**R-3.2.2** The boundary exists for two reasons only: Sapote's native userspace
+**R-3.2.2** The boundary exists for two reasons only: Phipia's native userspace
 ABI is C-shaped, and external codec libraries are C-shaped. A boundary crossing
 for any other reason is refused.
 
@@ -155,7 +155,7 @@ declared, and any type whose size or alignment is not asserted on both sides.
 
 **R-3.2.4** Every shared aggregate MUST be size- and offset-asserted at compile
 time on both sides — `const _: () = assert!(...)` in Rust and
-`_Static_assert` in C — exactly as `src/rust/abi.rs` does in Sapote. A mismatch
+`_Static_assert` in C — exactly as `src/rust/abi.rs` does in Phipia. A mismatch
 is a build failure, never a runtime surprise.
 
 **R-3.2.5** Ownership does not cross the boundary. Rust allocates and frees
@@ -187,7 +187,7 @@ initialisation. A mismatch refuses to start.
 
 **R-3.3.1** C is permitted for one purpose: a freestanding shim that exists
 because the operation is instruction-, register-, or ABI-shaped and cannot be
-expressed in Rust without more `unsafe` than the shim contains. Sapote's
+expressed in Rust without more `unsafe` than the shim contains. Phipia's
 syscall entry sequence is the canonical example.
 
 **R-3.3.2** A shim MUST be tiny, and "tiny" is enforced, not felt: at most 100
@@ -200,11 +200,11 @@ untrusted bytes, implement a data structure, implement a policy, contain a
 loop whose bound is not a compile-time constant, or use the preprocessor for
 control flow.
 
-**R-3.3.4** C is C11 freestanding, compiled with Sapote's flag set:
+**R-3.3.4** C is C11 freestanding, compiled with Phipia's flag set:
 `-ffreestanding -fno-pie -fno-stack-protector -mno-red-zone -mno-mmx -mno-sse
 -mno-sse2 -msoft-float -fno-tree-vectorize -fno-asynchronous-unwind-tables
 -Wall -Wextra -Werror -Wpedantic -Wshadow -Wundef -Wstrict-prototypes
--Wmissing-prototypes`. Divergence from Sapote's flags requires a waiver.
+-Wmissing-prototypes`. Divergence from Phipia's flags requires a waiver.
 
 **R-3.3.5** No libc. No headers other than `stdbool.h`, `stddef.h`,
 `stdint.h`, and SapStudio's own.
@@ -264,7 +264,7 @@ two are proven equivalent.
 ### 3.6 Nothing else
 
 **R-3.6.1** No other language may appear in a shipping artefact. Python is
-permitted for build and verification tooling only, matching Sapote's practice,
+permitted for build and verification tooling only, matching Phipia's practice,
 and MUST be deterministic and dependency-free beyond the standard library.
 
 **R-3.6.2** No scripting language, expression evaluator, template engine, or
@@ -317,7 +317,7 @@ perceptual metric. Perceptual metrics are diagnostics.
 
 ## 5. Memory
 
-**R-5.1** Every allocation is bounded by a named policy constant, in Sapote's
+**R-5.1** Every allocation is bounded by a named policy constant, in Phipia's
 style: a `const` with a comment saying why that number and what happens at it.
 
 **R-5.2** Every allocation is fallible. A failed allocation returns a typed
@@ -342,7 +342,7 @@ sequences, in effect graphs, and in every parser.
 
 **R-5.6** At the end of every session, and at the end of every test, a resource
 census MUST show every pool, mapping, buffer, and handle returned. This mirrors
-Sapote's `*_resources_released()` checks and is enforced the same way.
+Phipia's `*_resources_released()` checks and is enforced the same way.
 
 **R-5.7** No memory may be reachable but unowned. No leak is acceptable "because
 we exit anyway"; SapStudio is a long-running application and exits are rare.
@@ -399,7 +399,7 @@ applied edit is a bug of the same severity as data loss.
 
 **R-7.6** Diagnostics are separate from the interface. Proof vocabulary —
 `PASS`, `READY`, `ONLINE` — belongs in transcripts, not in front of the user.
-This is Sapote's rule and SapStudio keeps it.
+This is Phipia's rule and SapStudio keeps it.
 
 ---
 
@@ -470,7 +470,7 @@ belongs in the model.
 drawing code reads a clock, a device, or a global.
 
 **R-10.3** Nothing draws from an interrupt or event-delivery context. Events are
-published; drawing happens in the application's own pass. This is Sapote's
+published; drawing happens in the application's own pass. This is Phipia's
 `surface.c` discipline and SapStudio inherits it.
 
 **R-10.4** Damage is tracked and bounded; a full-surface repaint is a fallback
@@ -478,7 +478,7 @@ that is counted and visible in diagnostics.
 
 **R-10.5** Layout is deterministic for a given geometry. Overlap, overflow,
 invalid focus, and duplicate identifiers are refused before activation, as
-Sapote Redwood already refuses them.
+Phipia Phipia already refuses them.
 
 **R-10.6** Copy is ordinary human language, sentence case, and short.
 
@@ -506,7 +506,7 @@ format.
 **R-11.5** Metadata is displayed as text, never interpreted. No markup, no
 escape sequences, no format strings.
 
-**R-11.6** Run untrusted decoders behind Sapote process isolation where the
+**R-11.6** Run untrusted decoders behind Phipia process isolation where the
 platform seam supports it. R-11.1 still applies inside that boundary.
 
 ---
@@ -549,7 +549,7 @@ host state beyond the pinned toolchain.
 
 **R-13.2** Two clean builds of the same commit produce byte-identical
 artefacts, and CI proves it by building twice, from two different directories,
-and comparing, exactly as Sapote's BusyBox profiles do. This requires
+and comparing, exactly as Phipia's BusyBox profiles do. This requires
 `--remap-path-prefix` for every compiler, a fixed `SOURCE_DATE_EPOCH`, no build
 identifier, and no embedded host name, user name, or timestamp.
 
@@ -564,7 +564,7 @@ relocation records, no undefined symbols, and a non-executable stack.
 
 A global offset table is permitted only under all three of these conditions: it
 is resolved completely at link time, every entry points inside the image, and
-its size stays inside the bound the linker script asserts. Sapote identity-maps
+its size stays inside the bound the linker script asserts. Phipia identity-maps
 the whole low 4 GiB for itself, so a user image lives above it, and at that
 distance the linker cannot relax the precompiled standard library's
 position-independent accesses into direct ones. The table that results carries
@@ -583,8 +583,8 @@ and its own evidence.
 discarded by the linker script is a build failure.
 
 **R-13.6** No floating-point, MMX, SSE, or AVX instruction may appear in a
-shipping image until Sapote provides `SAP-04`. The build audits the
-disassembly, as Sapote's does.
+shipping image until Phipia provides `SAP-04`. The build audits the
+disassembly, as Phipia's does.
 
 **R-13.7** Every generated asset and fixture has a pinned digest checked by the
 build. A changed digest is a deliberate commit.
@@ -598,7 +598,7 @@ editor state are never committed.
 
 The detail lives in [`VERIFICATION.md`](VERIFICATION.md).
 
-**R-14.1** Acceptance happens on Sapote under QEMU. Host tests are supporting
+**R-14.1** Acceptance happens on Phipia under QEMU. Host tests are supporting
 evidence and never acceptance.
 
 **R-14.2** Every new invariant arrives with a negative control (R-1.7).
@@ -631,7 +631,7 @@ module's documentation.
 is deleted in review.
 
 **R-15.5** One logical change per commit. Imperative subject, at most 72
-characters, prefixed by area, in Sapote's form:
+characters, prefixed by area, in Phipia's form:
 
 ```text
 timeline: refuse an edit whose out point precedes its in point

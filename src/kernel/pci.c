@@ -3,12 +3,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/acpi.h>
-#include <sapote/console.h>
-#include <sapote/cpu.h>
-#include <sapote/heap.h>
-#include <sapote/paging.h>
-#include <sapote/pci.h>
+#include <phipia/acpi.h>
+#include <phipia/console.h>
+#include <phipia/cpu.h>
+#include <phipia/heap.h>
+#include <phipia/paging.h>
+#include <phipia/pci.h>
 
 /*
  * Read-only PCI enumeration through configuration ports and ECAM. Port access
@@ -67,7 +67,7 @@ static uint64_t ecam_access_address(
         (uint64_t)offset;
 
     /*
-     * Sapote maps one 2 MiB region of a window firmware may declare far larger,
+     * Phipia maps one 2 MiB region of a window firmware may declare far larger,
      * so the mapped size is the bound that matters rather than the declared
      * one. A register past it is refused, not wrapped.
      */
@@ -764,7 +764,7 @@ enum pci_status pci_initialize(const struct acpi_mcfg *mcfg, bool mcfg_present)
     /*
      * The port pair is two registers used as one, so a read that lands between
      * the address write and the data read answers about a different function.
-     * Nothing in Sapote reads configuration space from an interrupt handler,
+     * Nothing in Phipia reads configuration space from an interrupt handler,
      * and this is the refusal that keeps it that way.
      */
     if (cpu_interrupts_enabled()) {

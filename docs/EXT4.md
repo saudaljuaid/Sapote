@@ -2,7 +2,7 @@
 
 # ext4 storage boundary
 
-Sapote has one ext4 implementation: the audited, pinned `ext4plus` source under
+Phipia has one ext4 implementation: the audited, pinned `ext4plus` source under
 `vendor/ext4plus`. It is built `no_std`, synchronously, and with default
 features disabled. Cargo is locked and forced offline through `.cargo/config.toml`;
 the exact registry closure is under `vendor/rust-crates`.
@@ -37,14 +37,14 @@ descriptors, a zero first-data-block field, `has_journal`,
 `extra_isize`, with no additional feature bits other than the transient ext4
 incompat-recovery marker. The declared block count must
 fit the NVMe namespace and all free/total geometry is checked. Ext4plus then
-validates the superblock, group descriptors, and existing journal. Sapote walks
+validates the superblock, group descriptors, and existing journal. Phipia walks
 the reachable namespace (at most 8,192 entries and 512 queued directories),
 validating directory blocks,
 inode metadata and timestamps, extended-attribute names and values, symlink
 targets, and the first and last mapped byte of non-empty files. Remaining file
 extent/data checks are lazy and occur on pread.
 
-Sapote's VFS currently admits ASCII mount-relative paths shorter than 128 bytes
+Phipia's VFS currently admits ASCII mount-relative paths shorter than 128 bytes
 and at most 16 components. Directory names may be 255 bytes on disk; entries
 that cannot fit the current VFS path contract can be enumerated but cannot be
 opened through ABI v1. Indexed directory reads are intentionally bounded and
@@ -64,10 +64,10 @@ order applies to the current single-core execution model.
 ## Read-write admission gate
 
 Upstream reads an existing JBD2 journal but does not journal new mutations, so
-Sapote never gives an ext4plus mutation object a writer that reaches platform
+Phipia never gives an ext4plus mutation object a writer that reaches platform
 storage. A clean mount is reloaded with the bounded `JournalMutationStage` as
 both its reader and its only writer; that overlay cannot write through to its
-immutable NVMe-backed reader. After Sapote has durably set the recovery marker,
+immutable NVMe-backed reader. After Phipia has durably set the recovery marker,
 an explicit coordinator-only loader preserves that same overlay writer while
 continuing to refuse permanent or unsupported read-only conditions. The
 ordered journal executor remains the only platform writer. `sync`, create,
@@ -87,7 +87,7 @@ Enabling the VFS write path requires all of the following in one implementation:
    namespace/resource census checks; and
 5. refusal tests for unsupported feature combinations and corrupt metadata.
 
-The vendored port record in `vendor/ext4plus/SAPOTE-PORT.md` tracks the delta
+The vendored port record in `vendor/ext4plus/PHIPIA-PORT.md` tracks the delta
 from the pinned upstream commit.
 
 ## Ordered transaction foundation
@@ -144,7 +144,7 @@ stored checksum.
 
 The Rust mount path performs the same journal-inode discovery and JBD2 admission
 before exposing the filesystem to VFS. A clean filesystem must map into a
-complete clean ring. For a filesystem carrying ext4's recovery bit, Sapote
+complete clean ring. For a filesystem carrying ext4's recovery bit, Phipia
 reads the bounded physical ring, independently validates and collapses every
 committed transaction, checkpoints the returned home images, flushes them,
 persists and flushes the returned clean JBD2 superblock, and only then clears
@@ -154,7 +154,7 @@ validated replay image so recovered allocation counters cannot be replaced by
 the mount-time snapshot. It reloads and re-admits the clean filesystem before
 walking the namespace or exposing the mount.
 
-`recover_committed_ring` implements the bounded live-ring reader for Sapote's
+`recover_committed_ring` implements the bounded live-ring reader for Phipia's
 single-descriptor transaction profile. It starts at the admitted JBD2 sequence
 and live block, follows consecutive committed records across one wrap, validates
 every descriptor, data tag, optional revoke, and commit checksum, discards an
@@ -234,7 +234,7 @@ Allocation checksum handling is pinned to Linux
 and e2fsprogs
 [`csum.c`](https://github.com/tytso/e2fsprogs/blob/master/lib/ext2fs/csum.c):
 the block-bitmap CRC32C covers `clusters_per_group / 8` bytes, not the padded
-remainder of the bitmap's 4 KiB home block. Sapote rejects bigalloc, so this is
+remainder of the bitmap's 4 KiB home block. Phipia rejects bigalloc, so this is
 `blocks_per_group / 8` at the retained filesystem checksum seed.
 
 Metadata home blocks appear only after `Flush(Commit)`, and slots are reused

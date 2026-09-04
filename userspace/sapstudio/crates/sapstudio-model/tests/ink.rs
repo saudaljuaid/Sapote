@@ -24,7 +24,7 @@ fn r(numerator: i64, denominator: i64) -> Rational {
 }
 
 fn card() -> Title {
-    Title::line("SAPSTUDIO".into(), r(1, 6), r(1, 2), r(1, 2)).expect("a card")
+    Title::line("MEDIAEDTO".into(), r(1, 6), r(1, 2), r(1, 2)).expect("a card")
 }
 
 #[test]

@@ -1,12 +1,12 @@
 [package]
-name = "sapote-kernel-rust"
+name = "phipia-kernel-rust"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-only"
 publish = false
 
 [lib]
-name = "sapote"
+name = "phipia"
 path = "lib.rs"
 crate-type = ["staticlib"]
 

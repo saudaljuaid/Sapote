@@ -6,7 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The one boundary between SapStudio and Sapote."
+description = "The one boundary between SapStudio and Phipia."
 
 [dependencies]
 sapstudio-core = { path = "../sapstudio-core" }

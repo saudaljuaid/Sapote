@@ -135,7 +135,7 @@ fn an_edit_costs_no_more_than_the_argument_for_its_shape_assumes() {
 #[test]
 fn the_history_is_bounded_by_the_platform_before_it_is_bounded_by_its_constant() {
     // MAX_HISTORY is a policy ceiling, and on a machine with room it is the
-    // one that bites. On Sapote it is not, and the arithmetic here is the
+    // one that bites. On Phipia it is not, and the arithmetic here is the
     // reason: a program gets nineteen mapped pages, and one entry is a pair.
     const MAPPED_BYTES: usize = 19 * 4096;
     let pair = core::mem::size_of::<Edit>() * 2;

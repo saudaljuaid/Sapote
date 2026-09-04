@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#ifndef SAPOTE_CTYPE_H
-#define SAPOTE_CTYPE_H
+#ifndef PHIPIA_CTYPE_H
+#define PHIPIA_CTYPE_H
 
 int isalnum(int value);
 int isalpha(int value);

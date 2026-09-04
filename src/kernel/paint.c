@@ -1,16 +1,16 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /*
- * Paint.  See include/sapote/paint.h for the shape of the ribbon and for
+ * Paint.  See include/phipia/paint.h for the shape of the ribbon and for
  * what Phipia does differently.
  */
 
-#include <sapote/paint.h>
+#include <phipia/paint.h>
 
-#include <sapote/cursor.h>
+#include <phipia/cursor.h>
 
-#include <sapote/framebuffer.h>
-#include <sapote/heap.h>
-#include <sapote/ui_font.h>
+#include <phipia/framebuffer.h>
+#include <phipia/heap.h>
+#include <phipia/ui_font.h>
 
 #include "paint_glyphs.h"
 
@@ -596,7 +596,7 @@ struct ui_rect paint_sheet_bounds(void)
  * the ordinary arrow.
  *
  * Nothing here decides WHEN this is right - the compositor asks the window
- * under the pointer and this is Paint's answer.  See sapote/cursor.h.
+ * under the pointer and this is Paint's answer.  See phipia/cursor.h.
  */
 enum cursor_kind paint_cursor_at(struct ui_point point)
 {
@@ -2901,7 +2901,7 @@ enum paint_status paint_set_frame(struct ui_rect frame)
 
     /* The ribbon is deliberately clipped by the window at narrow desktop
      * sizes.  Requiring the sum of every ribbon group made Paint impossible
-     * to open on Sapote's supported 1024x768 framebuffer even though its
+     * to open on Phipia's supported 1024x768 framebuffer even though its
      * canvas and the visible groups fit comfortably. */
     if (frame.width < needed || frame.height < least_height) {
         return PAINT_STATUS_UNSUPPORTED_GEOMETRY;

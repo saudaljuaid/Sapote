@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
 
-# Sapote 2.1.0 networking evidence
+# Phipia 2.1.0 networking evidence
 
 This committed capture is an authentic QEMU 11.1.0 interaction with the
 deterministic offline Ethernet peer. Keyboard and pointer events entered through

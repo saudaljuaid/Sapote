@@ -1,22 +1,20 @@
 <p align="center">
-  <img src="assets/sapote-logo.png" alt="Sapote red S mark" width="170">
+  <img src="assets/phipia/logo.png" alt="Phipia logo" width="170">
 </p>
 
-<h1 align="center">Sapote Redwood</h1>
+<h1 align="center">Phipia</h1>
 
 <p align="center"><strong>An x86_64 operating system built from first principles.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/saudaljuaid/Sapote/actions/workflows/verify.yml"><img src="https://github.com/saudaljuaid/Sapote/actions/workflows/verify.yml/badge.svg" alt="verification status"></a>
-  <img src="https://img.shields.io/badge/release-Redwood-E31920" alt="Sapote Redwood">
+  <a href="https://github.com/saudaljuaid/Phipia/actions/workflows/verify.yml"><img src="https://github.com/saudaljuaid/Phipia/actions/workflows/verify.yml/badge.svg" alt="verification status"></a>
+  <img src="https://img.shields.io/badge/release-2.2.0-0078D7" alt="Phipia 2.2.0">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--only-595976" alt="GPL-3.0-only"></a>
 </p>
 
 <p align="center">
-  <img src="assets/sapote-redwood.png" alt="Sapote Redwood desktop" width="820">
+  <img src="assets/phipia/desktop.png" alt="Phipia desktop" width="820">
 </p>
-
-<p align="center"><a href="assets/sapote-ui-redesign-25s.mp4"><strong>Watch the 25-second QEMU demo</strong></a></p>
 
 ## Main mission
 
@@ -24,8 +22,8 @@ Our mission is to provide a stable and truthful operating system to the modern w
 
 ## About
 
-Sapote is an operating system from scratch, its main release is currently
-Redwood.
+Phipia is an operating system built from scratch. The current development
+release is Phipia 2.2.0.
 
 ## Highlights
 
@@ -62,7 +60,7 @@ what order, so nothing boots blind.
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
-- [Sapote Redwood](docs/REDWOOD.md)
+- [Phipia desktop](docs/PHIPIA.md)
 - [Persistent FAT32](docs/FAT32.md)
 - [Networking](docs/NETWORKING.md)
 - [Processes](docs/MULTIPROCESS.md)
@@ -75,5 +73,5 @@ what order, so nothing boots blind.
 - [Verification](docs/VERIFICATION.md)
 - [Third-party assets](docs/THIRD_PARTY_ASSETS.md)
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) before sending changes. Sapote is
+See [CONTRIBUTING.md](CONTRIBUTING.md) before sending changes. Phipia is
 licensed under [GPL-3.0-only](LICENSE).

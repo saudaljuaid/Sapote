@@ -1,17 +1,17 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /*
- * Camera.  See include/sapote/camera.h for the shape, and for the two
+ * Camera.  See include/phipia/camera.h for the shape, and for the two
  * busier versions of this window that were thrown away to get here.
  *
  * Top bar, frame, bottom bar with the shutter in the middle.  The motion
  * comes from ui_motion.h.
  */
 
-#include <sapote/phipia_camera.h>
+#include <phipia/phipia_camera.h>
 
-#include <sapote/clock.h>
-#include <sapote/framebuffer.h>
-#include <sapote/ui_font.h>
+#include <phipia/clock.h>
+#include <phipia/framebuffer.h>
+#include <phipia/ui_font.h>
 
 #include "phipia_camera_glyphs.h"
 #include "ui_motion.h"

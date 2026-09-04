@@ -12,7 +12,7 @@
 //! identities, so two nodes that would compute the same picture *are* the same
 //! node as far as the cache is concerned (R-8.5).
 //!
-//! Sapote is single-core, so this evaluates serially today. It is written as
+//! Phipia is single-core, so this evaluates serially today. It is written as
 //! though it did not: nothing here depends on evaluation order, and the tests
 //! prove that by evaluating the same graph in every order a scheduler could
 //! choose and comparing the results (R-6.2). The day cores arrive, nothing in
@@ -787,7 +787,7 @@ impl Graph {
     ///
     /// ## Why
     ///
-    /// A 1920×1080 eight-bit RGBA frame is 8,294,400 bytes and a Sapote
+    /// A 1920×1080 eight-bit RGBA frame is 8,294,400 bytes and a Phipia
     /// program is mapped 76 KiB, so `evaluate` allocates a hundred and six
     /// times the program's whole address space **per node**. One row of that
     /// frame is 7,680 bytes. The chain below a compositing node is a handful

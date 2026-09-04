@@ -2291,7 +2291,7 @@ fn a_title_clip_is_drawn_rather_than_fetched() {
     // even whether it *has* it. There is nothing to find, so asking would be
     // asking about a file that does not exist, and a library that answered
     // "no" would put an offline slate where somebody's card should be.
-    let (project, sequence, _) = titled("SAPSTUDIO");
+    let (project, sequence, _) = titled("MEDIAEDTO");
     let mut library = Refuses {
         asked: std::vec::Vec::new(),
     };
@@ -2326,7 +2326,7 @@ fn two_different_cards_are_two_different_pictures() {
     // not show the first one twice.
     let mut shared = pool();
     let mut pictures = std::vec::Vec::new();
-    for words in ["SAPSTUDIO", "THE END"] {
+    for words in ["MEDIAEDTO", "THE END"] {
         let (project, sequence, _) = titled(words);
         let mut library = Refuses {
             asked: std::vec::Vec::new(),
@@ -2353,7 +2353,7 @@ fn a_title_is_the_same_picture_at_every_frame_of_its_clip() {
     // is not an optimisation this arranged -- it falls out of the node not
     // carrying a tick, which it does not carry because there is nothing for a
     // tick to select.
-    let (project, sequence, _) = titled("SAPSTUDIO");
+    let (project, sequence, _) = titled("MEDIAEDTO");
     let mut library = Refuses {
         asked: std::vec::Vec::new(),
     };
@@ -2385,7 +2385,7 @@ fn a_title_clip_grades_and_masks_like_a_recording() {
     // of the model: a title goes where a source goes, so everything above it
     // is the machinery a recording already goes through and none of it had to
     // be told.
-    let (mut project, sequence, _) = titled("SAPSTUDIO");
+    let (mut project, sequence, _) = titled("MEDIAEDTO");
     project
         .apply(
             sequence,
@@ -2436,7 +2436,7 @@ fn a_title_clip_grades_and_masks_like_a_recording() {
     )
     .expect("a render");
 
-    let (plain, plain_sequence, _) = titled("SAPSTUDIO");
+    let (plain, plain_sequence, _) = titled("MEDIAEDTO");
     let whole = timeline::render(
         &plain,
         plain_sequence,

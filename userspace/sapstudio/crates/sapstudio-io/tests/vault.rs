@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //! The vault: pasting photographs and footage into a project.
 //!
-//! A vault is one of Sapote's files holding many pieces of material, each
+//! A vault is one of Phipia's files holding many pieces of material, each
 //! keyed by what it is and carrying the name it arrived with — because
-//! Sapote's filesystem holds sixty-four entries in a directory and cannot
+//! Phipia's filesystem holds sixty-four entries in a directory and cannot
 //! express a name longer than eight and three, and a hundred photographs with
 //! real names are neither of those things.
 
@@ -73,7 +73,7 @@ fn material_goes_in_and_comes_back_by_what_it_is() {
     assert_eq!(
         item.name(),
         "sunset_beach_take3.bmp",
-        "the name Sapote's filesystem could not have kept"
+        "the name Phipia's filesystem could not have kept"
     );
     assert_eq!(item.bytes(), bytes.as_slice());
     assert_eq!(vault.len(), 1);
@@ -82,10 +82,10 @@ fn material_goes_in_and_comes_back_by_what_it_is() {
 #[test]
 fn a_name_longer_than_eight_and_three_is_the_whole_point() {
     // The name above is twenty-two bytes with two dots and a mixture of case.
-    // Sapote's `parse_component` refuses it three separate ways, and the vault
+    // Phipia's `parse_component` refuses it three separate ways, and the vault
     // carries it exactly as typed.
     assert_eq!(
-        sapstudio_io::sapote::Name::new("sunset_beach_take3.bmp"),
+        sapstudio_io::phipia::Name::new("sunset_beach_take3.bmp"),
         Err(IoStatus::NameTooLong)
     );
     let mut vault = Vault::new();
@@ -225,19 +225,19 @@ fn a_vault_that_is_not_one_is_refused() {
 }
 
 #[test]
-fn the_bounds_are_derived_from_sapotes() {
+fn the_bounds_are_derived_from_phipias() {
     // Two hundred and fifty-six items at a hundred and twelve bytes is 28,672
-    // of index; with the fifty-six-byte header that is 28,728, and Sapote's
+    // of index; with the fifty-six-byte header that is 28,728, and Phipia's
     // sixteen-mebibyte file leaves 16,748,488 for material.
     assert_eq!(MAX_ITEMS, 256);
     assert_eq!(HEADER_BYTES + ENTRY_BYTES * MAX_ITEMS, 28_728);
     assert_eq!(MAX_PAYLOAD_BYTES, 16_748_488);
     assert_eq!(
         HEADER_BYTES + ENTRY_BYTES * MAX_ITEMS + MAX_PAYLOAD_BYTES,
-        sapstudio_io::sapote::MAX_FILE_BYTES
+        sapstudio_io::phipia::MAX_FILE_BYTES
     );
-    // And a vault holds four times what one of Sapote's directories does.
-    assert_eq!(MAX_ITEMS, 4 * sapstudio_io::sapote::MAX_DIRECTORY_ENTRIES);
+    // And a vault holds four times what one of Phipia's directories does.
+    assert_eq!(MAX_ITEMS, 4 * sapstudio_io::phipia::MAX_DIRECTORY_ENTRIES);
 }
 
 #[test]
@@ -268,7 +268,7 @@ fn material_past_what_one_file_holds_is_refused() {
     assert_eq!(
         vault.insert("one.more", b"x"),
         Err(IoStatus::VaultTooLarge),
-        "one byte past what one of Sapote's files holds"
+        "one byte past what one of Phipia's files holds"
     );
 }
 
@@ -276,7 +276,7 @@ fn material_past_what_one_file_holds_is_refused() {
 fn a_bitmap_becomes_material_and_renders() {
     use sapstudio_render::Library;
 
-    // The whole path, end to end: a 24-bit BMP of the kind Sapote's importer
+    // The whole path, end to end: a 24-bit BMP of the kind Phipia's importer
     // reads, decoded, packaged as a reel, pasted into a vault, and then asked
     // for by digest exactly as a source node in the render graph asks.
     let frame = picture(8, 5, 42);

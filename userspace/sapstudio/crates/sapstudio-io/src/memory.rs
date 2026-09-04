@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //! Storage in memory, with faults on demand.
 //!
-//! Every seam has two implementations: the Sapote one, and a deterministic one
+//! Every seam has two implementations: the Phipia one, and a deterministic one
 //! the host suite drives. This is the second. It exists mostly so that R-9.4's
 //! negative control is a test rather than a thought experiment: it can be told
 //! to fail at each step of a save, and the project slot must survive all of
@@ -257,8 +257,8 @@ impl Storage for MemoryStorage {
         }
         // Started rather than refused when there is nothing there: a file that
         // does not exist and a file of no bytes are the same file to anything
-        // that only ever extends one, and Sapote's own save protocol begins by
-        // creating `STUTEMP.SAP`.
+        // that only ever extends one, and Phipia's own save protocol begins by
+        // creating `STUTEMP.PHI`.
         let stored = self.scratch.get_or_insert_with(Vec::new);
         if stored.len() + bytes.len() > self.capacity {
             return Err(SeamStatus::TooLarge);
@@ -291,7 +291,7 @@ impl Storage for MemoryStorage {
             slot
         };
         let stored = self.slot(asked).ok_or(SeamStatus::Empty)?;
-        // Short at the end rather than refused, which is what Sapote's
+        // Short at the end rather than refused, which is what Phipia's
         // `sapfs_read` does: "reads at EOF succeed with a short or zero byte
         // count". A seam that refused there would make every reader carry an
         // arm for a condition that is not an error.

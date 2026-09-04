@@ -64,7 +64,7 @@ pub const MAX_MARKERS_PER_SEQUENCE: usize = 4096;
 /// the reason is arithmetic rather than taste. A marker is 48 bytes plus up to
 /// [`MAX_MARKER_TEXT`] characters, which is 512 bytes of UTF-8 in the worst
 /// case — so eight of them is **4,480 bytes**, or a little over one of the
-/// nineteen pages a Sapote program is given.
+/// nineteen pages a Phipia program is given.
 ///
 /// Eight notes on one shot is already more than anybody writes. Refusing the
 /// ninth is a bound a person can hit; refusing the ninth *thousandth* would be

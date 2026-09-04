@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "proof.h"
 
-#include <sapote/abi.h>
+#include <phipia/abi.h>
 #include <stdint.h>
 
 static int root_initialized;
@@ -9,7 +9,7 @@ static _Thread_local int root_tls = 7;
 
 void proof_write(const char *text, size_t length)
 {
-    register uint64_t number __asm__("rax") = SAPOTE_SYS_CONSOLE_WRITE;
+    register uint64_t number __asm__("rax") = PHIPIA_SYS_CONSOLE_WRITE;
     register uint64_t address __asm__("rdi") = (uint64_t)(uintptr_t)text;
     register uint64_t bytes __asm__("rsi") = length;
 
@@ -21,7 +21,7 @@ void proof_write(const char *text, size_t length)
 
 __attribute__((constructor)) static void root_initialize(void)
 {
-    static const char marker[] = "SAPOTE DYNAMIC ROOT INIT\n";
+    static const char marker[] = "PHIPIA DYNAMIC ROOT INIT\n";
 
     ++root_tls;
     if (root_tls == 8 && dynamic_tls_value() == 42 &&
@@ -33,15 +33,15 @@ __attribute__((constructor)) static void root_initialize(void)
 
 __attribute__((destructor)) static void root_finalize(void)
 {
-    static const char marker[] = "SAPOTE DYNAMIC ROOT FINI\n";
+    static const char marker[] = "PHIPIA DYNAMIC ROOT FINI\n";
 
     proof_write(marker, sizeof(marker) - 1U);
 }
 
 int dynamic_root_main(void)
 {
-    static const char pass[] = "SAPOTE DYNAMIC RING3 PASS\n";
-    static const char fail[] = "SAPOTE DYNAMIC RING3 FAIL\n";
+    static const char pass[] = "PHIPIA DYNAMIC RING3 PASS\n";
+    static const char fail[] = "PHIPIA DYNAMIC RING3 FAIL\n";
 
     if (root_initialized != 1 || root_tls != 8 ||
         dynamic_tls_value() != 42 ||

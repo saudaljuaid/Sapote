@@ -2,14 +2,14 @@
 
 # Offline TLS fixture
 
-These keys and certificates exist only for Sapote's deterministic local TLS
+These keys and certificates exist only for Phipia's deterministic local TLS
 peer. They are public test material and must never be installed as production
 trust roots. The fixed realtime used by the host client is 2026-08-31 12:00 UTC.
 
 `ca.pem` is the trusted offline root. `anchor.txt` is the same root's DER
 subject name and RSA public key encoded for the BearSSL test client. The valid,
 expired, future, and untrusted leaf records all use the hostname
-`repo.sapote.test`; the untrusted leaf is signed by a deliberately absent root.
+`repo.phipia.test`; the untrusted leaf is signed by a deliberately absent root.
 The Python peer consumes the committed PEM records without network access or
 certificate generation.
 

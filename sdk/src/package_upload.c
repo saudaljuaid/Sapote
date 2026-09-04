@@ -1,54 +1,54 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#include <sapote/package_upload.h>
+#include <phipia/package_upload.h>
 
-#include <sapote/runtime.h>
+#include <phipia/runtime.h>
 #include <string.h>
 
-long sapote_package_upload_open(void)
+long phipia_package_upload_open(void)
 {
-    return sapote_syscall0(SAPOTE_SYS_PACKAGE_UPLOAD_OPEN);
+    return phipia_syscall0(PHIPIA_SYS_PACKAGE_UPLOAD_OPEN);
 }
 
-long sapote_package_upload_write(
-    sapote_handle_t upload,
+long phipia_package_upload_write(
+    phipia_handle_t upload,
     const void *bytes,
     size_t byte_count
 )
 {
-    const struct sapote_package_upload_write_request request = {
-        sizeof(request), SAPOTE_ABI_VERSION, upload,
+    const struct phipia_package_upload_write_request request = {
+        sizeof(request), PHIPIA_ABI_VERSION, upload,
         (uint64_t)(uintptr_t)bytes, (uint32_t)byte_count, 0U
     };
 
     if ((bytes == NULL && byte_count != 0U) ||
-        byte_count > SAPOTE_PACKAGE_UPLOAD_WRITE_MAX) {
-        return -SAPOTE_EINVAL;
+        byte_count > PHIPIA_PACKAGE_UPLOAD_WRITE_MAX) {
+        return -PHIPIA_EINVAL;
     }
-    return sapote_syscall1(SAPOTE_SYS_PACKAGE_UPLOAD_WRITE,
+    return phipia_syscall1(PHIPIA_SYS_PACKAGE_UPLOAD_WRITE,
         (uint64_t)(uintptr_t)&request);
 }
 
-long sapote_package_upload_seal(
-    sapote_handle_t upload,
+long phipia_package_upload_seal(
+    phipia_handle_t upload,
     uint64_t expected_bytes,
-    const uint8_t expected_sha256[SAPOTE_PACKAGE_UPLOAD_SHA256_BYTES],
-    struct sapote_package_upload_report *report
+    const uint8_t expected_sha256[PHIPIA_PACKAGE_UPLOAD_SHA256_BYTES],
+    struct phipia_package_upload_report *report
 )
 {
-    struct sapote_package_upload_seal_request request;
+    struct phipia_package_upload_seal_request request;
 
     if (expected_sha256 == NULL || report == NULL || expected_bytes == 0U ||
-        expected_bytes > SAPOTE_PACKAGE_UPLOAD_MAX_BYTES) {
-        return -SAPOTE_EINVAL;
+        expected_bytes > PHIPIA_PACKAGE_UPLOAD_MAX_BYTES) {
+        return -PHIPIA_EINVAL;
     }
     (void)memset(&request, 0, sizeof(request));
     request.size = sizeof(request);
-    request.version = SAPOTE_ABI_VERSION;
+    request.version = PHIPIA_ABI_VERSION;
     request.handle = upload;
     request.expected_bytes = expected_bytes;
     (void)memcpy(request.expected_sha256, expected_sha256,
         sizeof(request.expected_sha256));
-    long status = sapote_syscall1(SAPOTE_SYS_PACKAGE_UPLOAD_SEAL,
+    long status = phipia_syscall1(PHIPIA_SYS_PACKAGE_UPLOAD_SEAL,
         (uint64_t)(uintptr_t)&request);
 
     report->actual_bytes = request.actual_bytes;
@@ -58,7 +58,7 @@ long sapote_package_upload_seal(
     return status;
 }
 
-long sapote_package_upload_close(sapote_handle_t upload)
+long phipia_package_upload_close(phipia_handle_t upload)
 {
-    return sapote_handle_close(upload);
+    return phipia_handle_close(upload);
 }

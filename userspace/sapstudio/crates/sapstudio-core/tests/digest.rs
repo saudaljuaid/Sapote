@@ -77,7 +77,7 @@ fn the_result_does_not_depend_on_how_the_message_was_offered() {
 }
 
 #[test]
-fn a_digest_prints_the_way_sapote_pins_one() {
+fn a_digest_prints_the_way_phipia_pins_one() {
     assert_eq!(
         std::format!("{}", Digest::of(b"abc")),
         "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD"

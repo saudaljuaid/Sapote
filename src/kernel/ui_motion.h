@@ -19,8 +19,8 @@
  * SSE, so a float here would be a call into a soft-float library on every
  * pixel of every frame.
  */
-#ifndef SAPOTE_UI_MOTION_H
-#define SAPOTE_UI_MOTION_H
+#ifndef PHIPIA_UI_MOTION_H
+#define PHIPIA_UI_MOTION_H
 
 #include <stdbool.h>
 #include <stdint.h>

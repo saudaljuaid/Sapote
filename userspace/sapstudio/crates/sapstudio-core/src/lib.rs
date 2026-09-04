@@ -2,7 +2,7 @@
 #![cfg_attr(not(test), no_std)]
 #![allow(
     clippy::doc_markdown,
-    reason = "SapStudio and Sapote are product names, not identifiers"
+    reason = "SapStudio and Phipia are product names, not identifiers"
 )]
 //! Exact time, identity, and typed errors for SapStudio.
 //!
@@ -23,7 +23,7 @@
 //! The crate uses no floating point, allocation, or `unsafe`, and public
 //! fallible operations return [`CoreStatus`].
 //!
-//! The crate is `no_std` when it is built for Sapote and links `std` only when
+//! The crate is `no_std` when it is built for Phipia and links `std` only when
 //! the host test harness needs it, which changes no behaviour (R-2.2).
 
 pub mod digest;

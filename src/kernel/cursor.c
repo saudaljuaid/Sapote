@@ -1,13 +1,13 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /*
- * The pointer.  See include/sapote/cursor.h for what this is, what it is
+ * The pointer.  See include/phipia/cursor.h for what this is, what it is
  * not, and the two Windows cursors it does not draw.
  */
 
-#include <sapote/cursor.h>
+#include <phipia/cursor.h>
 
-#include <sapote/clock.h>
-#include <sapote/framebuffer.h>
+#include <phipia/clock.h>
+#include <phipia/framebuffer.h>
 
 #include "cursor_art.h"
 

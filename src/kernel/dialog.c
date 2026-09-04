@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /*
- * A message dialog.  See include/sapote/dialog.h for the shape.
+ * A message dialog.  See include/phipia/dialog.h for the shape.
  */
 
-#include <sapote/dialog.h>
+#include <phipia/dialog.h>
 
-#include <sapote/framebuffer.h>
-#include <sapote/ui_font.h>
+#include <phipia/framebuffer.h>
+#include <phipia/ui_font.h>
 
 #include "dialog_art.h"
 

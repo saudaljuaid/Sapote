@@ -2,7 +2,7 @@
 
 # Signed package repositories
 
-`tools/sapote-repository.py` defines Sapote's deterministic repository index and
+`tools/phipia-repository.py` defines Phipia's deterministic repository index and
 host lock format. It builds and verifies a canonical binary index, authenticates
 it against an external immutable Ed25519 root, checks freshness and
 repository-version floors, verifies downloaded package bytes, and emits an exact
@@ -129,25 +129,25 @@ A JSON build specification mirrors the fields above. Package entries use
 `publisher_key_id`, and optional `root_key_id` are 64 hexadecimal digits.
 
 ```sh
-python3 tools/sapote-repository.py build \
+python3 tools/phipia-repository.py build \
     --spec repository/index.json \
     --signing-key keys/repository-root-private.pem \
     --output build/repository/index.sri
 
-python3 tools/sapote-repository.py inspect \
+python3 tools/phipia-repository.py inspect \
     --trusted-root keys/repository-root-public.pem \
     --minimum-version 42 \
     build/repository/index.sri
 
-python3 tools/sapote-repository.py resolve \
+python3 tools/phipia-repository.py resolve \
     --trusted-root keys/repository-root-public.pem \
     --minimum-version 42 --abi 1 \
     --lock-output build/repository/desktop.lock \
-    build/repository/index.sri org.sapote.desktop@^3.0.0
+    build/repository/index.sri org.phipia.desktop@^3.0.0
 
-python3 tools/sapote-repository.py verify-download \
+python3 tools/phipia-repository.py verify-download \
     --trusted-root keys/repository-root-public.pem \
-    --identifier org.sapote.desktop --version 3.0.0 \
+    --identifier org.phipia.desktop --version 3.0.0 \
     --file downloads/desktop-3.0.0.spk \
     build/repository/index.sri
 ```

@@ -5,7 +5,7 @@ static _Thread_local int dynamic_tls = 41;
 
 __attribute__((constructor)) static void library_initialize(void)
 {
-    static const char marker[] = "SAPOTE DYNAMIC LIB INIT\n";
+    static const char marker[] = "PHIPIA DYNAMIC LIB INIT\n";
 
     ++dynamic_tls;
     proof_write(marker, sizeof(marker) - 1U);
@@ -13,7 +13,7 @@ __attribute__((constructor)) static void library_initialize(void)
 
 __attribute__((destructor)) static void library_finalize(void)
 {
-    static const char marker[] = "SAPOTE DYNAMIC LIB FINI\n";
+    static const char marker[] = "PHIPIA DYNAMIC LIB FINI\n";
 
     proof_write(marker, sizeof(marker) - 1U);
 }

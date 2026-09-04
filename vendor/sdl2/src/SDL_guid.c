@@ -33,7 +33,7 @@ void SDL_GUIDToString(SDL_GUID guid, char *pszGUID, int cbGUID)
         return;
     }
 
-    /* Sapote keeps vendored SDL under -Werror in a freestanding build. */
+    /* Phipia keeps vendored SDL under -Werror in a freestanding build. */
     for (i = 0; i < (int)sizeof(guid.data) && i < (cbGUID - 1) / 2; i++) {
         /* each input byte writes 2 ascii chars, and might write a null byte. */
         /* If we don't have room for next input byte, stop */

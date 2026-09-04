@@ -1,15 +1,15 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /*
- * Notes.  See include/sapote/notes.h for what this is and why it is not just
+ * Notes.  See include/phipia/notes.h for what this is and why it is not just
  * a copy of Sticky Notes.
  */
 
-#include <sapote/notes.h>
+#include <phipia/notes.h>
 
-#include <sapote/cursor.h>
+#include <phipia/cursor.h>
 
-#include <sapote/framebuffer.h>
-#include <sapote/ui_font.h>
+#include <phipia/framebuffer.h>
+#include <phipia/ui_font.h>
 
 #include "notes_glyphs.h"
 #include "notes_marks.h"

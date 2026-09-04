@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Prove a SapStudio image has the shape Sapote accepts.
+"""Prove a SapStudio image has the shape Phipia accepts.
 
-R-13.4 and R-13.6 in docs/ENGINEERING_RULES.md are this script. Sapote's ELF
+R-13.4 and R-13.6 in docs/ENGINEERING_RULES.md are this script. Phipia's ELF
 validation refuses interpreter, dynamic, relocation, PIE, executable-stack, and
 W+X shapes, and its build rejects any floating-point, MMX, SSE, or AVX
 instruction; an image that reaches the kernel with one of those is refused
@@ -10,7 +10,7 @@ before it is mapped, so it is refused here first, where the message is useful.
 
 The structure is read out of the file rather than out of another tool's
 output. The instruction scan shells out to objdump, which is the same tool
-Sapote's own audit uses.
+Phipia's own audit uses.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ PT_GNU_STACK = 0x6474E551
 
 PF_X, PF_W, PF_R = 1, 2, 4
 
-# Sapote's own scan, kept deliberately identical: any x87, MMX, SSE, or AVX
+# Phipia's own scan, kept deliberately identical: any x87, MMX, SSE, or AVX
 # instruction, with the two segment-check instructions that only look like one
 # excluded by name.
 FORBIDDEN = re.compile(
@@ -170,7 +170,7 @@ def audit(path: Path) -> list[str]:
     refuse(image.machine != 0x3E, "the image is not x86-64")
     refuse(
         image.kind != 2,
-        f"the image is type {image.kind}, not ET_EXEC: Sapote refuses PIE and shared objects",
+        f"the image is type {image.kind}, not ET_EXEC: Phipia refuses PIE and shared objects",
     )
 
     loads = [segment for segment in image.segments if segment.kind == PT_LOAD]
@@ -272,7 +272,7 @@ def audit(path: Path) -> list[str]:
     if offenders:
         findings.append(
             "the image uses floating-point, MMX, SSE, or AVX instructions, "
-            f"which Sapote neither enables nor preserves ({len(offenders)} sites, "
+            f"which Phipia neither enables nor preserves ({len(offenders)} sites, "
             f"first: {offenders[0]})"
         )
 

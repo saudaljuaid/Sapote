@@ -3,14 +3,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/clock.h>
-#include <sapote/console.h>
-#include <sapote/cpu.h>
-#include <sapote/fat32_fs.h>
-#include <sapote/network.h>
-#include <sapote/random.h>
-#include <sapote/timer.h>
-#include <sapote/virtio_net.h>
+#include <phipia/clock.h>
+#include <phipia/console.h>
+#include <phipia/cpu.h>
+#include <phipia/fat32_fs.h>
+#include <phipia/network.h>
+#include <phipia/random.h>
+#include <phipia/timer.h>
+#include <phipia/virtio_net.h>
 
 #define ETHERNET_HEADER_BYTES 14U
 #define ETHERNET_TYPE_ARP UINT16_C(0x0806)
@@ -401,7 +401,7 @@ static bool deadline_valid(uint64_t timeout_ns)
 
 /*
  * Synchronous protocol operations are permitted to block their caller, but
- * must not burn Sapote's single core while waiting for a packet or deadline.
+ * must not burn Phipia's single core while waiting for a packet or deadline.
  * Every caller invokes this only after pumping the device and rechecking its
  * completion state. A device interrupt returns immediately. A short deadline
  * timer closes the already-delivered-interrupt race and guarantees another
@@ -1362,7 +1362,7 @@ enum network_status network_initialize(void)
     }
     if (status != VIRTIO_NET_STATUS_OK &&
         status != VIRTIO_NET_STATUS_LINK_DOWN) {
-        console_write("Sapote: virtio-net initialization failed: ");
+        console_write("Phipia: virtio-net initialization failed: ");
         console_write(virtio_net_status_string(status));
         console_putc('\n');
         return NETWORK_STATUS_UNAVAILABLE;
@@ -4051,7 +4051,7 @@ static enum network_status http_open_request(
     const char *method = head_only ? "HEAD " : "GET ";
     static const char version[] = " HTTP/1.1\r\nHost: ";
     static const char tail[] =
-        "\r\nUser-Agent: Sapote/2.1\r\nConnection: close\r\n\r\n";
+        "\r\nUser-Agent: Phipia/2.1\r\nConnection: close\r\n\r\n";
 
     if (!url->numeric) {
         uint64_t now = clock_monotonic_ns();
@@ -4552,8 +4552,8 @@ bool network_self_test(size_t *completed_tests)
     network_format_ipv4(UINT32_C(0x0A00020F), formatted);
     if (!string_equal(formatted, "10.0.2.15")) { return false; }
     ++completed;
-    if (!hostname_valid("sapote.test") || hostname_valid("-sapote.test") ||
-        hostname_valid("sapote..test")) { return false; }
+    if (!hostname_valid("phipia.test") || hostname_valid("-phipia.test") ||
+        hostname_valid("phipia..test")) { return false; }
     completed += 3U;
     if (!parse_u64_decimal("16777216", 8U, &value) ||
         value != NETWORK_HTTP_MAX_DOWNLOAD_BYTES ||
@@ -4566,10 +4566,10 @@ bool network_self_test(size_t *completed_tests)
         destination_valid("/absolute.txt")) { return false; }
     completed += 3U;
     struct parsed_http_url url;
-    if (!parse_http_url("http://sapote.test/welcome.txt", &url) ||
-        url.port != 80U || !string_equal(url.host, "sapote.test") ||
-        parse_http_url("https://sapote.test/", &url) ||
-        parse_http_url("http://user@sapote.test/", &url)) { return false; }
+    if (!parse_http_url("http://phipia.test/welcome.txt", &url) ||
+        url.port != 80U || !string_equal(url.host, "phipia.test") ||
+        parse_http_url("https://phipia.test/", &url) ||
+        parse_http_url("http://user@phipia.test/", &url)) { return false; }
     completed += 3U;
     if (!sequence_before(UINT32_MAX - 1U, 1U) ||
         sequence_before(1U, UINT32_MAX - 1U)) { return false; }

@@ -218,11 +218,11 @@ pub enum IoStatus {
     VaultItemDigestMismatch,
     /// A bitmap of a shape this build does not read.
     BitmapUnsupported,
-    /// A bitmap past the bounds Sapote's importer accepts.
+    /// A bitmap past the bounds Phipia's importer accepts.
     BitmapTooLarge,
     /// A name past eight-and-three, or past twelve bytes.
     NameTooLong,
-    /// A name holding a byte Sapote's 8.3 subset does not accept.
+    /// A name holding a byte Phipia's 8.3 subset does not accept.
     NameNotCanonical,
     /// A name with a second dot, a leading one, or a trailing one.
     NameDotMisplaced,

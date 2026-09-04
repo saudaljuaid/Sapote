@@ -3,7 +3,7 @@
 //!
 //! A fader is marked in decibels because hearing is logarithmic, and a decibel
 //! of amplitude is `20 · log10(factor)`. That is a logarithm, so a mixer needs
-//! one — and on Sapote there is no libm to ask, which turns out to be the
+//! one — and on Phipia there is no libm to ask, which turns out to be the
 //! useful constraint rather than the awkward one. [`sapstudio_core::Fixed`]
 //! computes it with integers, so two machines that mix the same session
 //! produce the same samples, for ever (R-4.1).

@@ -2,7 +2,7 @@
 
 # Browser port assessment
 
-Sapote does not ship a browser engine. NetSurf's framebuffer frontend is the
+Phipia does not ship a browser engine. NetSurf's framebuffer frontend is the
 selected port candidate because it has its own layout engine, a small portable
 surface, and no dependency on a host GUI toolkit. No NetSurf source is vendored
 or included in the compatibility claims.
@@ -15,7 +15,7 @@ closure.
 1. **Freestanding build.** Build the NetSurf core, framebuffer frontend,
    LibCSS, Hubbub/LibDOM, and admitted image libraries as a static native
    application.
-2. **Frontend surface.** Use a bounded Redwood window, damage rectangles, and
+2. **Frontend surface.** Use a bounded Phipia window, damage rectangles, and
    native keyboard and pointer events through the public ABI.
 3. **URL fetcher.** Implement NetSurf callbacks over DNS and native streams,
    including deadlines, cancellation, reset, and partial I/O.
@@ -32,7 +32,7 @@ The port requires a browser-scale allocation policy, bounded asynchronous work,
 Unicode text and scalable fonts, certificate-store maintenance, content
 encoding, cookies, cache policy, origin-scoped storage, watchdogs, quotas, and
 update handling. Hosted libc sockets, signals, dynamic loading, and general file
-descriptors are not part of the Sapote native ABI.
+descriptors are not part of the Phipia native ABI.
 
 ## Acceptance
 

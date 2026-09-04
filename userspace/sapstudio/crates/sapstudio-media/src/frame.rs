@@ -25,7 +25,7 @@ use crate::status::{MediaStatus, Result};
 ///
 /// Sixty-four mebibytes: a 4K frame at eight bits and 4:4:4 is about
 /// twenty-five, so this is room for one and a margin, and far more than a
-/// Sapote program can map today. It is here so a hostile file cannot ask for a
+/// Phipia program can map today. It is here so a hostile file cannot ask for a
 /// frame the size of memory before anything checks (R-11.2).
 pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 

@@ -3,13 +3,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/boot_ledger.h>
-#include <sapote/console.h>
-#include <sapote/fat32_fs.h>
-#include <sapote/linux_abi.h>
-#include <sapote/linux_cat.h>
-#include <sapote/linux_uname.h>
-#include <sapote/linux_userland.h>
+#include <phipia/boot_ledger.h>
+#include <phipia/console.h>
+#include <phipia/fat32_fs.h>
+#include <phipia/linux_abi.h>
+#include <phipia/linux_cat.h>
+#include <phipia/linux_uname.h>
+#include <phipia/linux_userland.h>
 
 static uint64_t next_generation = UINT64_C(1);
 static uint64_t active_generation;
@@ -38,7 +38,7 @@ static bool ledger_authorizes(enum linux_userland_profile profile)
         BOOT_CAPABILITY_ELF64_LOADER_FOUNDATION_AVAILABLE,
         BOOT_CAPABILITY_LINUX_SYSCALL_CPU_FOUNDATION_AVAILABLE,
         BOOT_CAPABILITY_LINUX_IMAGE_STACK_FOUNDATION_AVAILABLE,
-        BOOT_CAPABILITY_REDWOOD_INSTALLED_PROOF_COMPLETE
+        BOOT_CAPABILITY_PHIPIA_INSTALLED_PROOF_COMPLETE
     };
     const struct boot_ledger *ledger = boot_ledger_installed();
 
@@ -239,7 +239,7 @@ enum linux_userland_status linux_userland_launch(
         result->resume_count = proof.resume_count;
         result->waiting_for_input = true;
         console_serial_write(
-            "RW USERLAND cat foreground launch yielded to Sapote Redwood\n");
+            "RW USERLAND cat foreground launch yielded to Phipia\n");
         return LINUX_USERLAND_STATUS_WAITING;
     }
 

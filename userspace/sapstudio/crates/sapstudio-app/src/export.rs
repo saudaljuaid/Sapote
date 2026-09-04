@@ -13,7 +13,7 @@
 //! ## The number
 //!
 //! A 1920×1080 eight-bit RGBA frame is 8,294,400 bytes. Ten seconds of it at
-//! 24 frames a second is a reel of 1,990,656,000 — and a Sapote program is
+//! 24 frames a second is a reel of 1,990,656,000 — and a Phipia program is
 //! mapped **76 KiB**. Writing that reel with [`sapstudio_io::sprw::encode`]
 //! would need twenty-five thousand times the program's whole address space.
 //! Writing it with this needs one row at a time: 7,680 bytes, which is a tenth

@@ -42,8 +42,8 @@ static SDL_AudioDevice *open_devices[16];
 
 /* Available audio drivers */
 static const AudioBootStrap *const bootstrap[] = {
-#ifdef SDL_AUDIO_DRIVER_SAPOTE
-    &SAPOTEAUDIO_bootstrap,
+#ifdef SDL_AUDIO_DRIVER_PHIPIA
+    &PHIPIAAUDIO_bootstrap,
 #endif
 #ifdef SDL_AUDIO_DRIVER_PULSEAUDIO
     &PULSEAUDIO_bootstrap,

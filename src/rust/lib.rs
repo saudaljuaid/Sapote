@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! The parts of Sapote written in Rust.
+//! The parts of Phipia written in Rust.
 //!
-//! Sapote is a C kernel. Rust is used here for one specific job: parsing input
+//! Phipia is a C kernel. Rust is used here for one specific job: parsing input
 //! this kernel did not produce. A bounds check that the compiler inserts and
 //! cannot be talked out of is worth more on a byte stream from outside than
 //! anywhere else, because that is where a missing one becomes an attacker's
@@ -13,7 +13,7 @@
 //! a second language in the boot path. `docs/RUST.md` argues that split.
 //!
 //! The whole crate compiles with no operating system. The ext4 parser uses
-//! Sapote's bounded kernel heap through the allocator boundary in [`abi`]; the
+//! Phipia's bounded kernel heap through the allocator boundary in [`abi`]; the
 //! older parsers remain allocation-free. Unsafe code is confined to that ABI
 //! boundary, which turns validated C pointers into Rust slices, writes results
 //! through validated C pointers, and calls the kernel allocator and block I/O.
@@ -41,7 +41,7 @@ pub mod wallpaper;
 
 /// Where a Rust panic goes.
 ///
-/// Sapote-authored fallible paths return a status, while compiler-inserted
+/// Phipia-authored fallible paths return a status, while compiler-inserted
 /// bounds checks in the reviewed ext4 dependency may still trap. The crate is
 /// built with `panic=abort`, so those traps cannot unwind. This handler turns
 /// an unanticipated metadata-parser defect into a kernel stop rather than

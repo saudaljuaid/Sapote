@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#include <sapote/ui_anim.h>
+#include <phipia/ui_anim.h>
 
-#include <sapote/heap.h>
-#include <sapote/surface.h>
+#include <phipia/heap.h>
+#include <phipia/surface.h>
 
 /*
  * Fixed point, 16.16 throughout. Products widen to 64 bits before they are

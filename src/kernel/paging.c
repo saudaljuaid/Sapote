@@ -3,9 +3,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/cpu.h>
-#include <sapote/memory.h>
-#include <sapote/paging.h>
+#include <phipia/cpu.h>
+#include <phipia/memory.h>
+#include <phipia/paging.h>
 
 /*
  * Intel SDM volume 3A section 4.5, tables 4-14 through 4-19, define the entry
@@ -48,7 +48,7 @@
 /*
  * Intel SDM volume 3A section 2.5: CR0.WP is bit 16. With it clear, supervisor
  * writes ignore the read-only bit entirely, so every permission this subsystem
- * installs would be advisory for ring 0 - which is the only ring Sapote has.
+ * installs would be advisory for ring 0 - which is the only ring Phipia has.
  */
 #define CR0_WRITE_PROTECT (UINT64_C(1) << 16)
 
@@ -63,7 +63,7 @@
 /*
  * Intel SDM volume 3A section 14.8: IA32_PAT is MSR 0x277 and holds eight
  * one-byte memory types. The bootstrap hierarchy selects only entry 0. Existing
- * Sapote mappings select entry 0 for RAM and entry 3 for device registers, so
+ * Phipia mappings select entry 0 for RAM and entry 3 for device registers, so
  * entry 1 can be changed without retyping a live mapping. PWT alone selects it
  * at every leaf size, avoiding the PAT bit whose position differs between 4 KiB
  * and large leaves. Entry 0 remains write-back and entry 3 uncacheable.
@@ -117,11 +117,11 @@ _Static_assert(
     "the configuration window is no longer exactly one identity map region"
 );
 _Static_assert(
-    SAPOTE_EARLY_PHYSICAL_LIMIT % PAGING_HUGE_PAGE_SIZE == 0U,
+    PHIPIA_EARLY_PHYSICAL_LIMIT % PAGING_HUGE_PAGE_SIZE == 0U,
     "the identity window is not a whole number of 2 MiB pages"
 );
 _Static_assert(
-    PAGING_PROBE_ADDRESS >= SAPOTE_EARLY_PHYSICAL_LIMIT,
+    PAGING_PROBE_ADDRESS >= PHIPIA_EARLY_PHYSICAL_LIMIT,
     "the paging probe page would collide with the identity window"
 );
 _Static_assert(
@@ -360,7 +360,7 @@ static enum paging_memory_type leaf_memory_type(
 }
 
 /*
- * Every table frame is below SAPOTE_EARLY_PHYSICAL_LIMIT and that whole range
+ * Every table frame is below PHIPIA_EARLY_PHYSICAL_LIMIT and that whole range
  * is mapped to itself, so a table's physical address is also the address this
  * code reads and writes it through. allocate_table refuses any frame that would
  * break that, which is the one assumption the entire walk rests on.
@@ -613,7 +613,7 @@ static enum paging_status validate_device_window_entry(
     if (window->physical_base == 0U ||
         window->length > PAGING_DEVICE_WINDOW_MAX_LENGTH ||
         window->physical_base + window->length >
-            SAPOTE_EARLY_PHYSICAL_LIMIT) {
+            PHIPIA_EARLY_PHYSICAL_LIMIT) {
         return PAGING_STATUS_DEVICE_WINDOW_UNSUPPORTED_RANGE;
     }
 
@@ -847,7 +847,7 @@ static enum paging_status allocate_table(
      * has no address this code could write it through, so zeroing it first
      * would be the fault rather than the diagnosis.
      */
-    if ((uint64_t)frame >= SAPOTE_EARLY_PHYSICAL_LIMIT) {
+    if ((uint64_t)frame >= PHIPIA_EARLY_PHYSICAL_LIMIT) {
         return PAGING_STATUS_PHYSICAL_TOO_WIDE;
     }
 
@@ -1618,7 +1618,7 @@ static enum paging_status build_identity_map(
 
     fine_region_count = 0U;
 
-    for (uint64_t base = 0U; base < SAPOTE_EARLY_PHYSICAL_LIMIT;
+    for (uint64_t base = 0U; base < PHIPIA_EARLY_PHYSICAL_LIMIT;
          base += PAGING_HUGE_PAGE_SIZE) {
         enum paging_status status;
 
@@ -1640,7 +1640,7 @@ static enum paging_status build_identity_map(
             const uint64_t address = base + offset;
 
             /*
-             * The null page stays absent. Nothing in Sapote reads physical
+             * The null page stays absent. Nothing in Phipia reads physical
              * address zero, and leaving it unmapped turns a null dereference
              * into a page fault naming CR2 = 0 instead of a silent read of the
              * real-mode interrupt vector table.
@@ -1678,7 +1678,7 @@ static enum paging_status validate_identity_map(
     const uint64_t kernel_end = (uint64_t)(uintptr_t)__kernel_end;
     struct paging_translation translation;
 
-    for (uint64_t base = 0U; base < SAPOTE_EARLY_PHYSICAL_LIMIT;
+    for (uint64_t base = 0U; base < PHIPIA_EARLY_PHYSICAL_LIMIT;
          base += PAGING_HUGE_PAGE_SIZE) {
         const bool fine = region_needs_page_table(windows, base, kernel_start,
             kernel_end);
@@ -4326,7 +4326,7 @@ static bool test_table_supply(void)
      * allocation from it is already outside.
      */
     reset_test_hierarchy(&hierarchy, 1U);
-    hierarchy.arena_base = SAPOTE_EARLY_PHYSICAL_LIMIT;
+    hierarchy.arena_base = PHIPIA_EARLY_PHYSICAL_LIMIT;
 
     return allocate_table(&hierarchy, &hierarchy.root) ==
         PAGING_STATUS_PHYSICAL_TOO_WIDE;

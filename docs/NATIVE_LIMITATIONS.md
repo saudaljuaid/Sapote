@@ -11,7 +11,7 @@ Native ABI v1 has this bounded hardware and compatibility profile:
   manifest memory ceiling, and a 16 MiB executable/file ceiling;
 - FAT32 only, with the existing 64 MiB geometry, ASCII 8.3 names, no long file
   names, no journal, and application-rooted writable Data namespaces;
-- one native Redwood window per process, xRGB8888 only, bounded 64-event queues,
+- one native Phipia window per process, xRGB8888 only, bounded 64-event queues,
   and no GPU command submission or direct framebuffer mapping;
 - IPv4 on the deterministic virtio-net profile, with DNS, TCP, UDP, plain HTTP,
   and a bounded validated TLS 1.2/HTTPS client; no IPv6, firewall, routing,

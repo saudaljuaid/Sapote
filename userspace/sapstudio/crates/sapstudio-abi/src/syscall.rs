@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! The proposed native Sapote system call surface.
+//! The proposed native Phipia system call surface.
 //!
-//! Sapote's existing Linux compatibility boundary passes the call number in
+//! Phipia's existing Linux compatibility boundary passes the call number in
 //! `RAX`, arguments in `RDI`, `RSI`, `RDX`, `R10`, `R8`, `R9`, and returns a
 //! signed result in `RAX`, with refusals as negative errno values. This
 //! proposal keeps that register convention exactly — it is the architectural
@@ -29,7 +29,7 @@ pub struct AbiVersion(pub u32);
 /// The proposed call numbers.
 ///
 /// Deliberately short. Each entry names the `SAP-nn` capability that has to
-/// exist in Sapote before it means anything, and the first three are the whole
+/// exist in Phipia before it means anything, and the first three are the whole
 /// of `SAP-01`'s initial allowlist.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u64)]
@@ -60,7 +60,7 @@ pub struct Errno(pub i64);
 ///
 /// # Safety
 ///
-/// The caller must be running on a Sapote kernel that implements `SAP-01` at
+/// The caller must be running on a Phipia kernel that implements `SAP-01` at
 /// [`ABI_VERSION`], and `number` must be one this program is permitted to
 /// make. On any other kernel the `syscall` instruction's effect is whatever
 /// that kernel does with an unrecognised number, which is why nothing above

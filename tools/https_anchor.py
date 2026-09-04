@@ -72,14 +72,14 @@ def extract_array(header: str, symbol: str) -> bytes:
 def audit(records: dict[str, bytes]) -> None:
     header = HEADER.read_text(encoding="ascii")
     for field, symbol in (
-        ("dn", "sapote_https_test_dn"),
-        ("n", "sapote_https_test_n"),
-        ("e", "sapote_https_test_e"),
+        ("dn", "phipia_https_test_dn"),
+        ("n", "phipia_https_test_n"),
+        ("e", "phipia_https_test_e"),
     ):
         if extract_array(header, symbol) != records[field]:
             raise ValueError(f"{symbol} does not match the pinned root")
     required = (
-        "static const br_x509_trust_anchor sapote_https_test_anchors[]",
+        "static const br_x509_trust_anchor phipia_https_test_anchors[]",
         "BR_X509_TA_CA",
         "BR_KEYTYPE_RSA",
     )
@@ -91,7 +91,7 @@ def audit(records: dict[str, bytes]) -> None:
             raise ValueError(f"offline certificate fixture changed: {name}")
     for name in ("valid", "expired", "future", "untrusted"):
         decoded = ssl._ssl._test_decode_cert(str(fixture / f"{name}.pem"))
-        if decoded.get("subjectAltName") != (("DNS", "repo.sapote.test"),):
+        if decoded.get("subjectAltName") != (("DNS", "repo.phipia.test"),):
             raise ValueError(f"offline certificate SAN changed: {name}")
     valid = ssl._ssl._test_decode_cert(str(fixture / "valid.pem"))
     if valid.get("notBefore") != "Jan  1 00:00:00 2026 GMT" or \

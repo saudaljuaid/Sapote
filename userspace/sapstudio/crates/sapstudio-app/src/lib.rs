@@ -2,7 +2,7 @@
 #![cfg_attr(not(test), no_std)]
 #![allow(
     clippy::doc_markdown,
-    reason = "SapStudio and Sapote are product names, not identifiers"
+    reason = "SapStudio and Phipia are product names, not identifiers"
 )]
 //! The application.
 //!
@@ -217,7 +217,7 @@ pub fn slate(console: &mut dyn Console) -> Result<(), SlateStatus> {
     say(console, "restored       ", restored == edited_duration)?;
     line(console, "")?;
 
-    // Through a file and back. The storage is in memory because Sapote has no
+    // Through a file and back. The storage is in memory because Phipia has no
     // writable one yet (SAP-08), but the format, the digest, the read-back
     // verification and the commit are the real ones, running here on the
     // freestanding target rather than only in the host suite.

@@ -54,9 +54,9 @@ jobs:
               run: |
                   make iso
                   python3 tools/capture-phipia.py \
-                      --iso build/sapote.iso \
-                      --system build/userspace/sapote-system-fat32.raw \
-                      --data build/userspace/sapote-data-fat32.raw \
+                      --iso build/phipia.iso \
+                      --system build/userspace/phipia-system-fat32.raw \
+                      --data build/userspace/phipia-data-fat32.raw \
                       --output build/phipia-captures \
                       --ffmpeg ffmpeg
                   python3 tools/fat32_image.py inspect \
@@ -101,7 +101,7 @@ jobs:
                   # publisher/snapshot contract is exercised by make verify;
                   # the UI must not invent PHOTO00.BMP without a device.
                   for name in (
-                      "NOTES.TXT", "SAPSTUDI.SAP", "PHIPMED.SAP",
+                      "NOTES.TXT", "MEDIAEDT.PHI", "PHIPMED.PHI",
                       "EXPORT.BMP",
                   ):
                       if name not in names:
@@ -118,7 +118,7 @@ jobs:
               run: |
                   make qemu-test-ext4-recovery
                   make qemu-test-ext4-powercuts
-                  make qemu-test-redwood-proof-userland-interactive
+                  make qemu-test-phipia-proof-userland-interactive
                   make qemu-test-fat32-data
                   make qemu-test-fat32-nested qemu-test-fat32-growth \
                       qemu-test-fat32-random qemu-test-fat32-truncate \
@@ -132,6 +132,6 @@ jobs:
               if: ${{ always() }}
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
-                  name: sapote-ext4-powercuts
+                  name: phipia-ext4-powercuts
                   path: build/tests/ext4-powercuts
                   if-no-files-found: error

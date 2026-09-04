@@ -72,8 +72,8 @@
 
 /* Available video drivers */
 static VideoBootStrap *bootstrap[] = {
-#ifdef SDL_VIDEO_DRIVER_SAPOTE
-    &SAPOTE_bootstrap,
+#ifdef SDL_VIDEO_DRIVER_PHIPIA
+    &PHIPIA_bootstrap,
 #endif
 #ifdef SDL_VIDEO_DRIVER_COCOA
     &COCOA_bootstrap,

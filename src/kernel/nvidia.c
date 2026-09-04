@@ -11,16 +11,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/clock.h>
-#include <sapote/cpu.h>
-#include <sapote/dma.h>
-#include <sapote/interrupt_vector.h>
-#include <sapote/memory.h>
-#include <sapote/msix.h>
-#include <sapote/nvidia.h>
-#include <sapote/paging.h>
-#include <sapote/pci.h>
-#include <sapote/pci_resource.h>
+#include <phipia/clock.h>
+#include <phipia/cpu.h>
+#include <phipia/dma.h>
+#include <phipia/interrupt_vector.h>
+#include <phipia/memory.h>
+#include <phipia/msix.h>
+#include <phipia/nvidia.h>
+#include <phipia/paging.h>
+#include <phipia/pci.h>
+#include <phipia/pci_resource.h>
 
 /* PCI Code and ID Assignment Specification 1.19 section 1. */
 #define NVIDIA_CLASS_DISPLAY UINT8_C(0x03)
@@ -278,10 +278,10 @@ struct nvidia_census {
 };
 
 /* The freestanding Rust validator; C never parses a VBIOS byte itself. */
-extern uint32_t sapote_nvbios_self_test(void);
-extern uint32_t sapote_nvbios_controls(void);
-extern size_t sapote_nvbios_reference(uint8_t *out, size_t capacity);
-extern int sapote_nvbios_parse(
+extern uint32_t phipia_nvbios_self_test(void);
+extern uint32_t phipia_nvbios_controls(void);
+extern size_t phipia_nvbios_reference(uint8_t *out, size_t capacity);
+extern int phipia_nvbios_parse(
     const uint8_t *input,
     size_t input_len,
     struct nvidia_vbios_image *out
@@ -772,7 +772,7 @@ static enum nvidia_status probe_video_bios(
         return NVIDIA_STATUS_ROM_NOT_RESTORED;
     }
     zero_bytes(&image, sizeof(image));
-    status = sapote_nvbios_parse(vbios_window, sizeof(vbios_window), &image);
+    status = phipia_nvbios_parse(vbios_window, sizeof(vbios_window), &image);
     probe->identity = ((uint64_t)image.vendor_id << 16U) | image.device_id;
     probe->detail = image.image_bytes;
     if (status != 0) {
@@ -788,7 +788,7 @@ static enum nvidia_status probe_video_bios(
  * Driver four, and the only one that binds a function other than the graphics
  * one. Every NVIDIA board since Fermi carries an HD Audio controller beside
  * the GPU for the audio a display link carries, and it answers the same
- * register contract Sapote's ICH9 driver already proves: a version, and a
+ * register contract Phipia's ICH9 driver already proves: a version, and a
  * count of the streams the controller has. This driver resets nothing: the
  * audio function of a board that may be driving a live display is not
  * something to reset blind.
@@ -1121,8 +1121,8 @@ static enum nvidia_status probe_power_management(
  * Driver eleven. Configuration space only. Message-signalled interrupts are
  * delivered as a memory write to the local APIC, so a function that arrives
  * with them already enabled can interrupt this kernel without this kernel ever
- * having agreed to it. Nothing in Sapote enabled them on this function and
- * nothing outside Sapote may have: this driver's whole job is to say so out
+ * having agreed to it. Nothing in Phipia enabled them on this function and
+ * nothing outside Phipia may have: this driver's whole job is to say so out
  * loud, and to check the count fields against the encodings the specification
  * actually defines rather than assuming a device fills them in sanely.
  */
@@ -1640,7 +1640,7 @@ static enum nvidia_status bind_one(
 
     /*
      * A driver that reads only configuration space takes nothing at all: no
-     * claim, no mapping, no command-register change. Sapote has no IOMMU, and
+     * claim, no mapping, no command-register change. Phipia has no IOMMU, and
      * the cheapest way to be sure a driver cannot reach memory is for it never
      * to have been given a window.
      */
@@ -1775,7 +1775,7 @@ static bool reference_vbios_agrees(void)
 {
     static uint8_t written[NVIDIA_REFERENCE_VBIOS_BYTES];
 
-    if (sapote_nvbios_reference(written, sizeof(written)) !=
+    if (phipia_nvbios_reference(written, sizeof(written)) !=
             sizeof(written)) {
         return false;
     }
@@ -1903,8 +1903,8 @@ bool nvidia_foundation_self_test(size_t *completed_tests)
     ++completed;
 
     /* The Rust validator runs every control it declares. */
-    if (sapote_nvbios_controls() != NVIDIA_VBIOS_ROBUSTNESS_CONTROLS ||
-        sapote_nvbios_self_test() != NVIDIA_VBIOS_ROBUSTNESS_CONTROLS) {
+    if (phipia_nvbios_controls() != NVIDIA_VBIOS_ROBUSTNESS_CONTROLS ||
+        phipia_nvbios_self_test() != NVIDIA_VBIOS_ROBUSTNESS_CONTROLS) {
         return false;
     }
     ++completed;
@@ -1924,7 +1924,7 @@ bool nvidia_foundation_self_test(size_t *completed_tests)
 
     /* And it parses through the same boundary a real image would. */
     zero_bytes(&image, sizeof(image));
-    if (sapote_nvbios_parse(reference, reference_length, &image) != 0 ||
+    if (phipia_nvbios_parse(reference, reference_length, &image) != 0 ||
         image.vendor_id != NVIDIA_VENDOR_ID ||
         image.device_id != NVIDIA_REFERENCE_VBIOS_DEVICE ||
         image.image_bytes != NVIDIA_REFERENCE_VBIOS_BYTES ||
@@ -1936,7 +1936,7 @@ bool nvidia_foundation_self_test(size_t *completed_tests)
 
     /* A truncated image is refused rather than read past. */
     zero_bytes(&image, sizeof(image));
-    if (sapote_nvbios_parse(reference, 16U, &image) == 0 ||
+    if (phipia_nvbios_parse(reference, 16U, &image) == 0 ||
         image.image_bytes != 0U) {
         return false;
     }
@@ -1944,7 +1944,7 @@ bool nvidia_foundation_self_test(size_t *completed_tests)
 
     /* So is a null one. */
     zero_bytes(&image, sizeof(image));
-    if (sapote_nvbios_parse(NULL, reference_length, &image) == 0) {
+    if (phipia_nvbios_parse(NULL, reference_length, &image) == 0) {
         return false;
     }
     ++completed;

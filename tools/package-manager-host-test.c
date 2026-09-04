@@ -6,9 +6,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <sapote/package_builder.h>
-#include <sapote/package_manager.h>
-#include <sapote/package_trust.h>
+#include <phipia/package_builder.h>
+#include <phipia/package_manager.h>
+#include <phipia/package_trust.h>
 
 #define FIXTURE_NOW UINT64_C(1800000060)
 #define FIXTURE_REPOSITORY_VERSION UINT64_C(42)
@@ -289,7 +289,7 @@ static bool build_installed_database(
     library_record = application_record +
         PACKAGE_STATE_DATABASE_PACKAGE_RECORD_BYTES;
     edge = database + INSTALLED_EDGE_OFFSET;
-    put_text(application_record, 64U, "org.sapote.app");
+    put_text(application_record, 64U, "org.phipia.app");
     put_text(application_record + 64U, 64U, "1.0.0");
     (void)memcpy(application_record + 128U, application->package_sha256, 32U);
     (void)memcpy(application_record + 160U, application->publisher_key_id, 32U);
@@ -298,7 +298,7 @@ static bool build_installed_database(
     put_u32(application_record + 200U, 1U);
     put_u32(application_record + 204U, 0U);
 
-    put_text(library_record, 64U, "org.sapote.lib");
+    put_text(library_record, 64U, "org.phipia.lib");
     put_text(library_record + 64U, 64U, "1.0.0");
     (void)memcpy(library_record + 128U, library->package_sha256, 32U);
     (void)memcpy(library_record + 160U, library->publisher_key_id, 32U);
@@ -307,9 +307,9 @@ static bool build_installed_database(
     put_u32(library_record + 200U, 0U);
     put_u32(library_record + 204U, 0U);
 
-    put_text(edge, 64U, "org.sapote.lib");
+    put_text(edge, 64U, "org.phipia.lib");
     put_text(edge + 64U, 56U, "^1.0.0");
-    put_text(edge + 120U, 64U, "org.sapote.lib");
+    put_text(edge + 120U, 64U, "org.phipia.lib");
     if (package_state_sha256(database + PACKAGE_STATE_DATABASE_HEADER_BYTES,
             INSTALLED_BYTES - PACKAGE_STATE_DATABASE_HEADER_BYTES, digest) !=
             PACKAGE_STATE_STATUS_OK) {
@@ -379,16 +379,16 @@ static int test_fresh_builder(
         workspace->spec.package_count == 2U &&
         workspace->spec.dependency_count == 1U &&
         workspace->spec.file_count == 2U &&
-        state_text_is(&workspace->packages[0].identifier, "org.sapote.app") &&
+        state_text_is(&workspace->packages[0].identifier, "org.phipia.app") &&
         workspace->packages[0].explicit_root &&
         workspace->packages[0].dependency_start == 0U &&
         workspace->packages[0].dependency_count == 1U &&
-        state_text_is(&workspace->packages[1].identifier, "org.sapote.lib") &&
+        state_text_is(&workspace->packages[1].identifier, "org.phipia.lib") &&
         !workspace->packages[1].explicit_root &&
         state_text_is(&workspace->dependencies[0].requested,
-            "org.sapote.lib") &&
+            "org.phipia.lib") &&
         state_text_is(&workspace->dependencies[0].provider,
-            "org.sapote.lib") &&
+            "org.phipia.lib") &&
         state_text_is(&workspace->files[0].path, "bin/proof-app") &&
         workspace->files[0].owner_index == 0U &&
         workspace->file_sources[0].kind ==
@@ -456,7 +456,7 @@ static int test_fresh_builder(
             workspace->spec.package_count == 0U);
     }
     CHECK(package_manager_plan_install(repository, &encoded_view,
-        (const uint8_t *)"org.sapote.lib", 14U, policy, trust,
+        (const uint8_t *)"org.phipia.lib", 14U, policy, trust,
         &promotion_plan) == PACKAGE_MANAGER_STATUS_OK &&
         promotion_plan.count == 0U);
     CHECK(package_builder_build(repository, &encoded_view, &promotion_plan,
@@ -473,14 +473,14 @@ static int test_fresh_builder(
     CHECK(promoted != NULL && package_generation_encode(&workspace->spec,
             promoted, encoded_bytes, &promoted_view) == PACKAGE_STATE_STATUS_OK);
     CHECK(package_manager_plan_remove(&promoted_view,
-        (const uint8_t *)"org.sapote.app", 14U, &removal_plan) ==
+        (const uint8_t *)"org.phipia.app", 14U, &removal_plan) ==
             PACKAGE_MANAGER_STATUS_OK && removal_plan.count == 1U &&
-        text_is(&removal_plan.items[0].identifier, "org.sapote.app"));
+        text_is(&removal_plan.items[0].identifier, "org.phipia.app"));
     CHECK(package_builder_build(NULL, &promoted_view, &removal_plan, NULL, 0U,
             NULL, NULL, workspace) == PACKAGE_MANAGER_STATUS_OK &&
         workspace->spec.generation == 3U &&
         workspace->spec.package_count == 1U &&
-        state_text_is(&workspace->packages[0].identifier, "org.sapote.lib") &&
+        state_text_is(&workspace->packages[0].identifier, "org.phipia.lib") &&
         workspace->packages[0].explicit_root &&
         workspace->spec.file_count == 1U &&
         state_text_is(&workspace->files[0].path, "lib/libproof.so.1") &&
@@ -534,9 +534,9 @@ static int test_existing_builder(
             workspace->spec.dependency_count == 1U &&
             workspace->spec.file_count == 0U &&
             state_text_is(&workspace->packages[0].identifier,
-                "org.sapote.app") && workspace->packages[0].explicit_root &&
+                "org.phipia.app") && workspace->packages[0].explicit_root &&
             state_text_is(&workspace->packages[1].identifier,
-                "org.sapote.lib") && workspace->packages[1].explicit_root);
+                "org.phipia.lib") && workspace->packages[1].explicit_root);
     }
     CHECK(package_generation_size(&workspace->spec, &encoded_bytes) ==
         PACKAGE_STATE_STATUS_OK);
@@ -570,11 +570,11 @@ static int test_update_builder(
         repository_bytes->bytes, repository_bytes->count, policy, trust,
         &repository) == PACKAGE_MANAGER_STATUS_OK);
     CHECK(package_manager_plan_install(&repository, installed,
-        (const uint8_t *)"org.sapote.app", 14U, policy, trust, &plan) ==
+        (const uint8_t *)"org.phipia.app", 14U, policy, trust, &plan) ==
             PACKAGE_MANAGER_STATUS_OK &&
         plan.operation == PACKAGE_MANAGER_PLAN_UPDATE && plan.count == 2U &&
-        text_is(&plan.items[0].identifier, "org.sapote.newlib") &&
-        text_is(&plan.items[1].identifier, "org.sapote.app"));
+        text_is(&plan.items[0].identifier, "org.phipia.newlib") &&
+        text_is(&plan.items[1].identifier, "org.phipia.app"));
     packages[0] = (struct package_builder_package_bytes){
         library->bytes, library->count
     };
@@ -587,14 +587,14 @@ static int test_update_builder(
         workspace->spec.package_count == 2U &&
         workspace->spec.dependency_count == 1U &&
         workspace->spec.file_count == 2U &&
-        state_text_is(&workspace->packages[0].identifier, "org.sapote.app") &&
+        state_text_is(&workspace->packages[0].identifier, "org.phipia.app") &&
         state_text_is(&workspace->packages[0].version, "2.0.0") &&
         workspace->packages[0].explicit_root &&
         state_text_is(&workspace->packages[1].identifier,
-            "org.sapote.newlib") &&
+            "org.phipia.newlib") &&
         !workspace->packages[1].explicit_root &&
         state_text_is(&workspace->dependencies[0].provider,
-            "org.sapote.newlib") &&
+            "org.phipia.newlib") &&
         state_text_is(&workspace->files[0].path, "bin/proof-app") &&
         state_text_is(&workspace->files[1].path, "lib/libnew.so.2") &&
         workspace->file_sources[0].kind ==
@@ -668,26 +668,26 @@ int main(int argc, char **argv)
         PACKAGE_MANAGER_STATUS_OK);
     CHECK(repository.repository_version == FIXTURE_REPOSITORY_VERSION &&
         repository.package_count == 2U && context.verification_count == 1U &&
-        find_entry(&repository, "org.sapote.app", &application_entry) &&
-        find_entry(&repository, "org.sapote.lib", &library_entry));
+        find_entry(&repository, "org.phipia.app", &application_entry) &&
+        find_entry(&repository, "org.phipia.lib", &library_entry));
     CHECK(package_manager_repository_search(&repository,
         (const uint8_t *)"LIB", 3U, &search) == PACKAGE_MANAGER_STATUS_OK &&
         search.count == 1U && search.repository_indices[0] ==
             library_entry.repository_index);
     CHECK(package_manager_plan_install(&repository, NULL,
-        (const uint8_t *)"org.sapote.app", 14U, &policy, &trust, &plan) ==
+        (const uint8_t *)"org.phipia.app", 14U, &policy, &trust, &plan) ==
             PACKAGE_MANAGER_STATUS_OK &&
         plan.operation == PACKAGE_MANAGER_PLAN_INSTALL &&
-        text_is(&plan.target, "org.sapote.app") &&
-        text_is(&plan.root, "org.sapote.app") && plan.count == 2U &&
-        text_is(&plan.items[0].identifier, "org.sapote.lib") &&
-        text_is(&plan.items[1].identifier, "org.sapote.app"));
+        text_is(&plan.target, "org.phipia.app") &&
+        text_is(&plan.root, "org.phipia.app") && plan.count == 2U &&
+        text_is(&plan.items[0].identifier, "org.phipia.lib") &&
+        text_is(&plan.items[1].identifier, "org.phipia.app"));
     CHECK(package_manager_plan_dependency_binding(&repository, &plan, 1U, 0U,
             &application_binding) == PACKAGE_MANAGER_STATUS_OK &&
         application_binding.plan == &plan && application_binding.plan_index == 1U &&
-        text_is(&application_binding.requested, "org.sapote.lib") &&
+        text_is(&application_binding.requested, "org.phipia.lib") &&
         text_is(&application_binding.constraint, ">=1.0.0,<2.0.0") &&
-        text_is(&application_binding.provider, "org.sapote.lib") &&
+        text_is(&application_binding.provider, "org.phipia.lib") &&
         package_manager_plan_dependency_binding(&repository, &plan, 0U, 0U,
             &application_binding) == PACKAGE_MANAGER_STATUS_TABLE &&
         application_binding.plan == NULL &&
@@ -706,7 +706,7 @@ int main(int argc, char **argv)
     CHECK(package_manager_package_open(application_bytes.bytes,
         application_bytes.count, &application_entry, &policy, &trust,
         &application_package) == PACKAGE_MANAGER_STATUS_OK &&
-        text_is(&application_package.identifier, "org.sapote.app") &&
+        text_is(&application_package.identifier, "org.phipia.app") &&
         application_package.file_count == 1U &&
         package_manager_package_file(&application_package, 0U,
             &application_file) == PACKAGE_MANAGER_STATUS_OK &&
@@ -722,7 +722,7 @@ int main(int argc, char **argv)
             &application_dependency) == PACKAGE_MANAGER_STATUS_OK &&
         application_dependency.package == &application_package &&
         application_dependency.package_index == 0U &&
-        text_is(&application_dependency.identifier, "org.sapote.lib") &&
+        text_is(&application_dependency.identifier, "org.phipia.lib") &&
         text_is(&application_dependency.constraint, ">=1.0.0,<2.0.0") &&
         package_manager_package_dependency(&application_package, 1U,
             &application_dependency) == PACKAGE_MANAGER_STATUS_TABLE &&
@@ -731,7 +731,7 @@ int main(int argc, char **argv)
     CHECK(package_manager_package_open(library_bytes.bytes, library_bytes.count,
         &library_entry, &policy, &trust, &library_package) ==
             PACKAGE_MANAGER_STATUS_OK &&
-        text_is(&library_package.identifier, "org.sapote.lib") &&
+        text_is(&library_package.identifier, "org.phipia.lib") &&
         library_package.file_count == 1U &&
         package_manager_package_file(&library_package, 0U, &library_file) ==
             PACKAGE_MANAGER_STATUS_OK &&
@@ -751,18 +751,18 @@ int main(int argc, char **argv)
     CHECK(package_state_database_parse(installed_bytes, INSTALLED_BYTES,
         &installed) == PACKAGE_STATE_STATUS_OK);
     CHECK(package_manager_plan_install(&repository, &installed,
-        (const uint8_t *)"org.sapote.app", 14U, &policy, &trust, &plan) ==
+        (const uint8_t *)"org.phipia.app", 14U, &policy, &trust, &plan) ==
             PACKAGE_MANAGER_STATUS_ALREADY_INSTALLED);
     CHECK(package_manager_plan_remove(&installed,
-        (const uint8_t *)"org.sapote.app", 14U, &plan) ==
+        (const uint8_t *)"org.phipia.app", 14U, &plan) ==
             PACKAGE_MANAGER_STATUS_OK &&
-        text_is(&plan.target, "org.sapote.app") && plan.count == 2U &&
-        text_is(&plan.root, "org.sapote.app") &&
-        text_is(&plan.items[0].identifier, "org.sapote.app") &&
-        text_is(&plan.items[1].identifier, "org.sapote.lib"));
+        text_is(&plan.target, "org.phipia.app") && plan.count == 2U &&
+        text_is(&plan.root, "org.phipia.app") &&
+        text_is(&plan.items[0].identifier, "org.phipia.app") &&
+        text_is(&plan.items[1].identifier, "org.phipia.lib"));
     CHECK(test_existing_builder(NULL, &installed, &plan, NULL, NULL, true) == 0);
     CHECK(package_manager_plan_remove(&installed,
-        (const uint8_t *)"org.sapote.lib", 14U, &plan) ==
+        (const uint8_t *)"org.phipia.lib", 14U, &plan) ==
             PACKAGE_MANAGER_STATUS_IN_USE);
     CHECK(package_manager_installed_search(&installed,
         (const uint8_t *)"APP", 3U, &search) == PACKAGE_MANAGER_STATUS_OK &&
@@ -773,7 +773,7 @@ int main(int argc, char **argv)
             PACKAGE_MANAGER_STATUS_OK &&
         plan.operation == PACKAGE_MANAGER_PLAN_INSTALL &&
         text_is(&plan.target, "virtual.proof") &&
-        text_is(&plan.root, "org.sapote.lib") && plan.count == 0U);
+        text_is(&plan.root, "org.phipia.lib") && plan.count == 0U);
     CHECK(test_existing_builder(&repository, &installed, &plan, &policy,
         &trust, false) == 0);
     CHECK(test_update_builder(&update_repository_bytes, &installed,
@@ -841,17 +841,17 @@ int main(int argc, char **argv)
             PACKAGE_MANAGER_STATUS_DIGEST);
     free(changed);
 
-    CHECK(expect_plan_status(argv[6], "org.sapote.a",
+    CHECK(expect_plan_status(argv[6], "org.phipia.a",
         PACKAGE_MANAGER_STATUS_CYCLE, &context) == 0);
-    CHECK(expect_plan_status(argv[7], "org.sapote.conflict-app",
+    CHECK(expect_plan_status(argv[7], "org.phipia.conflict-app",
         PACKAGE_MANAGER_STATUS_CONFLICT, &context) == 0);
-    CHECK(expect_plan_status(argv[8], "org.sapote.ambiguous-app",
+    CHECK(expect_plan_status(argv[8], "org.phipia.ambiguous-app",
         PACKAGE_MANAGER_STATUS_AMBIGUOUS_PROVIDER, &context) == 0);
-    CHECK(expect_plan_status(argv[9], "org.sapote.unsatisfied",
+    CHECK(expect_plan_status(argv[9], "org.phipia.unsatisfied",
         PACKAGE_MANAGER_STATUS_DEPENDENCY, &context) == 0);
-    CHECK(expect_plan_status(argv[10], "org.sapote.backtrack",
+    CHECK(expect_plan_status(argv[10], "org.phipia.backtrack",
         PACKAGE_MANAGER_STATUS_OK, &context) == 0);
-    CHECK(expect_plan_status(argv[11], "org.sapote.chain00",
+    CHECK(expect_plan_status(argv[11], "org.phipia.chain00",
         PACKAGE_MANAGER_STATUS_GRAPH_BOUND, &context) == 0);
 
     free(repository_bytes.bytes);
@@ -862,7 +862,7 @@ int main(int argc, char **argv)
     free(update_repository_bytes.bytes);
     free(update_application_bytes.bytes);
     free(update_library_bytes.bytes);
-    (void)puts("Sapote bounded guest package-manager and generation-builder "
+    (void)puts("Phipia bounded guest package-manager and generation-builder "
         "tests passed");
     return 0;
 }

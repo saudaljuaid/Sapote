@@ -121,7 +121,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sapote-kernel-rust"
+name = "phipia-kernel-rust"
 version = "0.1.0"
 dependencies = [
  "ext4plus",

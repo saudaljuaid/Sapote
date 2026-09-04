@@ -4,13 +4,13 @@ OUTPUT_ARCH(i386:x86-64)
 ENTRY(_start)
 
 /*
- * Sapote maps a user image one 4 KiB page at a time and gives each section its
+ * Phipia maps a user image one 4 KiB page at a time and gives each section its
  * own permissions, so no two permissions may share a page. Every section
  * therefore starts on a page boundary and pads to one, and the asserts at the
  * end of this script prove it rather than trusting it.
  *
- * The base is the address Sapote's measured user profiles already load at.
- * The image is ET_EXEC and non-PIE: docs/LINUX_SYSCALL_ABI.md in Sapote
+ * The base is the address Phipia's measured user profiles already load at.
+ * The image is ET_EXEC and non-PIE: docs/LINUX_SYSCALL_ABI.md in Phipia
  * refuses interpreter, dynamic, relocation, PIE, executable-stack, and W+X
  * shapes, so a position-independent image would be refused before it is mapped.
  */
@@ -120,7 +120,7 @@ SECTIONS
     .debug_pubtypes 0 : { *(.debug_pubtypes) }
 
     /*
-     * Sapote identity-maps the whole low 4 GiB for itself, so a user image
+     * Phipia identity-maps the whole low 4 GiB for itself, so a user image
      * must live above it, and at 70 TiB no address fits a 32-bit
      * displacement. The prebuilt core and alloc archives are compiled
      * position-independent, and the linker cannot relax their GOT-relative

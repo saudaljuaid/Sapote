@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Safe validators for the Sapote application manifest and static ELF64 image.
+//! Safe validators for the Phipia application manifest and static ELF64 image.
 
 use crate::sha256;
 
@@ -14,7 +14,7 @@ pub const MAX_FILE_BYTES: usize = 16 * 1024 * 1024;
 const MIN_ADDRESS: u64 = 0x0000_4000_0000_0000;
 const MAX_ADDRESS: u64 = 0x0000_4001_0000_0000;
 const PAGE: u64 = 4096;
-const MANIFEST_MAGIC: &[u8; 8] = b"SAPOTEA1";
+const MANIFEST_MAGIC: &[u8; 8] = b"PHIPIAA1";
 const CAPABILITIES_V1: u64 = (1u64 << 12) - 1;
 const MIN_MEMORY: u64 = 64 * 1024;
 const MAX_MEMORY: u64 = 256 * 1024 * 1024;
@@ -589,7 +589,7 @@ mod tests {
 
     fn manifest() -> [u8; MANIFEST_BYTES] {
         let mut bytes = [0u8; MANIFEST_BYTES];
-        bytes[..8].copy_from_slice(b"SAPOTEA1");
+        bytes[..8].copy_from_slice(b"PHIPIAA1");
         bytes[8..10].copy_from_slice(&1u16.to_le_bytes());
         bytes[10..12].copy_from_slice(&(MANIFEST_BYTES as u16).to_le_bytes());
         bytes[12..16].copy_from_slice(&1u32.to_le_bytes());
@@ -614,7 +614,7 @@ mod tests {
     #[test]
     fn manifest_accepts_printable_url_argument() {
         let mut bytes = manifest();
-        let url = b"http://sapote.test/welcome.txt\0";
+        let url = b"http://phipia.test/welcome.txt\0";
         bytes[208..208 + url.len()].copy_from_slice(url);
         assert!(parse_manifest(&bytes).is_ok());
     }

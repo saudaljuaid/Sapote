@@ -2,7 +2,7 @@
 #![cfg_attr(not(test), no_std)]
 #![allow(
     clippy::doc_markdown,
-    reason = "SapStudio and Sapote are product names, not identifiers"
+    reason = "SapStudio and Phipia are product names, not identifiers"
 )]
 //! The colour pipeline, computed exactly.
 //!
@@ -15,7 +15,7 @@
 //! This one does it in exact rationals, every time. The matrix is the real
 //! one, it is identical on every machine, and it stays exact through as many
 //! conversions as are chained together (R-4.1). Nothing here uses a floating
-//! point number, which is also what makes it work on Sapote, where there is no
+//! point number, which is also what makes it work on Phipia, where there is no
 //! guarantee a Ring 3 program may execute one.
 
 extern crate alloc;

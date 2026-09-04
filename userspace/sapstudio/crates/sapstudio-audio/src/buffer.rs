@@ -5,7 +5,7 @@
 //! performs is per channel and interleaving makes each of them stride. Samples
 //! are signed 32-bit integers holding 24-bit audio, which is the width a
 //! console works in: 16-bit sources fit with room above and below, the mix bus
-//! has headroom to accumulate into, and nothing anywhere is a float — Sapote
+//! has headroom to accumulate into, and nothing anywhere is a float — Phipia
 //! offers no guarantee that a Ring 3 program may execute one.
 //!
 //! A buffer is immutable once made, for the same reason a frame is (R-8.1): it

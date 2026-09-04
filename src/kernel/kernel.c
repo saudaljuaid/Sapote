@@ -6,18 +6,18 @@
  */
 #include <stdint.h>
 
-#include <sapote/boot_ledger.h>
-#include <sapote/boot_plan.h>
-#include <sapote/console.h>
-#include <sapote/ext4_fs.h>
-#include <sapote/fat32_fs.h>
-#include <sapote/native_process.h>
-#include <sapote/package_platform_trust.h>
-#include <sapote/package_service.h>
-#include <sapote/package_upload.h>
-#include <sapote/shell.h>
-#include <sapote/test.h>
-#include <sapote/ui.h>
+#include <phipia/boot_ledger.h>
+#include <phipia/boot_plan.h>
+#include <phipia/console.h>
+#include <phipia/ext4_fs.h>
+#include <phipia/fat32_fs.h>
+#include <phipia/native_process.h>
+#include <phipia/package_platform_trust.h>
+#include <phipia/package_service.h>
+#include <phipia/package_upload.h>
+#include <phipia/shell.h>
+#include <phipia/test.h>
+#include <phipia/ui.h>
 
 _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information);
 
@@ -44,7 +44,7 @@ static void recover_package_state(void)
 
     if (filesystem_status != SAPFS_STATUS_OK &&
         filesystem_status != SAPFS_STATUS_ALREADY_MOUNTED) {
-        console_write("Sapote: package recovery unavailable: ");
+        console_write("Phipia: package recovery unavailable: ");
         console_write(sapfs_status_string(filesystem_status));
         console_putc('\n');
         return;
@@ -53,11 +53,11 @@ static void recover_package_state(void)
     enum package_service_status status = package_service_recover(&report);
 
     if (status == PACKAGE_SERVICE_STATUS_ABSENT) {
-        console_write("Sapote: package transaction state absent\n");
+        console_write("Phipia: package transaction state absent\n");
         return;
     }
     if (status != PACKAGE_SERVICE_STATUS_OK) {
-        console_write("Sapote: package recovery refused: ");
+        console_write("Phipia: package recovery refused: ");
         console_write(package_service_status_string(status));
         console_write("; state ");
         console_write(package_state_status_string(report.state_status));
@@ -66,7 +66,7 @@ static void recover_package_state(void)
         console_putc('\n');
         console_panic("unsafe package transaction state");
     }
-    console_write("Sapote: package generation ");
+    console_write("Phipia: package generation ");
     console_write_u64(report.generation);
     console_write(" verified files ");
     console_write_u64(report.files_verified);
@@ -79,7 +79,7 @@ static void initialize_package_uploads(void)
     enum package_upload_status status = package_upload_initialize(&report);
 
     if (status != PACKAGE_UPLOAD_STATUS_OK) {
-        console_write("Sapote: package upload service unavailable: ");
+        console_write("Phipia: package upload service unavailable: ");
         console_write(package_upload_status_string(status));
         console_write("; filesystem ");
         console_write(sapfs_status_string(report.filesystem_status));
@@ -92,7 +92,7 @@ static void report_ledger_refusal(
     const struct boot_context *context
 )
 {
-    console_write("Sapote: Boot Ledger refusal: ");
+    console_write("Phipia: Boot Ledger refusal: ");
     console_write(boot_ledger_status_string(ledger->status));
 
     if (ledger->refusal_stage != BOOT_STAGE_INVALID) {
@@ -155,11 +155,11 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     }
 
     boot_ledger_publish(&installed_ledger);
-    console_write("Sapote: Boot Ledger installed proof passed\n");
+    console_write("Phipia: Boot Ledger installed proof passed\n");
     if (!sapfs_self_test(&filesystem_tests)) {
         console_panic("FAT32 store self-test failed");
     }
-    console_write("Sapote: FAT32 store controls ");
+    console_write("Phipia: FAT32 store controls ");
     console_write_u64(filesystem_tests);
     console_write("/6 passed\n");
     if (installed_context.test_scenario == KERNEL_TEST_EXT4_RECOVERY &&
@@ -176,11 +176,11 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     if (!native_process_self_test(&native_process_tests)) {
         console_panic("native userspace foundation self-test failed");
     }
-    console_write("Sapote: native userspace controls ");
+    console_write("Phipia: native userspace controls ");
     console_write_u64(native_process_tests);
     console_write(" passed\n");
     if (ui_is_active() && ui_flush() != UI_STATUS_OK) {
-        console_write("Sapote: Redwood ledger status redraw failed\n");
+        console_write("Phipia: ledger status redraw failed\n");
     }
 
     if (installed_context.test_scenario == KERNEL_TEST_NORMAL) {
@@ -191,8 +191,8 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         kernel_test_complete_boot_ledger(&installed_context);
     }
 
-    if (installed_context.test_scenario == KERNEL_TEST_REDWOOD_PROOF) {
-        kernel_test_complete_redwood_proof();
+    if (installed_context.test_scenario == KERNEL_TEST_PHIPIA_PROOF) {
+        kernel_test_complete_phipia_proof();
     }
 
     if (installed_context.test_scenario == KERNEL_TEST_DEVICE_SUBSTRATE) {
@@ -223,23 +223,23 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         kernel_test_complete_linux_uname();
     }
 
-    if (installed_context.test_scenario == KERNEL_TEST_REDWOOD_PROOF_USERLAND) {
-        kernel_test_complete_redwood_proof_userland();
+    if (installed_context.test_scenario == KERNEL_TEST_PHIPIA_PROOF_USERLAND) {
+        kernel_test_complete_phipia_proof_userland();
     }
 
     if (installed_context.test_scenario ==
-            KERNEL_TEST_REDWOOD_PROOF_USERLAND_ABSENT) {
-        kernel_test_complete_redwood_proof_userland_absent();
+            KERNEL_TEST_PHIPIA_PROOF_USERLAND_ABSENT) {
+        kernel_test_complete_phipia_proof_userland_absent();
     }
 
     if (installed_context.test_scenario ==
-            KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE) {
-        kernel_test_complete_redwood_proof_userland_interactive();
+            KERNEL_TEST_PHIPIA_PROOF_USERLAND_INTERACTIVE) {
+        kernel_test_complete_phipia_proof_userland_interactive();
     }
 
     if (installed_context.test_scenario ==
-            KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE_ABSENT) {
-        kernel_test_complete_redwood_proof_userland_interactive_absent();
+            KERNEL_TEST_PHIPIA_PROOF_USERLAND_INTERACTIVE_ABSENT) {
+        kernel_test_complete_phipia_proof_userland_interactive_absent();
     }
 
     if (installed_context.test_scenario >= KERNEL_TEST_FAT32_SYSTEM &&

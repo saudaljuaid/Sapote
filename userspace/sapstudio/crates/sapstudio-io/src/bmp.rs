@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! The one picture format Sapote and SapStudio already agree on.
+//! The one picture format Phipia and SapStudio already agree on.
 //!
-//! Sapote's SapStudio workspace imports "an ordinary uncompressed 24-bit BMP
+//! Phipia's SapStudio workspace imports "an ordinary uncompressed 24-bit BMP
 //! from the current Files directory on the writable data volume", bounded at
 //! 1920×1080, with every header field and row offset validated. This is the
 //! same decoder, written in safe Rust against the same bounds — so a file
-//! Sapote's importer accepts is a file this accepts, and a file it refuses is
+//! Phipia's importer accepts is a file this accepts, and a file it refuses is
 //! refused here for the same reason and under a name that says which.
 //!
 //! Read from `src/kernel/ui.c`, `studio_load_preview`, and from
@@ -53,10 +53,10 @@ use crate::status::{IoStatus, Result};
 /// How many bytes the two headers take together.
 pub const HEADER_BYTES: usize = 54;
 
-/// The widest picture this accepts. Sapote's `UI_STUDIO_BMP_MAX_WIDTH`.
+/// The widest picture this accepts. Phipia's `UI_STUDIO_BMP_MAX_WIDTH`.
 pub const MAX_WIDTH: u32 = 1920;
 
-/// The tallest picture this accepts. Sapote's `UI_STUDIO_BMP_MAX_HEIGHT`.
+/// The tallest picture this accepts. Phipia's `UI_STUDIO_BMP_MAX_HEIGHT`.
 pub const MAX_HEIGHT: u32 = 1080;
 
 /// Decode a 24-bit uncompressed BMP into a frame.
@@ -179,7 +179,7 @@ fn header(file: &[u8]) -> Result<Head> {
     }
     if width <= 0 || height == 0 || height == i32::MIN {
         // `i32::MIN` has no positive counterpart, so a height of it cannot be
-        // turned the right way up. Sapote refuses it by name and so does this.
+        // turned the right way up. Phipia refuses it by name and so does this.
         return Err(IoStatus::NotABitmap);
     }
     let top_down = height < 0;
@@ -203,7 +203,7 @@ fn header(file: &[u8]) -> Result<Head> {
 ///
 /// Bottom-up rather than top-down, and that is a compatibility decision rather
 /// than a preference: it is the orientation every reader has always handled,
-/// including the one in Sapote's export path, and this file is written to be
+/// including the one in Phipia's export path, and this file is written to be
 /// read by things that are not this program.
 ///
 /// # Errors

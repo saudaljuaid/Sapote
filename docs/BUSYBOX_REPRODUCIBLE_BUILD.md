@@ -3,7 +3,7 @@
 # Reproducible BusyBox proof inputs
 
 BusyBox and musl are separate userspace works. Neither is copied into or linked
-with Sapote's GPL-3.0-only kernel. Their source, configurations, licenses,
+with Phipia's GPL-3.0-only kernel. Their source, configurations, licenses,
 traces, and build records remain distinct release materials.
 
 ## Pinned source inputs
@@ -46,7 +46,7 @@ source archives remain byte-identical.
 
 | Profile | Executable | Size | Executable SHA-256 | FAT16 fixture SHA-256 |
 | --- | --- | ---: | --- | --- |
-| v0.8.0 | `echo SAPOTE` | 33,584 | `B308F2CAD5B5CD0EEB92A622DEC8D71C1A08F628A22CDC5BCDE2B98B53220746` | `41513E5D6F4C33F898F887D4F40F37149A29B1AE13B5E8A600495C18A38C7A6F` |
+| v0.8.0 | `echo PHIPIA` | 33,584 | `B308F2CAD5B5CD0EEB92A622DEC8D71C1A08F628A22CDC5BCDE2B98B53220746` | `41513E5D6F4C33F898F887D4F40F37149A29B1AE13B5E8A600495C18A38C7A6F` |
 | v0.9.0 | `uname -s` | 38,368 | `389AD6B13804EB7307BA589C8E8A7C702F91302005A7C5FC6E9E99124FCEAF43` | `48C3465E924D1D2B3C8AB659D2783CAC4AF57DFD83504606AD0DF8F64D7316E3` |
 | v1.1.0 | `cat` | 38,632 | `8191596A22778B575942895071A2E50CCEEE0F82F4D88B6D986584CE0914FC3E` | composed v1.1.0 volume |
 
@@ -55,7 +55,7 @@ dynamic section, runtime relocation, PIE, shared object, or RWX segment. Their
 exact syscall traces and allowlists are committed beside the configurations.
 
 Version 1.1.0 places all three exact executables in one 16 MiB read-only FAT16
-volume. `tools/make-redwood-proof-userland.py` rebuilds every byte, independently
+volume. `tools/make-phipia-proof-userland.py` rebuilds every byte, independently
 verifies each file and root entry, runs negative mutations, and pins the volume
 SHA-256 to
 `F2115B909842ADACB8460287515E5145E36B34DE7E0B8C658E92D22DDFA7EBDB`.

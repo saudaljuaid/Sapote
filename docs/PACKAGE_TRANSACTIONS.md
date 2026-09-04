@@ -2,7 +2,7 @@
 
 # Package transaction state and recovery foundation
 
-`tools/sapote-transaction.py` defines a bounded installed-database format, an
+`tools/phipia-transaction.py` defines a bounded installed-database format, an
 atomic-generation authority record, an immutable transaction journal, and a
 deterministic in-memory reference model for package state transitions. The model
 exercises staging, commit recovery, rollback, removal, dependency retention,
@@ -201,7 +201,7 @@ remove. An interruption after replacement completes it. Recovery never merges
 some old files with some new metadata. Cancellation is permitted only while the
 base authority is still selected; afterward normal recovery is required.
 
-`include/sapote/package_state.h` and `src/kernel/package_state.c` provide the
+`include/phipia/package_state.h` and `src/kernel/package_state.c` provide the
 allocation-free parsing and decision core. They are freestanding and
 allocation-free: all untrusted integers are decoded from checked little-endian
 byte fields, SHA-256 is computed incrementally in fixed storage, dependency
@@ -254,7 +254,7 @@ are refused.
 
 The C recovery core accepts two database candidates and one explicit
 `owned_files_complete` proof per candidate. A database checksum alone does not
-establish that proof. `include/sapote/package_service.h` and
+establish that proof. `include/phipia/package_service.h` and
 `src/kernel/package_service.c` now produce it by enumerating the immutable root,
 refusing extra files and multiply linked files, then checking each declared
 file's type, exposed mode, stable object identity, exact length, EOF, and SHA-256
@@ -420,13 +420,13 @@ payloads fail before journal publication and leave the selected base unchanged.
 The CLI exposes byte-format construction and inspection only:
 
 ```sh
-python3 tools/sapote-transaction.py build-database \
+python3 tools/phipia-transaction.py build-database \
     --spec build/installed-state.json --output build/installed.db
-python3 tools/sapote-transaction.py inspect-database build/installed.db
-python3 tools/sapote-transaction.py inspect-authority build/installed.authority
-python3 tools/sapote-transaction.py inspect-journal build/installed.journal
+python3 tools/phipia-transaction.py inspect-database build/installed.db
+python3 tools/phipia-transaction.py inspect-authority build/installed.authority
+python3 tools/phipia-transaction.py inspect-journal build/installed.journal
 
-python3 tools/sapote_transaction_host_test.py
+python3 tools/phipia_transaction_host_test.py
 
 gcc -std=c11 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude \
     tools/package-state-host-test.c src/kernel/package_state.c \

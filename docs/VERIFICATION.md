@@ -2,7 +2,7 @@
 
 # Verification
 
-Sapote checks the kernel on the host and in QEMU. Hardware coverage is limited
+Phipia checks the kernel on the host and in QEMU. Hardware coverage is limited
 to the documented emulated configurations.
 
 ## Commands
@@ -51,9 +51,9 @@ Its independent PCAP audit requires port-443 TLS records and rejects plaintext
 request, response-line, or body bytes. The scenario uses QEMU's `max` CPU and a
 pinned in-certificate RTC, and it requires the strong-hardware-entropy marker.
 
-The `native-sap` scenario serves a deterministic, root-signed repository and
+The `native-phip` scenario serves a deterministic, root-signed repository and
 publisher-signed v3 package over that same authenticated HTTPS path. The Ring 3
-`sap` client copies the repository into a sealed upload, asks the privileged
+`phip` client copies the repository into a sealed upload, asks the privileged
 controller for an authenticated plan, streams each exact package directly into
 a digest-bound upload, commits the generation, removes its staging file, and
 exits. The kernel then independently parses the authority-selected database,
@@ -70,7 +70,7 @@ evidence.
 The QEMU suite covers:
 
 - boot, exception entry, APIC routing, clocks, paging, heap, and threads;
-- framebuffer, cached surfaces, keyboard, pointer, shell, and Redwood;
+- framebuffer, cached surfaces, keyboard, pointer, shell, and Phipia;
 - PCI, MSI-X, DMA, xHCI, NVMe, FAT32, and filesystem recovery;
 - ext4 recovery and commit power cuts at every named NVMe flush boundary,
   followed by reboot, namespace/data checks, resource census, and `e2fsck`;
@@ -86,7 +86,7 @@ reboot with the same synchronized image.
 ## Focused checks
 
 The repository also contains focused workflows for BusyBox reproduction,
-storage, networking, drivers, SapStudio, and Redwood capture. BusyBox binaries
+storage, networking, drivers, SapStudio, and Phipia capture. BusyBox binaries
 are built twice and compared, then checked against their ELF shape and syscall
 profiles. Network tests use an offline peer and retain packet captures when
 protocol-level inspection is needed.
@@ -101,12 +101,12 @@ reference pixel. These temporary mutations are never committed.
 ## Visual captures
 
 ```sh
-make capture-redwood-proof
+make capture-phipia-proof
 make screenshot-proof
 make capture-boot-video
-python3 tools/capture-networking.py --iso build/sapote.iso \
-    --system build/userspace/sapote-system-fat32.raw \
-    --data build/userspace/sapote-data-fat32.raw \
+python3 tools/capture-networking.py --iso build/phipia.iso \
+    --system build/userspace/phipia-system-fat32.raw \
+    --data build/userspace/phipia-data-fat32.raw \
     --output build/networking-capture
 ```
 

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /*
- * Sapote's bounded FAT32 file store. Raw metadata is accepted only after the
+ * Phipia's bounded FAT32 file store. Raw metadata is accepted only after the
  * Rust parsers copy it into pointer-free values. Media traffic is synchronous
  * ordinary NVMe I/O; the small write-back cache has explicit mount ownership.
  */
@@ -8,10 +8,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/console.h>
-#include <sapote/fat32_backend.h>
-#include <sapote/fat32_fs.h>
-#include <sapote/nvme.h>
+#include <phipia/console.h>
+#include <phipia/fat32_backend.h>
+#include <phipia/fat32_fs.h>
+#include <phipia/nvme.h>
 
 #define SAPFS_SECTOR_BYTES 512U
 #define SAPFS_DIRECTORY_ENTRIES (SAPFS_SECTOR_BYTES / FAT32_DIRECTORY_ENTRY_BYTES)
@@ -231,7 +231,7 @@ static enum sapfs_status nvme_result(enum nvme_status status)
 
 static void report_nvme_failure(const char *operation, enum nvme_status status)
 {
-    console_write("Sapote: FAT32 NVMe ");
+    console_write("Phipia: FAT32 NVMe ");
     console_write(operation);
     console_write(" failed: ");
     console_write(nvme_status_string(status));
@@ -570,7 +570,7 @@ static enum sapfs_status next_cluster(
         *end = true;
         return SAPFS_STATUS_OK;
     }
-    if (sapote_fat32_classify_cluster(raw, &operation->mount->geometry,
+    if (phipia_fat32_classify_cluster(raw, &operation->mount->geometry,
             &checked) != FAT32_STATUS_OK) {
         return SAPFS_STATUS_CORRUPT;
     }
@@ -692,7 +692,7 @@ static enum sapfs_status path_validation(const char *path, size_t *length)
     if (length == NULL || found == 0U || found > SAPFS_MAX_PATH) {
         return found == 0U ? SAPFS_STATUS_PATH : SAPFS_STATUS_INVALID_ARGUMENT;
     }
-    status = sapote_fat32_validate_path((const uint8_t *)path, found,
+    status = phipia_fat32_validate_path((const uint8_t *)path, found,
         &components);
     if (status == FAT32_STATUS_NAME_MALFORMED ||
         status == FAT32_STATUS_COMPONENT_TOO_LONG) {
@@ -756,7 +756,7 @@ static enum sapfs_status scan_directory(
                  offset += FAT32_DIRECTORY_ENTRY_BYTES) {
                 struct fat32_directory_entry parsed;
                 enum fat32_status parse_status =
-                    sapote_fat32_parse_directory_entry(
+                    phipia_fat32_parse_directory_entry(
                         &sector->data[offset], FAT32_DIRECTORY_ENTRY_BYTES,
                         &parsed);
 
@@ -853,7 +853,7 @@ static enum sapfs_status resolve_path(
             ++end;
         }
         last = end == length;
-        if (sapote_fat32_parse_component((const uint8_t *)&path[start],
+        if (phipia_fat32_parse_component((const uint8_t *)&path[start],
                 end - start, &name) != FAT32_STATUS_OK) {
             return SAPFS_STATUS_NAME;
         }
@@ -921,7 +921,7 @@ static enum sapfs_status resolve_parent(
     while (split != 0U && path[split - 1U] != '/') {
         --split;
     }
-    if (sapote_fat32_parse_component((const uint8_t *)&path[split],
+    if (phipia_fat32_parse_component((const uint8_t *)&path[split],
             length - split, &parent->name) != FAT32_STATUS_OK ||
         parent->name.kind != FAT32_NAME_ORDINARY) {
         return SAPFS_STATUS_NAME;
@@ -1226,9 +1226,9 @@ static enum sapfs_status validate_volume_identity(
 )
 {
     static const uint8_t system_label[11] =
-        {'S', 'A', 'P', 'O', 'T', 'E', 'S', 'Y', 'S', ' ', ' '};
+        {'P', 'H', 'I', 'P', 'I', 'A', 'S', 'Y', 'S', ' ', ' '};
     static const uint8_t data_label[11] =
-        {'S', 'A', 'P', 'O', 'T', 'E', 'D', 'A', 'T', 'A', ' '};
+        {'P', 'H', 'I', 'P', 'I', 'A', 'D', 'A', 'T', 'A', ' '};
     const uint8_t *label = volume == SAPFS_VOLUME_SYSTEM ?
         system_label : data_label;
     uint32_t identifier = volume == SAPFS_VOLUME_SYSTEM ?
@@ -1277,7 +1277,7 @@ static enum sapfs_status validate_fats(
         if (!equal_bytes(first, second, sizeof(first))) {
             return SAPFS_STATUS_CORRUPT;
         }
-        if (ordinal == 0U && sapote_fat32_validate_fat_pair(first,
+        if (ordinal == 0U && phipia_fat32_validate_fat_pair(first,
                 sizeof(first), second, sizeof(second), geometry) !=
                 FAT32_STATUS_OK) {
             return SAPFS_STATUS_CORRUPT;
@@ -1416,7 +1416,7 @@ static enum sapfs_status validate_directory_tree(
              offset += FAT32_DIRECTORY_ENTRY_BYTES) {
             struct fat32_directory_entry entry;
 
-            if (sapote_fat32_parse_directory_entry(&directory_bytes[offset],
+            if (phipia_fat32_parse_directory_entry(&directory_bytes[offset],
                     FAT32_DIRECTORY_ENTRY_BYTES, &entry) != FAT32_STATUS_OK) {
                 return SAPFS_STATUS_CORRUPT;
             }
@@ -1567,7 +1567,7 @@ enum sapfs_status fat32_backend_mount(enum sapfs_volume volume)
     candidate.read_only = volume == SAPFS_VOLUME_SYSTEM;
     status = direct_read(&session, 0U, boot);
     if (status == SAPFS_STATUS_OK &&
-        sapote_fat32_parse_bpb(boot, sizeof(boot), session.namespace_blocks,
+        phipia_fat32_parse_bpb(boot, sizeof(boot), session.namespace_blocks,
             session.logical_block_bytes, &candidate.geometry) !=
             FAT32_STATUS_OK) {
         status = SAPFS_STATUS_CORRUPT;
@@ -1594,7 +1594,7 @@ enum sapfs_status fat32_backend_mount(enum sapfs_volume volume)
         status = direct_read(&session, candidate.geometry.fsinfo_sector,
             info);
         if (status == SAPFS_STATUS_OK &&
-            sapote_fat32_parse_fsinfo(info, sizeof(info),
+            phipia_fat32_parse_fsinfo(info, sizeof(info),
                 &candidate.geometry, &candidate.fsinfo) != FAT32_STATUS_OK) {
             status = SAPFS_STATUS_CORRUPT;
         }
@@ -1626,7 +1626,7 @@ enum sapfs_status fat32_backend_mount(enum sapfs_volume volume)
     }
     invalidate_cache(volume);
     if (status != SAPFS_STATUS_OK) {
-        console_write("Sapote: FAT32 ");
+        console_write("Phipia: FAT32 ");
         console_write(volume == SAPFS_VOLUME_SYSTEM ? "system" : "data");
         console_write(" mount refused at ");
         console_write(validation_stage);
@@ -2044,7 +2044,7 @@ static enum sapfs_status handle_location(
     if (status != SAPFS_STATUS_OK) {
         return status;
     }
-    parsed = sapote_fat32_parse_directory_entry(
+    parsed = phipia_fat32_parse_directory_entry(
         &sector->data[state->entry_offset], FAT32_DIRECTORY_ENTRY_BYTES,
         &location->entry);
     if (parsed != FAT32_STATUS_OK ||
@@ -2282,7 +2282,7 @@ enum sapfs_status fat32_backend_list(
                  offset += FAT32_DIRECTORY_ENTRY_BYTES) {
                 struct fat32_directory_entry parsed;
                 enum fat32_status parse_status =
-                    sapote_fat32_parse_directory_entry(&sector->data[offset],
+                    phipia_fat32_parse_directory_entry(&sector->data[offset],
                         FAT32_DIRECTORY_ENTRY_BYTES, &parsed);
 
                 if (parse_status != FAT32_STATUS_OK) {
@@ -2492,7 +2492,7 @@ static enum sapfs_status directory_empty(
                  offset += FAT32_DIRECTORY_ENTRY_BYTES) {
                 struct fat32_directory_entry parsed;
 
-                if (sapote_fat32_parse_directory_entry(&sector->data[offset],
+                if (phipia_fat32_parse_directory_entry(&sector->data[offset],
                         FAT32_DIRECTORY_ENTRY_BYTES, &parsed) !=
                         FAT32_STATUS_OK) {
                     return SAPFS_STATUS_CORRUPT;
@@ -2790,17 +2790,17 @@ bool fat32_backend_self_test(size_t *completed_tests)
         return false;
     }
     *completed_tests = 0U;
-    if (sapote_fat32_validate_path((const uint8_t *)"projects/notes.txt",
+    if (phipia_fat32_validate_path((const uint8_t *)"projects/notes.txt",
             18U, &components) != FAT32_STATUS_OK || components != 2U) {
         return false;
     }
     ++completed;
-    if (sapote_fat32_validate_path((const uint8_t *)"../escape", 9U,
+    if (phipia_fat32_validate_path((const uint8_t *)"../escape", 9U,
             &components) != FAT32_STATUS_ABOVE_ROOT) {
         return false;
     }
     ++completed;
-    if (sapote_fat32_parse_component((const uint8_t *)"notes.txt", 9U,
+    if (phipia_fat32_parse_component((const uint8_t *)"notes.txt", 9U,
             &name) != FAT32_STATUS_OK ||
         !equal_bytes(name.canonical, (const uint8_t *)"NOTES   TXT", 11U)) {
         return false;

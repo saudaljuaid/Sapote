@@ -1,18 +1,18 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#include <sapote/package_control.h>
+#include <phipia/package_control.h>
 
-#include <sapote/runtime.h>
+#include <phipia/runtime.h>
 #include <string.h>
 
-static void report_clear(struct sapote_package_control_report *report)
+static void report_clear(struct phipia_package_control_report *report)
 {
     if (report != NULL) {
         (void)memset(report, 0, sizeof(*report));
     }
 }
 
-static void report_open(struct sapote_package_control_report *report,
-    const struct sapote_package_control_open_request *request)
+static void report_open(struct phipia_package_control_report *report,
+    const struct phipia_package_control_open_request *request)
 {
     if (report != NULL) {
         report->repository_version = request->repository_version;
@@ -22,54 +22,54 @@ static void report_open(struct sapote_package_control_report *report,
     }
 }
 
-long sapote_package_control_open_install(
-    sapote_handle_t repository_upload,
+long phipia_package_control_open_install(
+    phipia_handle_t repository_upload,
     const char *identifier,
     size_t identifier_bytes,
-    struct sapote_package_control_report *report
+    struct phipia_package_control_report *report
 )
 {
-    struct sapote_package_control_open_request request;
+    struct phipia_package_control_open_request request;
 
     report_clear(report);
-    if (repository_upload == SAPOTE_HANDLE_INVALID || identifier == NULL ||
+    if (repository_upload == PHIPIA_HANDLE_INVALID || identifier == NULL ||
         identifier_bytes == 0U ||
-        identifier_bytes >= SAPOTE_PACKAGE_CONTROL_TEXT_BYTES ||
+        identifier_bytes >= PHIPIA_PACKAGE_CONTROL_TEXT_BYTES ||
         report == NULL) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     (void)memset(&request, 0, sizeof(request));
     request.size = sizeof(request);
-    request.version = SAPOTE_ABI_VERSION;
+    request.version = PHIPIA_ABI_VERSION;
     request.repository_upload = repository_upload;
     request.identifier = (uint64_t)(uintptr_t)identifier;
     request.identifier_bytes = (uint32_t)identifier_bytes;
-    long status = sapote_syscall1(SAPOTE_SYS_PACKAGE_CONTROL_OPEN_INSTALL,
+    long status = phipia_syscall1(PHIPIA_SYS_PACKAGE_CONTROL_OPEN_INSTALL,
         (uint64_t)(uintptr_t)&request);
 
     report_open(report, &request);
     return status;
 }
 
-long sapote_package_control_item(
-    sapote_handle_t control,
+long phipia_package_control_item(
+    phipia_handle_t control,
     uint32_t index,
-    struct sapote_package_control_item *item
+    struct phipia_package_control_item *item
 )
 {
-    struct sapote_package_control_item_request request;
+    struct phipia_package_control_item_request request;
 
-    if (control == SAPOTE_HANDLE_INVALID || item == NULL ||
-        index >= SAPOTE_PACKAGE_CONTROL_PLAN_MAX) {
-        return -SAPOTE_EINVAL;
+    if (control == PHIPIA_HANDLE_INVALID || item == NULL ||
+        index >= PHIPIA_PACKAGE_CONTROL_PLAN_MAX) {
+        return -PHIPIA_EINVAL;
     }
     (void)memset(item, 0, sizeof(*item));
     (void)memset(&request, 0, sizeof(request));
     request.size = sizeof(request);
-    request.version = SAPOTE_ABI_VERSION;
+    request.version = PHIPIA_ABI_VERSION;
     request.control = control;
     request.index = index;
-    long status = sapote_syscall1(SAPOTE_SYS_PACKAGE_CONTROL_ITEM,
+    long status = phipia_syscall1(PHIPIA_SYS_PACKAGE_CONTROL_ITEM,
         (uint64_t)(uintptr_t)&request);
 
     if (status != 0) {
@@ -91,28 +91,28 @@ long sapote_package_control_item(
     return 0;
 }
 
-long sapote_package_control_attach(
-    sapote_handle_t control,
+long phipia_package_control_attach(
+    phipia_handle_t control,
     uint32_t index,
-    sapote_handle_t package_upload,
-    struct sapote_package_control_report *report
+    phipia_handle_t package_upload,
+    struct phipia_package_control_report *report
 )
 {
-    struct sapote_package_control_attach_request request;
+    struct phipia_package_control_attach_request request;
 
     report_clear(report);
-    if (control == SAPOTE_HANDLE_INVALID ||
-        package_upload == SAPOTE_HANDLE_INVALID ||
-        index >= SAPOTE_PACKAGE_CONTROL_PLAN_MAX || report == NULL) {
-        return -SAPOTE_EINVAL;
+    if (control == PHIPIA_HANDLE_INVALID ||
+        package_upload == PHIPIA_HANDLE_INVALID ||
+        index >= PHIPIA_PACKAGE_CONTROL_PLAN_MAX || report == NULL) {
+        return -PHIPIA_EINVAL;
     }
     (void)memset(&request, 0, sizeof(request));
     request.size = sizeof(request);
-    request.version = SAPOTE_ABI_VERSION;
+    request.version = PHIPIA_ABI_VERSION;
     request.control = control;
     request.index = index;
     request.package_upload = package_upload;
-    long status = sapote_syscall1(SAPOTE_SYS_PACKAGE_CONTROL_ATTACH,
+    long status = phipia_syscall1(PHIPIA_SYS_PACKAGE_CONTROL_ATTACH,
         (uint64_t)(uintptr_t)&request);
 
     report->attached_count = request.attached_count;
@@ -120,22 +120,22 @@ long sapote_package_control_attach(
     return status;
 }
 
-long sapote_package_control_commit(
-    sapote_handle_t control,
-    struct sapote_package_control_report *report
+long phipia_package_control_commit(
+    phipia_handle_t control,
+    struct phipia_package_control_report *report
 )
 {
-    struct sapote_package_control_commit_request request;
+    struct phipia_package_control_commit_request request;
 
     report_clear(report);
-    if (control == SAPOTE_HANDLE_INVALID || report == NULL) {
-        return -SAPOTE_EINVAL;
+    if (control == PHIPIA_HANDLE_INVALID || report == NULL) {
+        return -PHIPIA_EINVAL;
     }
     (void)memset(&request, 0, sizeof(request));
     request.size = sizeof(request);
-    request.version = SAPOTE_ABI_VERSION;
+    request.version = PHIPIA_ABI_VERSION;
     request.control = control;
-    long status = sapote_syscall1(SAPOTE_SYS_PACKAGE_CONTROL_COMMIT,
+    long status = phipia_syscall1(PHIPIA_SYS_PACKAGE_CONTROL_COMMIT,
         (uint64_t)(uintptr_t)&request);
 
     report->generation = request.generation;
@@ -145,7 +145,7 @@ long sapote_package_control_commit(
     return status;
 }
 
-long sapote_package_control_close(sapote_handle_t control)
+long phipia_package_control_close(phipia_handle_t control)
 {
-    return sapote_handle_close(control);
+    return phipia_handle_close(control);
 }

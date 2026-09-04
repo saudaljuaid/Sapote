@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #define _GNU_SOURCE
-#include <sapote/tls.h>
+#include <phipia/tls.h>
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -14,8 +14,8 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#include <sapote/network.h>
-#include <sapote/runtime.h>
+#include <phipia/network.h>
+#include <phipia/runtime.h>
 
 #define TEST_DEADLINE_NS UINT64_C(3000000000)
 #define TEST_DN_BYTES 256U
@@ -24,17 +24,17 @@
 /* The host adapter intentionally uses the kernel ABI declarations from
  * include/ while host libc remains ahead of the freestanding SDK headers.
  * Declare the SDK transport entry points that this translation unit mocks. */
-long sapote_dns_resolve(const char *hostname, uint64_t deadline_ns);
-long sapote_stream_open(void);
-long sapote_stream_connect(sapote_handle_t stream,
-    const struct sapote_ipv4_endpoint *endpoint, uint64_t deadline_ns);
-long sapote_stream_read(sapote_handle_t stream, void *buffer, size_t length,
+long phipia_dns_resolve(const char *hostname, uint64_t deadline_ns);
+long phipia_stream_open(void);
+long phipia_stream_connect(phipia_handle_t stream,
+    const struct phipia_ipv4_endpoint *endpoint, uint64_t deadline_ns);
+long phipia_stream_read(phipia_handle_t stream, void *buffer, size_t length,
     uint64_t deadline_ns);
-long sapote_stream_write(sapote_handle_t stream, const void *buffer,
+long phipia_stream_write(phipia_handle_t stream, const void *buffer,
     size_t length, uint64_t deadline_ns);
-long sapote_stream_shutdown(sapote_handle_t stream, uint32_t flags,
+long phipia_stream_shutdown(phipia_handle_t stream, uint32_t flags,
     uint64_t deadline_ns);
-long sapote_network_cancel(sapote_handle_t handle);
+long phipia_network_cancel(phipia_handle_t handle);
 
 static uint16_t peer_port;
 
@@ -79,17 +79,17 @@ static int wait_fd(int descriptor, short events, uint64_t deadline_ns)
     }
 }
 
-uint64_t sapote_monotonic_ns(void)
+uint64_t phipia_monotonic_ns(void)
 {
     return host_now_ns();
 }
 
-long sapote_realtime_seconds(void)
+long phipia_realtime_seconds(void)
 {
     return 1788177600L;
 }
 
-long sapote_random(void *buffer, size_t length)
+long phipia_random(void *buffer, size_t length)
 {
     uint8_t *bytes = buffer;
 
@@ -102,24 +102,24 @@ long sapote_random(void *buffer, size_t length)
     return (long)length;
 }
 
-long sapote_random_strong(void *buffer, size_t length)
+long phipia_random_strong(void *buffer, size_t length)
 {
-    return sapote_random(buffer, length);
+    return phipia_random(buffer, length);
 }
 
-long sapote_dns_resolve(const char *hostname, uint64_t deadline_ns)
+long phipia_dns_resolve(const char *hostname, uint64_t deadline_ns)
 {
     (void)deadline_ns;
     return hostname != NULL && hostname[0] != '\0' ? INT64_C(0x7f000001) : -1;
 }
 
-long sapote_stream_open(void)
+long phipia_stream_open(void)
 {
     return socket(AF_INET, SOCK_STREAM, 0);
 }
 
-long sapote_stream_connect(sapote_handle_t stream,
-    const struct sapote_ipv4_endpoint *endpoint, uint64_t deadline_ns)
+long phipia_stream_connect(phipia_handle_t stream,
+    const struct phipia_ipv4_endpoint *endpoint, uint64_t deadline_ns)
 {
     const int descriptor = (int)stream;
     struct sockaddr_in address = {0};
@@ -135,7 +135,7 @@ long sapote_stream_connect(sapote_handle_t stream,
         sizeof(address));
 }
 
-long sapote_stream_read(sapote_handle_t stream, void *buffer, size_t length,
+long phipia_stream_read(phipia_handle_t stream, void *buffer, size_t length,
     uint64_t deadline_ns)
 {
     const int descriptor = (int)stream;
@@ -151,7 +151,7 @@ long sapote_stream_read(sapote_handle_t stream, void *buffer, size_t length,
     return count > 0 ? (long)count : -1;
 }
 
-long sapote_stream_write(sapote_handle_t stream, const void *buffer,
+long phipia_stream_write(phipia_handle_t stream, const void *buffer,
     size_t length, uint64_t deadline_ns)
 {
     const int descriptor = (int)stream;
@@ -167,7 +167,7 @@ long sapote_stream_write(sapote_handle_t stream, const void *buffer,
     return count > 0 ? (long)count : -1;
 }
 
-long sapote_stream_shutdown(sapote_handle_t stream, uint32_t flags,
+long phipia_stream_shutdown(phipia_handle_t stream, uint32_t flags,
     uint64_t deadline_ns)
 {
     (void)flags;
@@ -175,12 +175,12 @@ long sapote_stream_shutdown(sapote_handle_t stream, uint32_t flags,
     return shutdown((int)stream, SHUT_RDWR);
 }
 
-long sapote_network_cancel(sapote_handle_t handle)
+long phipia_network_cancel(phipia_handle_t handle)
 {
     return shutdown((int)handle, SHUT_RDWR);
 }
 
-long sapote_handle_close(sapote_handle_t handle)
+long phipia_handle_close(phipia_handle_t handle)
 {
     return close((int)handle);
 }
@@ -264,9 +264,9 @@ int main(int argc, char **argv)
     uint8_t modulus[TEST_RSA_BYTES];
     uint8_t exponent[8];
     br_x509_trust_anchor anchor;
-    struct sapote_tls_client *client = NULL;
-    struct sapote_tls_client_config config;
-    enum sapote_tls_status status;
+    struct phipia_tls_client *client = NULL;
+    struct phipia_tls_client_config config;
+    enum phipia_tls_status status;
     char response[2];
     char *end = NULL;
     unsigned long port;
@@ -283,33 +283,33 @@ int main(int argc, char **argv)
     }
     peer_port = (uint16_t)port;
     expected = strtoul(argv[4], &end, 10);
-    if (end == NULL || *end != '\0' || expected > SAPOTE_TLS_CLOSE) {
+    if (end == NULL || *end != '\0' || expected > PHIPIA_TLS_CLOSE) {
         return 2;
     }
     deadline = host_now_ns() + TEST_DEADLINE_NS;
-    config = (struct sapote_tls_client_config){
+    config = (struct phipia_tls_client_config){
         argv[3], peer_port, 0U, &anchor, 1U, deadline};
-    status = sapote_tls_client_open(&config, &client);
-    if (status != (enum sapote_tls_status)expected) {
+    status = phipia_tls_client_open(&config, &client);
+    if (status != (enum phipia_tls_status)expected) {
         fprintf(stderr, "TLS host test: expected %s, got %s\n",
-            sapote_tls_status_string((enum sapote_tls_status)expected),
-            sapote_tls_status_string(status));
+            phipia_tls_status_string((enum phipia_tls_status)expected),
+            phipia_tls_status_string(status));
         if (client != NULL) {
-            (void)sapote_tls_client_close(client, deadline);
+            (void)phipia_tls_client_close(client, deadline);
         }
         return 1;
     }
-    if (status != SAPOTE_TLS_OK) {
-        printf("TLS refusal: %s\n", sapote_tls_status_string(status));
+    if (status != PHIPIA_TLS_OK) {
+        printf("TLS refusal: %s\n", phipia_tls_status_string(status));
         return 0;
     }
     if (strcmp(argv[5], "request") != 0 ||
-        sapote_tls_client_write(client, "GET / HTTP/1.0\r\n\r\n", 18U,
+        phipia_tls_client_write(client, "GET / HTTP/1.0\r\n\r\n", 18U,
             deadline) != 18 ||
-        sapote_tls_client_flush(client, deadline) != SAPOTE_TLS_OK ||
-        sapote_tls_client_read(client, response, sizeof(response), deadline) !=
+        phipia_tls_client_flush(client, deadline) != PHIPIA_TLS_OK ||
+        phipia_tls_client_read(client, response, sizeof(response), deadline) !=
             (long)sizeof(response) || memcmp(response, "OK", 2U) != 0 ||
-        sapote_tls_client_close(client, deadline) != SAPOTE_TLS_OK) {
+        phipia_tls_client_close(client, deadline) != PHIPIA_TLS_OK) {
         fputs("TLS host test: authenticated request/close failed\n", stderr);
         return 1;
     }

@@ -9,16 +9,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/clock.h>
-#include <sapote/cpu.h>
-#include <sapote/dma.h>
-#include <sapote/driver.h>
-#include <sapote/interrupt_vector.h>
-#include <sapote/memory.h>
-#include <sapote/msix.h>
-#include <sapote/paging.h>
-#include <sapote/pci.h>
-#include <sapote/pci_resource.h>
+#include <phipia/clock.h>
+#include <phipia/cpu.h>
+#include <phipia/dma.h>
+#include <phipia/driver.h>
+#include <phipia/interrupt_vector.h>
+#include <phipia/memory.h>
+#include <phipia/msix.h>
+#include <phipia/paging.h>
+#include <phipia/pci.h>
+#include <phipia/pci_resource.h>
 
 /* PCI Code and ID Assignment Specification 1.19 section 1. */
 #define DRIVER_CLASS_MASS_STORAGE UINT8_C(0x01)
@@ -944,7 +944,7 @@ static enum driver_status probe_bochs_display(
 }
 
 /*
- * Intel 82441FX, the host bridge of the machine Sapote is tested on. Its
+ * Intel 82441FX, the host bridge of the machine Phipia is tested on. Its
  * programmable attribute map is what decides whether the legacy BIOS regions
  * read from ROM or from DRAM, and that is the first thing a memory
  * initialisation driver has to know. Nothing here writes: changing the
@@ -994,7 +994,7 @@ static enum driver_status probe_intel_82441fx(
 /*
  * Intel 82371SB PIIX3, the ISA bridge. Its four route-control registers say
  * which ISA interrupt each PCI interrupt pin lands on, or that the pin is not
- * routed at all. Sapote retired the 8259 pair and routes through the I/O APIC,
+ * routed at all. Phipia retired the 8259 pair and routes through the I/O APIC,
  * so this driver reports the legacy routing rather than using it - and reports
  * it without touching it, because a bridge that is decoding the machine's
  * legacy I/O is not somewhere to write experimentally.

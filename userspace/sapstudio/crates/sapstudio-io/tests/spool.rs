@@ -3,7 +3,7 @@
 //!
 //! `decode` builds every frame at once. A reel this build writes is bounded at
 //! five hundred and twelve mebibytes, against the seventy-six kilobytes a
-//! Sapote program is mapped — 6,899 times what there is, which makes it a
+//! Phipia program is mapped — 6,899 times what there is, which makes it a
 //! function that cannot be called on the machine this program is for.
 //!
 //! A spool holds a description, a rate and a count. Frame `k` lives at
@@ -161,7 +161,7 @@ fn a_frame_past_the_reel_is_refused() {
 #[test]
 fn a_row_comes_back_on_its_own() {
     // The read that actually fits: a row of a 1920-wide RGB picture is 5,760
-    // bytes, against the seventy-six kilobytes a Sapote program is mapped.
+    // bytes, against the seventy-six kilobytes a Phipia program is mapped.
     let file = reel(3, 8, 4, PixelFormat::Rgb8);
     let spool = Spool::open(&file.as_slice()).expect("a spool");
     let mut row = [0_u8; 64];

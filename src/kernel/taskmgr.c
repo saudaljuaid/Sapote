@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /*
- * Task Manager.  See include/sapote/taskmgr.h for the shape, for what each
+ * Task Manager.  See include/phipia/taskmgr.h for the shape, for what each
  * of the three tabs is, and for which of the four windows this borrows from
  * gave which idea.
  *
@@ -10,12 +10,12 @@
  * be the single least honest window a shell could ship.
  */
 
-#include <sapote/taskmgr.h>
+#include <phipia/taskmgr.h>
 
-#include <sapote/clock.h>
-#include <sapote/framebuffer.h>
-#include <sapote/taskbar.h>
-#include <sapote/ui_font.h>
+#include <phipia/clock.h>
+#include <phipia/framebuffer.h>
+#include <phipia/taskbar.h>
+#include <phipia/ui_font.h>
 
 #include "explorer_glyphs.h"
 #include "shell_icons.h"

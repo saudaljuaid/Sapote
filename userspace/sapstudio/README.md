@@ -3,8 +3,8 @@
 <h1 align="center">SapStudio</h1>
 
 <p align="center">
-  <strong>A professional non-linear video editor, native to Sapote.</strong><br>
-  Not a port, not a portable application with a Sapote build — an editor that
+  <strong>A professional non-linear video editor, native to Phipia.</strong><br>
+  Not a port, not a portable application with a Phipia build — an editor that
   owns its operating system.
 </p>
 
@@ -20,14 +20,14 @@
 ## Status
 
 Foundation stage. The parts of an editor that need no operating system are
-being built and proven now; the parts that need one are waiting on Sapote.
+being built and proven now; the parts that need one are waiting on Phipia.
 
-[Sapote](https://github.com/saudaljuaid/Sapote) is at **2.1.0**, and it runs a
+[Phipia](https://github.com/saudaljuaid/Phipia) is at **2.1.0**, and it runs a
 SapStudio workspace today — in its First Environment shell, opening and saving
 projects on a read-write FAT32 volume, importing BMP frames, trimming clips on
 a timeline and exporting a frame back out.
 
-What Sapote cannot yet run is *this* program. The freestanding Rust image has
+What Phipia cannot yet run is *this* program. The freestanding Rust image has
 no Ring 3 path of its own: an image is admitted at a fixed page layout named
 per profile, and the widest of those is 76 KiB against an image of 424 KiB.
 There is still no generally stable native application ABI, no userspace memory
@@ -35,10 +35,10 @@ service, no audio device, no second core, and no architectural guarantee that a
 Ring 3 program may execute a single SSE instruction — which is why every
 milestone below is written in exact integers.
 
-An earlier version of this paragraph said Sapote *cannot run SapStudio*. It was
+An earlier version of this paragraph said Phipia *cannot run SapStudio*. It was
 true when written and went eleven releases stale;
 [the platform contract](docs/PLATFORM_CONTRACT.md) records the correction and
-which of its numbered requests Sapote has since answered.
+which of its numbered requests Phipia has since answered.
 
 **What exists and is proven, today:**
 
@@ -134,7 +134,7 @@ which of its numbered requests Sapote has since answered.
   about it — checked against EBU Tech 3341's own compliance cases, which are
   *generated* rather than shipped: a −23 dBFS tone reads −23.0 LUFS and a −33
   one reads −33.0, both inside the tenth of a unit the standard allows;
-- **a mixer's arithmetic**, computed with integers because Sapote preserves no
+- **a mixer's arithmetic**, computed with integers because Phipia preserves no
   floating-point state and because `pow` is not specified bit-for-bit anyway:
   zero decibels is **exactly** one, twenty decibels is **exactly** ten, and six
   decibels is asserted *not* to be a doubling — two full-scale sources trimmed
@@ -509,7 +509,7 @@ which of its numbered requests Sapote has since answered.
 - **a sequence exported a row at a time**, which is the far end of a chain four
   milestones long and the first function here that renders a programme and puts
   it somewhere. A 1920×1080 RGBA frame is 8,294,400 bytes, so ten seconds of it
-  at 24 frames is a reel of 1,990,656,000 against the 76 KiB a Sapote program is
+  at 24 frames is a reel of 1,990,656,000 against the 76 KiB a Phipia program is
   mapped — twenty-five thousand times the address space. The measurement that
   matters is not how many writes but **how large the largest was**: on a
   64-wide programme the export never hands storage more than **256 bytes** at
@@ -524,7 +524,7 @@ which of its numbered requests Sapote has since answered.
   which was measured rather than assumed: the slate's reel is 528 bytes under
   both, and exactly one of thirty-four lines in the golden transcript moved. The
   seam gained an `append` and deliberately **not** a write at an offset —
-  Sapote's FAT32 offers both, and a writer that cannot seek backwards cannot
+  Phipia's FAT32 offers both, and a writer that cannot seek backwards cannot
   damage what it has already written. And R-9.4 now covers a save that takes
   fourteen steps rather than one, with a refusal driven through **every one of
   them**;
@@ -554,7 +554,7 @@ which of its numbered requests Sapote has since answered.
   every row, `row(id, y)` is **byte for byte** the *y*-th row of
   `evaluate(id)` — two evaluators that disagreed anywhere would be two answers
   to one question. A 1920×1080 RGBA frame is 8,294,400 bytes against the 76 KiB
-  a Sapote program is mapped, so the whole-frame evaluator allocates a hundred
+  a Phipia program is mapped, so the whole-frame evaluator allocates a hundred
   and six times the program's address space **per node**; one row is 7,680.
   Two refusals, and the difference between them is the point: `NotRowLocal` is
   about the *operation* — a resampled row's preimage is a line, and only a
@@ -574,7 +574,7 @@ which of its numbered requests Sapote has since answered.
   exactly the height of the picture;
 - **a reel read a frame at a time, and a row at a time**, which is the ceiling
   the milestone before this one named and left standing. A reel this build
-  writes is bounded at 512 MiB against the 76 KiB a Sapote program is mapped —
+  writes is bounded at 512 MiB against the 76 KiB a Phipia program is mapped —
   **6,899×** what there is, so `decode` is a function that cannot be called on
   the target. A `Spool` holds a description, a rate and a count; frame *k*
   lives at `96 + k × packed_bytes`, which is arithmetic rather than a search
@@ -588,7 +588,7 @@ which of its numbered requests Sapote has since answered.
   and leaves the *frame*, which at HD is 6,220,800 bytes — eighty times the
   program's map — so `plane_row` exists, and a row of a 1920-wide RGB picture
   is 5,760 bytes, seven per cent of that address space rather than eighty times
-  it. Sapote's own bitmap reader already does exactly this, issuing random row
+  it. Phipia's own bitmap reader already does exactly this, issuing random row
   reads rather than holding a picture: two programs arriving at one shape from
   opposite ends of one constraint. The chain is now four links each built to
   avoid holding the one above — catalogue, material, spool, frame — and the
@@ -600,10 +600,10 @@ which of its numbered requests Sapote has since answered.
   sixteen mebibytes of photographs every time somebody trims a clip is a save
   protocol nobody can afford to run; so `commit` names its destination, and
   committing into the *scratch* is refused because that is where a save is
-  assembled. And a **ranged read**, which is the whole point: one of Sapote's
-  files holds sixteen mebibytes and a Sapote program is mapped seventy-six
+  assembled. And a **ranged read**, which is the whole point: one of Phipia's
+  files holds sixteen mebibytes and a Phipia program is mapped seventy-six
   kilobytes, so reading a whole vault on the target is off by 220× — not a
-  tight fit, not a thing to optimise later. Sapote's own bitmap reader already
+  tight fit, not a thing to optimise later. Phipia's own bitmap reader already
   solved this one layer down by issuing random row reads rather than holding a
   picture, so the seam took the same shape, short at the end rather than
   refused because that is what `sapfs_read` does. A `Catalogue` then holds a
@@ -617,29 +617,29 @@ which of its numbered requests Sapote has since answered.
   opens perfectly well and fails verification. Three controls passed — a guard
   that was doubled, a save-failure battery the project had and the vault did
   not, and a counter that could never count;
-- **Sapote's filesystem, and somewhere to paste a photograph into**. Written
-  after reading Sapote 2.1.0 rather than from memory, and the design is
+- **Phipia's filesystem, and somewhere to paste a photograph into**. Written
+  after reading Phipia 2.1.0 rather than from memory, and the design is
   dictated by two of its numbers: a directory holds **sixty-four** entries, so
   a hundred photographs cannot be a hundred files; and a name is **eight and
   three** from a fifty-two character alphabet, so even if they could be, they
   could not keep their names — an editor that renames somebody's material to
   `IMG~0007.BMP` on import has destroyed the only thing that said what it was.
-  So the media library is **one** of Sapote's files with a store inside it:
+  So the media library is **one** of Phipia's files with a store inside it:
   `SSV1`, a 56-byte header, 112 bytes an entry, and the material end to end.
   Two hundred and fifty-six items, four times what a directory holds, and
   16,748,488 bytes of payload — not a chosen number but what is left of sixteen
   mebibytes once a full index is in the file, asserted at compile time so the
   day either bound moves the build says which. Spans run end to end so there is
   one file for a given store; every digest is **recomputed** rather than
-  believed, because Sapote says plainly that FAT32 is not journaled and an
+  believed, because Phipia says plainly that FAT32 is not journaled and an
   interruption may leave a mismatch — so a damaged cluster becomes a named
   refusal instead of a photograph filed under somebody else's name. And a vault
   *is* a render library: material is keyed by digest, a clip refers to media by
   digest, a source node asks for a digest — so "the file is in the vault" and
   "the picture renders" are one fact. A photograph is a reel of one frame and
   footage is a reel of many, which is why one answer does for both. Beside it
-  is a 24-bit BMP codec bounded exactly as Sapote's importer is, so a file
-  Sapote accepts this accepts. Six of twenty-three controls passed first time —
+  is a 24-bit BMP codec bounded exactly as Phipia's importer is, so a file
+  Phipia accepts this accepts. Six of twenty-three controls passed first time —
   the worst run this project has had and the most useful: five were the same
   gap, that no test had ever built a *hostile file*, and the sixth found that
   the seal over the header is redundant because every field in it is already
@@ -841,7 +841,7 @@ which of its numbered requests Sapote has since answered.
   existed, `sapstudio-render` had **no symbol in the image at all** — half the
   project was absent from every footprint recorded, and linking it cost
   seventeen pages;
-- a freestanding program image that links at Sapote's user base as a static,
+- a freestanding program image that links at Phipia's user base as a static,
   non-PIE `ET_EXEC` with no dynamic section, no relocations, and no SIMD, built
   twice into different directories and compared byte for byte.
 
@@ -856,15 +856,15 @@ are listed, with what each refusal looked like, in
 [Verification](docs/VERIFICATION.md).
 
 **What it is waiting for:** `SAP-01` through `SAP-08` in
-[the platform contract](docs/PLATFORM_CONTRACT.md) — the capabilities Sapote
-must grow, each written as a measured profile in Sapote's own vocabulary.
+[the platform contract](docs/PLATFORM_CONTRACT.md) — the capabilities Phipia
+must grow, each written as a measured profile in Phipia's own vocabulary.
 
 ## The shape
 
 | Concern | Language |
 | --- | --- |
 | Project model, timeline, file management, undo/redo, media pipeline coordination, UI state | Rust |
-| The single boundary to Sapote's userspace ABI, and later to external codec libraries | C ABI |
+| The single boundary to Phipia's userspace ABI, and later to external codec libraries | C ABI |
 | Tiny freestanding shims where the boundary is instruction- or register-shaped | C |
 | Sealed inner loops, only after a correct Rust implementation exists to measure against and stay bit-exact with | C++ |
 
@@ -874,11 +874,11 @@ Two crates may contain `unsafe`. Every other crate forbids it by attribute.
 
 | Document | Contents |
 | --- | --- |
-| [Charter](docs/CHARTER.md) | What SapStudio is, what it refuses to be, and why it is Sapote-only |
+| [Charter](docs/CHARTER.md) | What SapStudio is, what it refuses to be, and why it is Phipia-only |
 | [Engineering rules](docs/ENGINEERING_RULES.md) | The normative rules |
 | [Open-source map](docs/DEPENDENCIES.md) | Every component considered, with licence and verdict |
 | [Dependency policy](docs/DEPENDENCY_POLICY.md) | How a dependency enters the tree, and how it leaves |
-| [Platform contract](docs/PLATFORM_CONTRACT.md) | What Sapote must provide, and what already works |
+| [Platform contract](docs/PLATFORM_CONTRACT.md) | What Phipia must provide, and what already works |
 | [Architecture](docs/ARCHITECTURE.md) | The planned crate map and data model |
 | [Roadmap](docs/ROADMAP.md) | Milestones, smallest first |
 | [Verification](docs/VERIFICATION.md) | What counts as evidence |
@@ -895,7 +895,7 @@ make lint           # hygiene: whitespace, headers, links, width; the crate
                     # documents assert, against the tree
 make check          # rustfmt and clippy::pedantic, warnings denied
 make test           # the host suite
-make image          # the freestanding program image for Sapote
+make image          # the freestanding program image for Phipia
 make audit          # R-13.4 and R-13.6 on the linked ELF, its control, and
                     # a breakdown of where the image's pages actually go
 make reproducible   # two clean builds, compared byte for byte
@@ -908,6 +908,6 @@ milestone can quietly land without them.
 
 ## Licence
 
-[GPL-3.0-only](LICENSE), the same licence as Sapote. Every dependency must be
+[GPL-3.0-only](LICENSE), the same licence as Phipia. Every dependency must be
 compatible with it, verified from vendored source rather than from registry
 metadata.

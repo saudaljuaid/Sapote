@@ -77,7 +77,7 @@ already-present automatic dependency is promoted by a successful zero-download
 install plan rather than being misreported as explicitly installed.
 
 Planning is serialized. Its roughly 9 KiB graph workspace is static rather than
-placed on Sapote's 16 KiB syscall stack, reentrant entry is refused, candidate
+placed on Phipia's 16 KiB syscall stack, reentrant entry is refused, candidate
 selection uses bounded catalog scans instead of a per-recursion candidate
 array, and topological ordering is iterative. The input byte buffers must remain
 immutable and live while returned views or plans are used because text and
@@ -132,7 +132,7 @@ generation-one bootstrap uses only admitted signed payload sources and a durable
 authority receipt rather than inventing a generation-zero database. A bounded
 repair builder preserves the installed graph and metadata while replacing only
 sorted owned paths whose authenticated bytes match the installed length and
-digest. The SDK's `sapote_package_fetch_stage()` supplies bounded HTTPS
+digest. The SDK's `phipia_package_fetch_stage()` supplies bounded HTTPS
 streaming, incremental SHA-256, temporary-file cleanup, and two-barrier atomic
 publication for inert repository/package bytes. Platform trust provisioning is
 also wired at boot. The `packages` native capability and typed upload handle now

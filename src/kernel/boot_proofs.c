@@ -2,7 +2,7 @@
 /*
  * What boot proves before it calls a layer established.
  *
- * Every subsystem in Sapote carries a self-test that runs on synthetic data,
+ * Every subsystem in Phipia carries a self-test that runs on synthetic data,
  * and every subsystem is also exercised here against the machine it actually
  * booted on. Those are different claims: a self-test says the arithmetic is
  * right, a proof says the hardware agreed.
@@ -18,36 +18,36 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/acpi.h>
-#include <sapote/apic.h>
-#include <sapote/apic_timer.h>
-#include <sapote/boot.h>
-#include <sapote/clock.h>
-#include <sapote/console.h>
-#include <sapote/cpu.h>
-#include <sapote/framebuffer.h>
-#include <sapote/font.h>
-#include <sapote/heap.h>
-#include <sapote/interrupts.h>
-#include <sapote/logo.h>
-#include <sapote/ioapic.h>
-#include <sapote/keyboard.h>
-#include <sapote/memory.h>
-#include <sapote/paging.h>
-#include <sapote/pci.h>
-#include <sapote/pic.h>
-#include <sapote/pit.h>
-#include <sapote/pm_timer.h>
-#include <sapote/screen.h>
-#include <sapote/self_test.h>
-#include <sapote/shell.h>
-#include <sapote/surface.h>
-#include <sapote/test.h>
-#include <sapote/thread.h>
-#include <sapote/timer.h>
-#include <sapote/tsc.h>
-#include <sapote/wall_clock.h>
-#include <sapote/boot_stages.h>
+#include <phipia/acpi.h>
+#include <phipia/apic.h>
+#include <phipia/apic_timer.h>
+#include <phipia/boot.h>
+#include <phipia/clock.h>
+#include <phipia/console.h>
+#include <phipia/cpu.h>
+#include <phipia/framebuffer.h>
+#include <phipia/font.h>
+#include <phipia/heap.h>
+#include <phipia/interrupts.h>
+#include <phipia/logo.h>
+#include <phipia/ioapic.h>
+#include <phipia/keyboard.h>
+#include <phipia/memory.h>
+#include <phipia/paging.h>
+#include <phipia/pci.h>
+#include <phipia/pic.h>
+#include <phipia/pit.h>
+#include <phipia/pm_timer.h>
+#include <phipia/screen.h>
+#include <phipia/self_test.h>
+#include <phipia/shell.h>
+#include <phipia/surface.h>
+#include <phipia/test.h>
+#include <phipia/thread.h>
+#include <phipia/timer.h>
+#include <phipia/tsc.h>
+#include <phipia/wall_clock.h>
+#include <phipia/boot_stages.h>
 
 /*
  * Ten milliseconds of the ACPI power management timer, whose rate the ACPI
@@ -152,7 +152,7 @@ void prove_level_route(void)
         console_panic(ioapic_status_string(ioapic_status));
     }
 
-    console_write("Sapote: I/O APIC level route id ");
+    console_write("Phipia: I/O APIC level route id ");
     console_write_u64(entry.unit_identifier);
     console_write(" GSI ");
     console_write_u64(entry.global_interrupt);
@@ -193,7 +193,7 @@ void prove_level_route(void)
         console_panic(pit_status_string(pit_status));
     }
 
-    console_write("Sapote: I/O APIC level deliveries ");
+    console_write("Phipia: I/O APIC level deliveries ");
     console_write_u64(pit_ticks());
     console_write(" remote IRR ");
     console_write_u64(ioapic.remote_irr_observed);
@@ -307,7 +307,7 @@ void prove_apic_timer(void)
         console_panic(apic_timer_status_string(status));
     }
 
-    console_write("Sapote: local APIC timer calibrated at ");
+    console_write("Phipia: local APIC timer calibrated at ");
     console_write_u64(apic_timer_counts_per_second());
     console_write(" counts per second\n");
 
@@ -349,7 +349,7 @@ void prove_tsc(void)
     }
 
     tsc = tsc_get_state();
-    console_write("Sapote: TSC calibrated at ");
+    console_write("Phipia: TSC calibrated at ");
     console_write_u64(tsc.frequency_hz);
     console_write(" Hz, invariant ");
     console_write(tsc.invariant ? "yes" : "no");
@@ -380,7 +380,7 @@ void prove_pm_timer(void)
         console_panic(pm_timer_status_string(status));
     }
 
-    console_write("Sapote: PM timer counted ");
+    console_write("Phipia: PM timer counted ");
     console_write_u64(elapsed_ticks);
     console_write(" ticks in ");
     console_write_u64(pm_timer_ticks_to_nanoseconds(elapsed_ticks));
@@ -458,7 +458,7 @@ void prove_clocks_without_pit(void)
     expected_ns = CLOCK_PROOF_TICKS * UINT64_C(1000000000) /
         CLOCK_PROOF_FREQUENCY;
 
-    console_write("Sapote: clocks agree: PM ");
+    console_write("Phipia: clocks agree: PM ");
     console_write_u64(measured_ns);
     console_write(" ns, APIC timer ");
     console_write_u64(expected_ns);
@@ -497,7 +497,7 @@ void prove_monotonic_time(void)
     }
 
     clock = clock_get_state();
-    console_write("Sapote: monotonic clock on ");
+    console_write("Phipia: monotonic clock on ");
     console_write(clock_source_string(clock.source));
     console_putc('\n');
 
@@ -512,7 +512,7 @@ void prove_monotonic_time(void)
      * now whatever timer_start obtained from the heap rather than an array
      * bound the compiler fixed.
      */
-    console_write("Sapote: deadline table of ");
+    console_write("Phipia: deadline table of ");
     console_write_u64(timer_capacity());
     console_write(" entries on the heap\n");
 
@@ -529,7 +529,7 @@ void prove_monotonic_time(void)
 
     slept_ns = clock_monotonic_ns() - before;
 
-    console_write("Sapote: slept ");
+    console_write("Phipia: slept ");
     console_write_u64(slept_ns);
     console_write(" ns for a ");
     console_write_u64(SLEEP_PROOF_NS);
@@ -574,7 +574,7 @@ void prove_wall_clock(void)
         console_panic(wall_clock_status_string(status));
     }
 
-    console_write("Sapote: RTC UTC ");
+    console_write("Phipia: RTC UTC ");
     console_write_u64(utc.year);
     console_putc('-');
     if (utc.month < 10U) {
@@ -613,7 +613,7 @@ void install_page_tables(const struct paging_device_windows *device_windows)
         console_panic(paging_status_string(status));
     }
 
-    console_write("Sapote: paging root ");
+    console_write("Phipia: paging root ");
     console_write_hex(paging.root_physical_address);
     console_write(" table frames ");
     console_write_u64(paging.table_frames);
@@ -625,7 +625,7 @@ void install_page_tables(const struct paging_device_windows *device_windows)
     console_write(paging.write_protect_active ? "yes" : "no");
     console_putc('\n');
 
-    console_write("Sapote: paging leaves ");
+    console_write("Phipia: paging leaves ");
     console_write_u64(audit.leaf_count);
     console_write(" writable ");
     console_write_u64(audit.writable_leaves);
@@ -653,7 +653,7 @@ void install_page_tables(const struct paging_device_windows *device_windows)
         const struct paging_device_windows *installed =
             paging_get_device_windows();
 
-        console_write("Sapote: installed device-window proof failed: ");
+        console_write("Phipia: installed device-window proof failed: ");
 
         if (failed_window < installed->count) {
             const struct paging_device_window *window =
@@ -682,8 +682,8 @@ void install_page_tables(const struct paging_device_windows *device_windows)
         console_panic("W^X cannot be enforced on this processor");
     }
 
-    console_write("Sapote: kernel page tables installed\n");
-    console_write("Sapote: no writable executable mapping\n");
+    console_write("Phipia: kernel page tables installed\n");
+    console_write("Phipia: no writable executable mapping\n");
 }
 
 static uint64_t described_ecam_window(const struct acpi_mcfg *mcfg)
@@ -697,7 +697,7 @@ static uint64_t described_ecam_window(const struct acpi_mcfg *mcfg)
     base = mcfg->allocations[0].base_address;
 
     if (base == 0U || (base & (PAGING_HUGE_PAGE_SIZE - 1U)) != 0U ||
-        base > SAPOTE_EARLY_PHYSICAL_LIMIT - PAGING_ECAM_WINDOW_SIZE) {
+        base > PHIPIA_EARLY_PHYSICAL_LIMIT - PAGING_ECAM_WINDOW_SIZE) {
         return 0U;
     }
 
@@ -723,7 +723,7 @@ static uint64_t described_framebuffer_window(
 
     end = framebuffer->address + framebuffer->size;
 
-    if (end > SAPOTE_EARLY_PHYSICAL_LIMIT) {
+    if (end > PHIPIA_EARLY_PHYSICAL_LIMIT) {
         return 0U;
     }
 
@@ -835,20 +835,20 @@ void prove_write_combining(
         console_panic("ordinary RAM is not write-back");
     }
 
-    console_write("Sapote: IA32_PAT before ");
+    console_write("Phipia: IA32_PAT before ");
     console_write_hex(paging.pat_before);
     console_write(" after ");
     console_write_hex(paging.pat_after);
     console_write(" entry ");
     console_write_u64(paging.write_combining_pat_entry);
     console_write(" write-combining\n");
-    console_write("Sapote: framebuffer memory type ");
+    console_write("Phipia: framebuffer memory type ");
     console_write(framebuffer_size == 0U ? "absent" :
         paging_memory_type_string(PAGING_MEMORY_WRITE_COMBINING));
     console_write(" pages ");
     console_write_u64(framebuffer_size / PAGING_PAGE_SIZE);
     console_putc('\n');
-    console_write("Sapote: write-combining established\n");
+    console_write("Phipia: write-combining established\n");
 }
 
 /*
@@ -884,7 +884,7 @@ void prove_paging_lifecycle(void)
     status = paging_map(
         PAGING_PROBE_ADDRESS,
         frame,
-        SAPOTE_PAGE_SIZE,
+        PHIPIA_PAGE_SIZE,
         PAGING_WRITE
     );
 
@@ -908,7 +908,7 @@ void prove_paging_lifecycle(void)
 
     status = paging_protect(
         PAGING_PROBE_ADDRESS,
-        SAPOTE_PAGE_SIZE,
+        PHIPIA_PAGE_SIZE,
         PAGING_READ
     );
 
@@ -927,7 +927,7 @@ void prove_paging_lifecycle(void)
         console_panic("a read-only mapping lost the page contents");
     }
 
-    status = paging_unmap(PAGING_PROBE_ADDRESS, SAPOTE_PAGE_SIZE);
+    status = paging_unmap(PAGING_PROBE_ADDRESS, PHIPIA_PAGE_SIZE);
 
     if (status != PAGING_STATUS_OK) {
         console_panic(paging_status_string(status));
@@ -977,7 +977,7 @@ void bring_up_heap(void)
     }
 
     heap = heap_get_state();
-    console_write("Sapote: heap window ");
+    console_write("Phipia: heap window ");
     console_write_hex(heap.base_address);
     console_write(" size ");
     console_write_u64(heap.size);
@@ -1063,7 +1063,7 @@ void prove_heap_lifecycle(void)
     }
 
     heap = heap_get_state();
-    console_write("Sapote: heap committed ");
+    console_write("Phipia: heap committed ");
     console_write_u64(heap.committed_bytes);
     console_write(" bytes in ");
     console_write_u64(heap.mapped_pages);
@@ -1135,8 +1135,8 @@ void prove_heap_lifecycle(void)
         console_panic("heap accepted a pointer it had already merged away");
     }
 
-    console_write("Sapote: kernel heap online\n");
-    console_write("Sapote: heap coalesced to one free block\n");
+    console_write("Phipia: kernel heap online\n");
+    console_write("Phipia: heap coalesced to one free block\n");
 }
 
 /*
@@ -1160,7 +1160,7 @@ void bring_up_pci(const struct acpi_mcfg *mcfg, bool present)
     }
 
     pci = pci_get_state();
-    console_write("Sapote: PCI mechanism 1 online, ");
+    console_write("Phipia: PCI mechanism 1 online, ");
     console_write(pci.ecam_active ? "window mapped at " : "no window mapped");
 
     if (pci.ecam_active) {
@@ -1172,7 +1172,7 @@ void bring_up_pci(const struct acpi_mcfg *mcfg, bool present)
     }
 
     console_putc('\n');
-    console_write("Sapote: PCI buses ");
+    console_write("Phipia: PCI buses ");
     console_write_u64(pci.bus_count);
     console_write(" functions ");
     console_write_u64(pci.function_count);
@@ -1187,7 +1187,7 @@ void bring_up_pci(const struct acpi_mcfg *mcfg, bool present)
             console_panic("PCI reported a function it cannot return");
         }
 
-        console_write("Sapote: PCI ");
+        console_write("Phipia: PCI ");
         console_write_u64(function->address.bus);
         console_putc(':');
         console_write_u64(function->address.device);
@@ -1235,7 +1235,7 @@ void bring_up_pci(const struct acpi_mcfg *mcfg, bool present)
         console_panic("PCI enumeration found no functions");
     }
 
-    console_write("Sapote: PCI configuration space enumerated\n");
+    console_write("Phipia: PCI configuration space enumerated\n");
 
     /*
      * The claim the second mechanism exists to make. Two readers built
@@ -1244,7 +1244,7 @@ void bring_up_pci(const struct acpi_mcfg *mcfg, bool present)
      * is nothing to compare, and saying so is better than reporting a
      * comparison that did not happen.
      */
-    console_write("Sapote: PCI mechanisms agree on ");
+    console_write("Phipia: PCI mechanisms agree on ");
     console_write_u64(pci.compared_dwords);
     console_write(" registers of ");
     console_write_u64(pci.compared_functions);
@@ -1322,7 +1322,7 @@ void prove_threads(void)
     }
 
     threads = thread_get_state();
-    console_write("Sapote: threads online, ");
+    console_write("Phipia: threads online, ");
     console_write_u64(threads.ready);
     console_write(" ready of ");
     console_write_u64(threads.capacity);
@@ -1377,7 +1377,7 @@ void prove_threads(void)
         }
     }
 
-    console_write("Sapote: thread rotation ");
+    console_write("Phipia: thread rotation ");
 
     for (size_t index = 0; index < thread_rotation_length; ++index) {
         console_write_u64(thread_rotation[index]);
@@ -1411,7 +1411,7 @@ void prove_threads(void)
         console_panic("the boot thread did not resume");
     }
 
-    console_write("Sapote: threads switched ");
+    console_write("Phipia: threads switched ");
     console_write_u64(threads.switches);
     console_write(" times, ");
     console_write_u64(threads.exited);
@@ -1442,7 +1442,7 @@ void prove_threads(void)
         console_panic("starting and stopping threads did not return every frame");
     }
 
-    console_write("Sapote: kernel threads established\n");
+    console_write("Phipia: kernel threads established\n");
 }
 
 /*
@@ -1472,12 +1472,12 @@ void prove_framebuffer(const struct boot_framebuffer *framebuffer)
     enum framebuffer_status status = framebuffer_initialize(framebuffer);
 
     /*
-     * A loader that set no graphics mode is not a failure. Sapote has run on
+     * A loader that set no graphics mode is not a failure. Phipia has run on
      * the serial console since day one and continues to; this says so and moves
      * on, the same shape as a machine that declares no MCFG.
      */
     if (status == FRAMEBUFFER_STATUS_ABSENT) {
-        console_write("Sapote: no framebuffer, serial console only\n");
+        console_write("Phipia: no framebuffer, serial console only\n");
         return;
     }
 
@@ -1486,7 +1486,7 @@ void prove_framebuffer(const struct boot_framebuffer *framebuffer)
     }
 
     screen = framebuffer_get_state();
-    console_write("Sapote: framebuffer ");
+    console_write("Phipia: framebuffer ");
     console_write_u64(screen.width);
     console_putc('x');
     console_write_u64(screen.height);
@@ -1549,7 +1549,7 @@ void prove_framebuffer(const struct boot_framebuffer *framebuffer)
         }
     }
 
-    console_write("Sapote: framebuffer verified ");
+    console_write("Phipia: framebuffer verified ");
     console_write_u64(checked);
     console_write(" pixels\n");
 
@@ -1573,7 +1573,7 @@ void prove_framebuffer(const struct boot_framebuffer *framebuffer)
         console_panic("the framebuffer is not device memory");
     }
 
-    console_write("Sapote: framebuffer established\n");
+    console_write("Phipia: framebuffer established\n");
 }
 
 /*
@@ -1763,7 +1763,7 @@ void prove_surface(void)
         console_panic("two-corner damage missed the last framebuffer corner");
     }
 
-    console_write("Sapote: surface ");
+    console_write("Phipia: surface ");
     console_write_u64(surface.width);
     console_putc('x');
     console_write_u64(surface.height);
@@ -1772,14 +1772,14 @@ void prove_surface(void)
     console_write(" buffer ");
     console_write_u64((uint64_t)surface.pitch * surface.height);
     console_write(" bytes\n");
-    console_write("Sapote: surface cycles full present ");
+    console_write("Phipia: surface cycles full present ");
     console_write_u64(full_cycles);
     console_write(" one-line update ");
     console_write_u64(line_cycles);
     console_write(" scroll ");
     console_write_u64(scroll_cycles);
     console_putc('\n');
-    console_write("Sapote: surface split cycles full draw ");
+    console_write("Phipia: surface split cycles full draw ");
     console_write_u64(full_draw_cycles);
     console_write(" push ");
     console_write_u64(full_push_cycles);
@@ -1792,7 +1792,7 @@ void prove_surface(void)
     console_write(" push ");
     console_write_u64(scroll_push_cycles);
     console_putc('\n');
-    console_write("Sapote: surface sparse two-corner cycles total ");
+    console_write("Phipia: surface sparse two-corner cycles total ");
     console_write_u64(sparse_cycles);
     console_write(" draw ");
     console_write_u64(sparse_draw_cycles);
@@ -1801,7 +1801,7 @@ void prove_surface(void)
     console_write(" union ");
     console_write_u64(surface.last_present_pixels);
     console_putc('\n');
-    console_write("Sapote: surface copied ");
+    console_write("Phipia: surface copied ");
     console_write_u64((uint64_t)surface.width * surface.height);
     console_write(" full, ");
     console_write_u64((uint64_t)surface.width * line_height);
@@ -1815,7 +1815,7 @@ void prove_surface(void)
         console_panic(surface_status_string(status));
     }
 
-    console_write("Sapote: cached surface established\n");
+    console_write("Phipia: cached surface established\n");
 }
 
 /*
@@ -1844,18 +1844,18 @@ void draw_logo(void)
     uint32_t origin_x;
     uint32_t origin_y;
     uint64_t compared = 0U;
-    int32_t status = sapote_logo_geometry(&width, &height);
+    int32_t status = phipia_logo_geometry(&width, &height);
 
     if (status != LOGO_STATUS_OK) {
         console_panic(logo_status_string(status));
     }
 
-    console_write("Sapote: logo ");
+    console_write("Phipia: logo ");
     console_write_u64(width);
     console_putc('x');
     console_write_u64(height);
     console_write(" from ");
-    console_write_u64(sapote_logo_size());
+    console_write_u64(phipia_logo_size());
     console_write(" bytes, decoded by Rust\n");
 
     if (width > screen.width || height > screen.height) {
@@ -1880,19 +1880,19 @@ void draw_logo(void)
      * in the decoder's own tests, because this is the call site whose length
      * argument would be wrong if anything upstream of it were.
      */
-    if (sapote_logo_decode(decoded, (size_t)((uint64_t)width * height - 1U),
+    if (phipia_logo_decode(decoded, (size_t)((uint64_t)width * height - 1U),
             screen.red_position, screen.green_position, screen.blue_position,
             background) != LOGO_STATUS_BUFFER_TOO_SMALL) {
         console_panic("the logo decoder accepted a short buffer");
     }
 
-    if (sapote_logo_decode(NULL, (size_t)((uint64_t)width * height),
+    if (phipia_logo_decode(NULL, (size_t)((uint64_t)width * height),
             screen.red_position, screen.green_position, screen.blue_position,
             background) != LOGO_STATUS_NULL_ARGUMENT) {
         console_panic("the logo decoder accepted a null buffer");
     }
 
-    status = sapote_logo_decode(decoded, (size_t)((uint64_t)width * height),
+    status = phipia_logo_decode(decoded, (size_t)((uint64_t)width * height),
         screen.red_position, screen.green_position, screen.blue_position,
         background);
 
@@ -1959,7 +1959,7 @@ void draw_logo(void)
         console_panic("the decoded logo could not be released");
     }
 
-    console_write("Sapote: logo verified ");
+    console_write("Phipia: logo verified ");
     console_write_u64(compared);
     console_write(" pixels on screen\n");
 
@@ -1967,7 +1967,7 @@ void draw_logo(void)
         console_panic("the logo proof skipped part of the image");
     }
 
-    console_write("Sapote: logo established\n");
+    console_write("Phipia: logo established\n");
 }
 
 /*
@@ -2091,7 +2091,7 @@ void prove_preemption(void)
     cpu_interrupt_disable();
     threads = thread_get_state();
 
-    console_write("Sapote: preempted ");
+    console_write("Phipia: preempted ");
     console_write_u64(threads.preemptions);
     console_write(" times across ");
     console_write_u64(threads.switches);
@@ -2099,7 +2099,7 @@ void prove_preemption(void)
     console_write_u64((clock_monotonic_ns() - started_ns) / 1000000U);
     console_write(" ms\n");
 
-    console_write("Sapote: unyielding threads ran");
+    console_write("Phipia: unyielding threads ran");
 
     for (size_t index = 0; index < THREAD_PROOF_THREADS; ++index) {
         console_putc(' ');
@@ -2150,7 +2150,7 @@ void prove_preemption(void)
         console_panic(thread_status_string(status));
     }
 
-    console_write("Sapote: preemption established\n");
+    console_write("Phipia: preemption established\n");
 }
 
 void prove_frame_lifecycle(void)
@@ -2172,12 +2172,12 @@ void prove_frame_lifecycle(void)
     }
 
     if (first_frame == second_frame ||
-        (first_frame & (SAPOTE_PAGE_SIZE - 1U)) != 0U ||
-        (second_frame & (SAPOTE_PAGE_SIZE - 1U)) != 0U) {
+        (first_frame & (PHIPIA_PAGE_SIZE - 1U)) != 0U ||
+        (second_frame & (PHIPIA_PAGE_SIZE - 1U)) != 0U) {
         console_panic("frame allocator returned an invalid address");
     }
 
-    console_write("Sapote: frame probe: ");
+    console_write("Phipia: frame probe: ");
     console_write_hex(first_frame);
     console_write(" and ");
     console_write_hex(second_frame);
@@ -2223,7 +2223,7 @@ void prove_frame_lifecycle(void)
  */
 void prove_screen_console(void)
 {
-    static const char sample[] = "Sapote";
+    static const char sample[] = "Phipia";
     static const size_t sample_length = sizeof(sample) - 1U;
 
     struct screen_state before;
@@ -2238,7 +2238,7 @@ void prove_screen_console(void)
 
     before = screen_get_state();
 
-    console_write("Sapote: screen console ");
+    console_write("Phipia: screen console ");
     console_write_u64(before.columns);
     console_write("x");
     console_write_u64(before.rows);
@@ -2247,7 +2247,7 @@ void prove_screen_console(void)
     console_write("x");
     console_write_u64(before.cell_height);
     console_write(", font ");
-    console_write_u64(sapote_font_size());
+    console_write_u64(phipia_font_size());
     console_write(" bytes\n");
 
     /*
@@ -2375,18 +2375,18 @@ void prove_screen_console(void)
     }
 
     after = screen_get_state();
-    console_write("Sapote: screen console drew ");
+    console_write("Phipia: screen console drew ");
     console_write_u64(after.characters);
     console_write(" characters and scrolled ");
     console_write_u64(after.scrolls);
     console_write(" times\n");
-    console_write("Sapote: screen console established\n");
+    console_write("Phipia: screen console established\n");
 }
 
 /*
  * The keyboard, proved without a person at the machine.
  *
- * Every other device Sapote brings up either announces itself or can be asked a
+ * Every other device Phipia brings up either announces itself or can be asked a
  * question. A keyboard does neither: it says nothing until somebody presses a
  * key, and boot cannot wait for that.
  *
@@ -2494,17 +2494,17 @@ void prove_keyboard(void)
         console_panic("the keyboard left shift held after its release");
     }
 
-    console_write("Sapote: keyboard 8042 online, IRQ 1 routed, ");
+    console_write("Phipia: keyboard 8042 online, IRQ 1 routed, ");
     console_write_u64(after.interrupts - before.interrupts);
     console_write(" interrupts for ");
     console_write_u64(after.events);
     console_write(" events\n");
-    console_write("Sapote: keyboard decoded \"");
+    console_write("Phipia: keyboard decoded \"");
     for (size_t index = 0; index < characters; ++index) {
         console_putc(seen[index]);
     }
     console_write("\" from injected scancodes\n");
-    console_write("Sapote: keyboard established\n");
+    console_write("Phipia: keyboard established\n");
 }
 
 /*
@@ -2532,7 +2532,7 @@ void prove_shell(void)
     };
     static const char echoed[] = "echo hi";
     static const char output[] = "hi";
-    static const char prompt[] = "sap> ";
+    static const char prompt[] = "phip> ";
 
     struct shell_state before;
     struct shell_state after;
@@ -2638,11 +2638,11 @@ void prove_shell(void)
      * next transcript line beginning halfway across the screen.
      */
     console_putc('\n');
-    console_write("Sapote: shell ran \"");
+    console_write("Phipia: shell ran \"");
     console_write(echoed);
     console_write("\" from ");
     console_write_u64(sizeof(typed));
     console_write(" injected scancodes\n");
-    console_write("Sapote: shell output verified on screen\n");
-    console_write("Sapote: shell established\n");
+    console_write("Phipia: shell output verified on screen\n");
+    console_write("Phipia: shell established\n");
 }

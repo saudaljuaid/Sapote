@@ -2,7 +2,7 @@
 
 # Verification
 
-SapStudio takes Sapote's position on evidence without softening it: a green run
+SapStudio takes Phipia's position on evidence without softening it: a green run
 proves the checked contract under its recorded conditions, and nothing more. It
 does not imply an untested format works, an untested machine boots, or a
 performance number holds anywhere else.
@@ -47,17 +47,17 @@ of failing on every run rather than on the day someone remembers to check.
 
 ## What counts as evidence
 
-**Acceptance is a QEMU scenario on Sapote.** Host tests are supporting
+**Acceptance is a QEMU scenario on Phipia.** Host tests are supporting
 evidence. A behaviour that has only ever been observed on the host is not a
 behaviour SapStudio claims — which is why nothing in this repository claims the
-program runs. It claims the image has a shape Sapote accepts, which is a
+program runs. It claims the image has a shape Phipia accepts, which is a
 different and much smaller statement, and it is the one the audit proves.
 
 **A scenario is bounded and named.** Each has a stable identifier, a required
 serial transcript, an expected guest exit value, and a fixture built by a
 committed deterministic tool. Fixtures are ordinary local files attached
 read-only to emulated devices; host-device passthrough is never used as
-evidence, exactly as Sapote requires.
+evidence, exactly as Phipia requires.
 
 **A screenshot shows presentation, not correctness.** Pixel comparisons are
 used for what they can prove — that the drawn output has not changed — and a
@@ -68,7 +68,7 @@ number without both is an anecdote.
 
 ## Negative controls
 
-Every invariant carries one, and the procedure is Sapote's: make one isolated
+Every invariant carries one, and the procedure is Phipia's: make one isolated
 temporary mutation that violates the invariant, run the narrowest relevant
 gate, observe the refusal by its name, and restore the source. The mutation is
 never committed; the fact that it was performed, and the exact refusal it
@@ -626,24 +626,24 @@ Examples this project will need:
 | The file carries a shot's notes | Write an empty list | Four tests fail, and — as ever — **not** the round trip of a project without any |
 | A shot's notes come back through the model's own door | Skip the ones the model refuses | Two tests fail; a file holds a clip no sequence of edits could produce |
 | A clip's note list is read against the *clip's* bound | Read it against the sequence's | A file gives one shot thousands of notes |
-| The name subset is Sapote's, not a superset | Accept every printable byte | A name with a space reaches the kernel and is refused there instead |
+| The name subset is Phipia's, not a superset | Accept every printable byte | A name with a space reaches the kernel and is refused there instead |
 | A name is uppercased | Keep it as typed | Two tests fail; `clip.bmp` and `CLIP.BMP` become two pieces of material |
-| Eight and three are bounded **separately** — **control passed, the test was missing** | Bound their sum instead | *Nothing failed.* Both fixtures were twelve characters, which the sum refuses too. A base of nine and an extension of two — eleven between them, which a sum accepts and Sapote does not — now pins it |
+| Eight and three are bounded **separately** — **control passed, the test was missing** | Bound their sum instead | *Nothing failed.* Both fixtures were twelve characters, which the sum refuses too. A base of nine and an extension of two — eleven between them, which a sum accepts and Phipia does not — now pins it |
 | A name has one dot, and not at either end | Refuse only the second | A Unix hidden file is accepted as a name |
 | A path is relative to one mount | Drop the check | A leading separator is read as an empty first component |
 | A path cannot climb above its mount | Let the pop fail silently | A path of dot-dots reaches outside the volume |
-| The path bounds are Sapote's | Raise the component bound a hundredfold | A path longer than the mount accepts is built and refused at the kernel |
+| The path bounds are Phipia's | Raise the component bound a hundredfold | A path longer than the mount accepts is built and refused at the kernel |
 | A bitmap's rows are padded to four bytes | Drop the padding | A picture whose width is not a multiple of four comes back sheared |
 | A bitmap's rows run bottom-up | Read them top-down regardless | Two tests fail; every imported photograph is upside down |
 | A bitmap's channels run blue, green, red | Read them in order | Three tests fail; every photograph has its red and blue swapped |
 | *Unsupported* is a different answer from *malformed* | Accept every bit depth | A palette bitmap is called broken rather than unread |
-| A bitmap is bounded as Sapote bounds one | Raise both bounds eightfold | A picture past what Sapote reads is imported here and not there |
+| A bitmap is bounded as Phipia bounds one | Raise both bounds eightfold | A picture past what Phipia reads is imported here and not there |
 | A height with no positive counterpart is refused | Drop the `i32::MIN` case | A top-down height of `i32::MIN` negates into itself |
 | The seal covers the index as well as the material — **control passed, the test was missing** | Seal only the header | *Nothing failed.* Every hostile-file test resealed, and the byte sweep's refusals all came from other checks. `a_file_whose_name_is_edited_is_refused` now changes a name to another legal name, which nothing but the seal can notice |
 | A vault's spans run end to end — **control passed, the test was missing** | Accept a gap | *Nothing failed.* No test built a hostile *file*; the sweep's mutations were caught by the digest recomputation instead. Five resealed-file tests now exist, and this mutation fails the first |
 | A vault recomputes what its material is — **control passed, the test was missing** | Believe the file's digest | *Nothing failed*, for the same reason. A resealed file with one payload byte changed now fails it |
 | The same material twice is refused | Accept it | A vault holds two entries whose digests are equal |
-| A vault fits in one of Sapote's files | Double the payload bound | A vault is built that the filesystem cannot store |
+| A vault fits in one of Phipia's files | Double the payload bound | A vault is built that the filesystem cannot store |
 | A vault holds no more material than its bound — **control passed, the test was missing** | Drop the count check | *Nothing failed*, for the same reason. A resealed file claiming 257 items now fails it |
 | The unused tail of a name field is zero — **control passed, the test was missing** | Accept anything there | *Nothing failed*, for the same reason. Two files decoding alike and differing byte for byte is the end of a canonical format, and a resealed file with a tail byte now pins it |
 | *Absent* and *unreadable* are different answers | Report a damaged file as a missing one | Somebody is sent looking for a drive that is mounted |
@@ -1446,7 +1446,7 @@ period, and sixteen pages never moved.
 
 Worse, the conclusion drawn from the number — that the answer is to split the
 program so the image links fewer crates — was aimed at the smaller half. The
-arena alone is eighty-four per cent of what a Sapote program is given.
+arena alone is eighty-four per cent of what a Phipia program is given.
 
 Nothing here was a *bug*: every measurement was correct and every entry in the
 table was true. What was wrong was the sentence wrapped around them, and no
@@ -2198,9 +2198,9 @@ runs: `counts.py` reads the totals the README states, `tests/size.rs` pins the
 byte counts a doc comment argues from, `footprint.py` refuses when it stops
 understanding the mangling, and every invariant carries a control.
 
-The platform contract asserts numbers about **Sapote**, and nothing held any of
-them. It was written against Sapote v1.1.0 and said, in its own opening and in
-the charter and in the README, that *Sapote cannot run SapStudio*. Sapote
+The platform contract asserts numbers about **Phipia**, and nothing held any of
+them. It was written against Phipia v1.1.0 and said, in its own opening and in
+the charter and in the README, that *Phipia cannot run SapStudio*. Phipia
 reached 2.1.0. It grew a read-write FAT32 volume, a versioned native syscall
 boundary carrying time and entropy, and a SapStudio editing workspace in its
 own shell — and this repository went on saying the opposite for eleven
@@ -2212,18 +2212,18 @@ re-measured, and a re-measurement is one command away. A stale claim about
 another repository is a number nobody could re-measure without going and
 reading that repository, which nothing in this build does or can do.
 
-**What changed as a result.** The platform contract now states the Sapote
+**What changed as a result.** The platform contract now states the Phipia
 version *and commit* it was read against, at the top, in bold, as a basis
 rather than as background; the capability table's column says which version it
-describes; and the five numbered requests Sapote has since answered are marked
-answered, with what Sapote actually built quoted beside what this document had
-asked for. Keeping the request next to its answer is deliberate: Sapote built
+describes; and the five numbered requests Phipia has since answered are marked
+answered, with what Phipia actually built quoted beside what this document had
+asked for. Keeping the request next to its answer is deliberate: Phipia built
 `SAP-08` larger than it was asked and built `SAP-05` and `SAP-14` for
 networking's sake rather than for this project's, and both of those facts
 predict how the rest of the list will be answered.
 
 **What has not changed** is the one finding that still holds: no `OSFXSR`, no
-`OSXSAVE`, no `fxsave`, no `xsave` anywhere in Sapote's source, and a kernel
+`OSXSAVE`, no `fxsave`, no `xsave` anywhere in Phipia's source, and a kernel
 still built `-mno-sse -msoft-float`. Re-checked at 2.1.0. It is the reason
 every number in this program is an exact integer, and it is the only item on
 the list that has not moved in eleven releases.
@@ -2231,7 +2231,7 @@ the list that has not moved in eleven releases.
 There is no automated control for this one, and saying so is better than
 implying otherwise. The nearest thing to a control is the version and commit at
 the top of the document, which at least makes the staleness *visible* to the
-next person who reads Sapote — the same trick the growth history uses, and the
+next person who reads Phipia — the same trick the growth history uses, and the
 same trick `expect` uses in place of `allow`.
 
 ### Six controls that passed, and the one gap behind five of them
@@ -2347,5 +2347,5 @@ dependency manifest, every QEMU transcript, the golden hashes, the fuzz corpora
 state, the benchmark results with their machine profile, and a plain statement
 of what the release does not do.
 
-A binary is not published unless those records match — the same rule Sapote
+A binary is not published unless those records match — the same rule Phipia
 applies to its measured BusyBox profiles, for the same reason.

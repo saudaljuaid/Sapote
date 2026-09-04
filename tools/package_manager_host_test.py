@@ -16,10 +16,10 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
-    "sapote_repository_for_guest_test", ROOT / "tools" / "sapote-repository.py"
+    "phipia_repository_for_guest_test", ROOT / "tools" / "phipia-repository.py"
 )
 if SPEC is None or SPEC.loader is None:
-    raise RuntimeError("could not load the Sapote repository tool")
+    raise RuntimeError("could not load the Phipia repository tool")
 REPOSITORY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(REPOSITORY)
 PACKAGE = REPOSITORY.PACKAGE
@@ -42,7 +42,7 @@ def package_spec(identifier: str, name: str, *,
         "identifier": identifier,
         "name": name,
         "version": version,
-        "publisher": "Sapote Package Test",
+        "publisher": "Phipia Package Test",
         "capabilities": ["console"],
         "dependencies": dependencies or [],
         "conflicts": [],
@@ -70,7 +70,7 @@ def repository_package(identifier: str, version: str, payload: bytes,
 def repository_spec(packages: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "format": 1,
-        "repository": "org.sapote.main",
+        "repository": "org.phipia.main",
         "repository_version": 42,
         "generated_at": GENERATED,
         "expires_at": EXPIRES,
@@ -93,34 +93,34 @@ def main() -> int:
             "[CONTROL_TEST]"
         )
     if not PACKAGE.ed25519_available():
-        if os.environ.get("SAPOTE_REQUIRE_ED25519") == "1":
+        if os.environ.get("PHIPIA_REQUIRE_ED25519") == "1":
             raise AssertionError("Python Ed25519 support is required")
-        print("Sapote guest package-manager tests skipped: Ed25519 unavailable")
+        print("Phipia guest package-manager tests skipped: Ed25519 unavailable")
         return 0
 
     root_public = PACKAGE._ed25519_public_bytes_from_private(ROOT_SEED)
     publisher_public = PACKAGE._ed25519_public_bytes_from_private(PUBLISHER_SEED)
     publisher_key_id = hashlib.sha256(publisher_public).hexdigest()
     dependency = [{
-        "identifier": "org.sapote.lib",
+        "identifier": "org.phipia.lib",
         "constraint": ">=1.0.0,<2.0.0",
     }]
     library = PACKAGE.build_package_v3(
-        package_spec("org.sapote.lib", "Proof Library"),
+        package_spec("org.phipia.lib", "Proof Library"),
         ({"path": "lib/libproof.so.1", "kind": "library",
           "soname": "libproof.so.1", "payload": b"\x7fELFproof-library"},),
         PUBLISHER_SEED,
     )
     application = PACKAGE.build_package_v3(
-        package_spec("org.sapote.app", "Proof Application", dependencies=dependency),
+        package_spec("org.phipia.app", "Proof Application", dependencies=dependency),
         ({"path": "bin/proof-app", "kind": "executable",
           "payload": b"\x7fELFproof-application"},),
         PUBLISHER_SEED,
     )
     main_packages = [
-        repository_package("org.sapote.app", "1.0.0", application,
+        repository_package("org.phipia.app", "1.0.0", application,
                            publisher_key_id, dependencies=dependency),
-        repository_package("org.sapote.lib", "1.0.0", library,
+        repository_package("org.phipia.lib", "1.0.0", library,
                            publisher_key_id, provides=[{
                                "identifier": "virtual.proof",
                                "version": "1.0.0",
@@ -128,27 +128,27 @@ def main() -> int:
     ]
     main_index = REPOSITORY.build_repository(repository_spec(main_packages), ROOT_SEED)
     replacement_dependency = [{
-        "identifier": "org.sapote.newlib",
+        "identifier": "org.phipia.newlib",
         "constraint": "^2.0.0",
     }]
     replacement_library = PACKAGE.build_package_v3(
-        package_spec("org.sapote.newlib", "Replacement Library", version="2.0.0"),
+        package_spec("org.phipia.newlib", "Replacement Library", version="2.0.0"),
         ({"path": "lib/libnew.so.2", "kind": "library",
           "soname": "libnew.so.2", "payload": b"\x7fELFreplacement-library"},),
         PUBLISHER_SEED,
     )
     replacement_application = PACKAGE.build_package_v3(
-        package_spec("org.sapote.app", "Proof Application", version="2.0.0",
+        package_spec("org.phipia.app", "Proof Application", version="2.0.0",
                      dependencies=replacement_dependency),
         ({"path": "bin/proof-app", "kind": "executable",
           "payload": b"\x7fELFupdated-application"},),
         PUBLISHER_SEED,
     )
     update_index = REPOSITORY.build_repository(repository_spec([
-        repository_package("org.sapote.app", "2.0.0", replacement_application,
+        repository_package("org.phipia.app", "2.0.0", replacement_application,
                            publisher_key_id,
                            dependencies=replacement_dependency),
-        repository_package("org.sapote.newlib", "2.0.0", replacement_library,
+        repository_package("org.phipia.newlib", "2.0.0", replacement_library,
                            publisher_key_id),
     ]), ROOT_SEED)
     trusted_root = {hashlib.sha256(root_public).hexdigest(): root_public}
@@ -164,45 +164,45 @@ def main() -> int:
         name, "1.0.0", version, publisher_key_id
     )
     cycle = REPOSITORY.build_repository(repository_spec([
-        {**dummy("org.sapote.a"), "dependencies": [
-            {"identifier": "org.sapote.b", "constraint": "*"}]},
-        {**dummy("org.sapote.b"), "dependencies": [
-            {"identifier": "org.sapote.a", "constraint": "*"}]},
+        {**dummy("org.phipia.a"), "dependencies": [
+            {"identifier": "org.phipia.b", "constraint": "*"}]},
+        {**dummy("org.phipia.b"), "dependencies": [
+            {"identifier": "org.phipia.a", "constraint": "*"}]},
     ]), ROOT_SEED)
     conflict = REPOSITORY.build_repository(repository_spec([
-        {**dummy("org.sapote.conflict-app"), "dependencies": [
-            {"identifier": "org.sapote.conflict-lib", "constraint": "*"}]},
-        {**dummy("org.sapote.conflict-lib"), "conflicts": [
-            {"identifier": "org.sapote.conflict-app", "constraint": "*"}]},
+        {**dummy("org.phipia.conflict-app"), "dependencies": [
+            {"identifier": "org.phipia.conflict-lib", "constraint": "*"}]},
+        {**dummy("org.phipia.conflict-lib"), "conflicts": [
+            {"identifier": "org.phipia.conflict-app", "constraint": "*"}]},
     ]), ROOT_SEED)
     ambiguous = REPOSITORY.build_repository(repository_spec([
-        {**dummy("org.sapote.ambiguous-app"), "dependencies": [
+        {**dummy("org.phipia.ambiguous-app"), "dependencies": [
             {"identifier": "virtual.renderer", "constraint": "*"}]},
-        {**dummy("org.sapote.renderer-a"), "provides": [
+        {**dummy("org.phipia.renderer-a"), "provides": [
             {"identifier": "virtual.renderer", "version": "1.0.0"}]},
-        {**dummy("org.sapote.renderer-b"), "provides": [
+        {**dummy("org.phipia.renderer-b"), "provides": [
             {"identifier": "virtual.renderer", "version": "1.0.0"}]},
     ]), ROOT_SEED)
     unsatisfied = REPOSITORY.build_repository(repository_spec([
-        {**dummy("org.sapote.unsatisfied"), "dependencies": [
-            {"identifier": "org.sapote.missing", "constraint": "*"}]},
+        {**dummy("org.phipia.unsatisfied"), "dependencies": [
+            {"identifier": "org.phipia.missing", "constraint": "*"}]},
     ]), ROOT_SEED)
     backtrack = REPOSITORY.build_repository(repository_spec([
-        repository_package("org.sapote.backtrack", "1.0.0", b"old-app",
+        repository_package("org.phipia.backtrack", "1.0.0", b"old-app",
                            publisher_key_id, dependencies=[
-                               {"identifier": "org.sapote.old-lib",
+                               {"identifier": "org.phipia.old-lib",
                                 "constraint": "^1.0.0"}]),
-        repository_package("org.sapote.backtrack", "2.0.0", b"new-app",
+        repository_package("org.phipia.backtrack", "2.0.0", b"new-app",
                            publisher_key_id, dependencies=[
-                               {"identifier": "org.sapote.new-lib",
+                               {"identifier": "org.phipia.new-lib",
                                 "constraint": "^2.0.0"}]),
-        dummy("org.sapote.old-lib"),
+        dummy("org.phipia.old-lib"),
     ]), ROOT_SEED)
     chain_packages = []
     for index in range(66):
-        identifier = f"org.sapote.chain{index:02d}"
+        identifier = f"org.phipia.chain{index:02d}"
         dependencies = [] if index == 65 else [{
-            "identifier": f"org.sapote.chain{index + 1:02d}",
+            "identifier": f"org.phipia.chain{index + 1:02d}",
             "constraint": "*",
         }]
         chain_packages.append({**dummy(identifier), "dependencies": dependencies})
@@ -236,7 +236,7 @@ def main() -> int:
                 [sys.argv[2], *paths[:5], *paths[11:14]], check=True
             )
     print(
-        "Sapote guest package-manager host tests passed: real signed bytes, "
+        "Phipia guest package-manager host tests passed: real signed bytes, "
         "bounded parser/planner/builder, update pruning, trust refusals"
     )
     return 0

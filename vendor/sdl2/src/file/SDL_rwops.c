@@ -537,8 +537,8 @@ static SDL_bool IsRegularFileOrPipe(FILE *f)
         !((st.st_mode & _S_IFMT) == _S_IFREG || (st.st_mode & _S_IFMT) == _S_IFIFO)) {
         return SDL_FALSE;
     }
-    #elif defined(__SAPOTE__)
-    /* Sapote FILE objects are already app-rooted SDK streams and deliberately
+    #elif defined(__PHIPIA__)
+    /* Phipia FILE objects are already app-rooted SDK streams and deliberately
        have no ambient POSIX descriptor number for fileno/fstat. */
     (void)f;
     #elif !defined __EMSCRIPTEN__

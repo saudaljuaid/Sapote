@@ -2,12 +2,12 @@
 //! A vault read through the seam, an entry at a time.
 //!
 //! The reason this exists rather than [`sapstudio_io::vault::decode`]: one of
-//! Sapote's files holds sixteen mebibytes and a Sapote program is mapped
+//! Phipia's files holds sixteen mebibytes and a Phipia program is mapped
 //! seventy-six kilobytes. Building the whole vault in memory is off by three
 //! orders of magnitude on the machine this program is for, and a store read an
 //! entry at a time is not.
 //!
-//! Sapote reaches the same conclusion one layer down: its own bitmap reader
+//! Phipia reaches the same conclusion one layer down: its own bitmap reader
 //! issues random row reads through the normal filesystem and `NVMe` paths
 //! rather than holding a picture.
 
@@ -351,7 +351,7 @@ fn committing_into_the_scratch_slot_is_refused() {
 
 #[test]
 fn a_ranged_read_is_short_at_the_end_rather_than_refused() {
-    // What Sapote's `sapfs_read` does: "reads at EOF succeed with a short or
+    // What Phipia's `sapfs_read` does: "reads at EOF succeed with a short or
     // zero byte count". A seam that refused there would make every reader
     // carry an arm for a condition that is not an error.
     let vault = stocked();

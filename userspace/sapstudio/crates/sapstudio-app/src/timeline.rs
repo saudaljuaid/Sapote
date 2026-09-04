@@ -29,7 +29,7 @@
 //! because that is what premultiplied means.
 //!
 //! Where the frames come from is a [`sapstudio_render::Media`], because on
-//! Sapote today there is nowhere to read media from (`SAP-08`). A test
+//! Phipia today there is nowhere to read media from (`SAP-08`). A test
 //! provides one that draws flat colours; a real session will provide one that
 //! decodes, and neither this module nor the model changes when it does.
 //!
@@ -601,7 +601,7 @@ pub fn render(
 ///
 /// [`render`] builds a graph and evaluates it into a whole frame, which for a
 /// 1920×1080 eight-bit RGBA programme is 8,294,400 bytes *per node* against
-/// the 76 KiB a Sapote program is mapped. A scan builds the same graph and
+/// the 76 KiB a Phipia program is mapped. A scan builds the same graph and
 /// evaluates it a row at a time: 7,680 bytes a node, and the graph built
 /// **once** rather than once a row.
 ///

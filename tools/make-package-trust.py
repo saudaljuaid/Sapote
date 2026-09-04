@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Build and audit Sapote's immutable platform package trust table."""
+"""Build and audit Phipia's immutable platform package trust table."""
 
 from __future__ import annotations
 
@@ -164,7 +164,7 @@ def emit_c(data: bytes) -> bytes:
         "#include <stddef.h>",
         "#include <stdint.h>",
         "",
-        f"const uint8_t sapote_package_trust_asset[{len(data)}] = {{",
+        f"const uint8_t phipia_package_trust_asset[{len(data)}] = {{",
     ]
     for offset in range(0, len(data), 12):
         chunk = data[offset:offset + 12]
@@ -173,8 +173,8 @@ def emit_c(data: bytes) -> bytes:
         )
     lines.extend([
         "};",
-        "const size_t sapote_package_trust_asset_bytes =",
-        "    sizeof(sapote_package_trust_asset);",
+        "const size_t phipia_package_trust_asset_bytes =",
+        "    sizeof(phipia_package_trust_asset);",
         "",
     ])
     return "\n".join(lines).encode("ascii")
@@ -207,7 +207,7 @@ def self_test() -> None:
             pass
         else:
             raise TrustTableError("changed trust table was accepted")
-        if b"sapote_package_trust_asset" not in emit_c(table):
+        if b"phipia_package_trust_asset" not in emit_c(table):
             raise TrustTableError("C asset output is incomplete")
 
 
@@ -244,7 +244,7 @@ def main() -> int:
             _atomic_write(arguments.output, emit_c(data))
         else:
             self_test()
-            print("Sapote immutable package trust-table tests passed")
+            print("Phipia immutable package trust-table tests passed")
     except (OSError, TrustTableError) as error:
         parser.error(str(error))
     return 0

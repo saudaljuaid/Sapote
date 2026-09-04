@@ -8,13 +8,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <sapote/heap.h>
-#include <sapote/package_control.h>
-#include <sapote/package_generation.h>
-#include <sapote/package_platform_trust.h>
-#include <sapote/package_state.h>
-#include <sapote/package_trust.h>
-#include <sapote/wall_clock.h>
+#include <phipia/heap.h>
+#include <phipia/package_control.h>
+#include <phipia/package_generation.h>
+#include <phipia/package_platform_trust.h>
+#include <phipia/package_state.h>
+#include <phipia/package_trust.h>
+#include <phipia/wall_clock.h>
 
 #define CHECK(condition) do { \
     if (!(condition)) { \
@@ -498,33 +498,33 @@ int main(int argc, char **argv)
     changed_repository_upload = register_upload(&changed_repository);
     CHECK(changed_repository_upload != 0U &&
         package_control_open_install(TEST_OWNER, changed_repository_upload,
-            (const uint8_t *)"org.sapote.app", 14U, &report) ==
+            (const uint8_t *)"org.phipia.app", 14U, &report) ==
                 PACKAGE_CONTROL_STATUS_MANAGER &&
         report.manager_status == PACKAGE_MANAGER_STATUS_DIGEST &&
         package_control_resources_released() && live_allocations == 0U);
 
     CHECK(package_control_open_install(TEST_OWNER, repository_upload,
-        (const uint8_t *)"org.sapote.app", 14U, &report) ==
+        (const uint8_t *)"org.phipia.app", 14U, &report) ==
             PACKAGE_CONTROL_STATUS_OK &&
         report.repository_version == FIXTURE_REPOSITORY_VERSION &&
         report.plan_count == 2U && report.attached_count == 0U);
     control = report.token;
     CHECK(control != 0U &&
         package_control_open_install(TEST_OWNER, repository_upload,
-            (const uint8_t *)"org.sapote.app", 14U, &report) ==
+            (const uint8_t *)"org.phipia.app", 14U, &report) ==
                 PACKAGE_CONTROL_STATUS_NO_SLOT &&
         package_control_item(OTHER_OWNER, control, 0U, &item, &report) ==
             PACKAGE_CONTROL_STATUS_STALE && item.identifier_bytes == 0U &&
-        find_plan_item(control, "org.sapote.lib", &library_index) == 0);
+        find_plan_item(control, "org.phipia.lib", &library_index) == 0);
     CHECK(package_control_attach(TEST_OWNER, control, library_index,
         application_upload, &report) == PACKAGE_CONTROL_STATUS_UPLOAD &&
         (report.upload_status == PACKAGE_UPLOAD_STATUS_LENGTH ||
             report.upload_status == PACKAGE_UPLOAD_STATUS_DIGEST) &&
         report.attached_count == 0U);
-    CHECK(attach_named(control, "org.sapote.lib", library_upload) == 0 &&
+    CHECK(attach_named(control, "org.phipia.lib", library_upload) == 0 &&
         package_control_attach(TEST_OWNER, control, library_index,
             library_upload, &report) == PACKAGE_CONTROL_STATUS_STATE &&
-        attach_named(control, "org.sapote.app", application_upload) == 0 &&
+        attach_named(control, "org.phipia.app", application_upload) == 0 &&
         package_control_commit(TEST_OWNER, control, &report) ==
             PACKAGE_CONTROL_STATUS_OK && report.committed &&
         report.generation == 1U && service_current_bytes != 0U &&
@@ -535,19 +535,19 @@ int main(int argc, char **argv)
             PACKAGE_CONTROL_STATUS_STALE);
 
     CHECK(package_control_open_install(TEST_OWNER, repository_upload,
-        (const uint8_t *)"org.sapote.app", 14U, &report) ==
+        (const uint8_t *)"org.phipia.app", 14U, &report) ==
             PACKAGE_CONTROL_STATUS_MANAGER &&
         report.manager_status == PACKAGE_MANAGER_STATUS_ALREADY_INSTALLED &&
         package_control_resources_released() && live_allocations == 0U);
 
     CHECK(package_control_open_install(TEST_OWNER, update_repository_upload,
-        (const uint8_t *)"org.sapote.app", 14U, &report) ==
+        (const uint8_t *)"org.phipia.app", 14U, &report) ==
             PACKAGE_CONTROL_STATUS_OK && report.plan_count == 2U &&
         report.generation == 1U);
     control = report.token;
-    CHECK(attach_named(control, "org.sapote.newlib", update_library_upload) ==
+    CHECK(attach_named(control, "org.phipia.newlib", update_library_upload) ==
             0 &&
-        attach_named(control, "org.sapote.app", update_application_upload) ==
+        attach_named(control, "org.phipia.app", update_application_upload) ==
             0);
     fail_commit_once = true;
     CHECK(package_control_commit(TEST_OWNER, control, &report) ==
@@ -577,6 +577,6 @@ int main(int argc, char **argv)
     free(update_application.bytes);
     free(update_library.bytes);
     free(changed_repository.bytes);
-    (void)puts("Sapote privileged package controller signed lifecycle tests passed");
+    (void)puts("Phipia privileged package controller signed lifecycle tests passed");
     return 0;
 }

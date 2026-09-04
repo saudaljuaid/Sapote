@@ -121,7 +121,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sapote-ext4-transaction-tests"
+name = "phipia-ext4-transaction-tests"
 version = "0.1.0"
 dependencies = [
  "ext4plus",

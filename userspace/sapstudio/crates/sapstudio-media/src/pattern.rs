@@ -2,7 +2,7 @@
 //! Frames SapStudio draws for itself.
 //!
 //! Every fixture in this project is built by a deterministic tool rather than
-//! downloaded, which is Sapote's practice and the only way a test's inputs can
+//! downloaded, which is Phipia's practice and the only way a test's inputs can
 //! be part of its evidence. These patterns are pure functions of their
 //! description and their frame number: the same arguments produce the same
 //! bytes on every machine, for ever, which is what makes a golden digest mean

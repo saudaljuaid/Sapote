@@ -2,13 +2,13 @@
 
 # Networking
 
-Sapote 2.2.0 has a bounded IPv4 networking foundation for one modern
+Phipia 2.2.0 has a bounded IPv4 networking foundation for one modern
 `virtio-net-pci` device under QEMU. Packets cross the normal PCI claim, mapped
 BAR, MSI-X, split virtqueue, DMA-ownership, protocol, syscall or Terminal, and
 FAT32/NVMe paths. The deterministic peer is a host-side Ethernet endpoint; it
 does not inject results into private kernel helpers.
 
-This is not an Internet-security claim. Sapote has no IPv6, general-purpose
+This is not an Internet-security claim. Phipia has no IPv6, general-purpose
 transport TLS, firewall, routing, Wi-Fi, physical-NIC support, or browser. A
 separate bounded TLS 1.2/HTTPS SDK profile is documented in `TLS.md` and
 `HTTPS.md`.
@@ -65,7 +65,7 @@ Stale handles cannot alias a later device generation.
 
 ## Passive open
 
-Until 2.2.0 Sapote could only be a TCP client. It can now also be the side that
+Until 2.2.0 Phipia could only be a TCP client. It can now also be the side that
 waits. A socket enters `LISTEN` on one port with a declared backlog of at most
 four; a SYN arriving for that port with no connection already matching its
 four-tuple produces a child connection in `SYN_RECEIVED`, drawn from the same
@@ -137,13 +137,13 @@ immutable system volume are QEMU-tested.
 
 ## Public kernel and syscall bounds
 
-`include/sapote/network.h` is native ABI version 1. It exposes explicit owners,
+`include/phipia/network.h` is native ABI version 1. It exposes explicit owners,
 generation-authenticated handles, deadlines, readiness and cancellation. The
 global bounds are eight UDP sockets, eight TCP connections, 32 timers, eight
 poll handles per call, four queued datagrams per UDP socket, and 512 bytes per
 datagram.
 
-`include/sapote/network_syscall.h` is an experimental Sapote-private ABI version
+`include/phipia/network_syscall.h` is an experimental Phipia-private ABI version
 1 for future native processes. At most four authenticated process contexts may
 exist. A request transfers at most 4,096 bytes, random requests at most 256
 bytes, and any deadline at most 30 seconds. Before the first copy, every page of
@@ -166,8 +166,8 @@ dhcp
 ip 10.0.2.15 255.255.255.0 10.0.2.2 10.0.2.3
 arp
 ping 10.0.2.2 1
-resolve sapote.test
-http http://sapote.test/welcome.txt NETCAP.TXT
+resolve phipia.test
+http http://phipia.test/welcome.txt NETCAP.TXT
 netstat
 ```
 
@@ -193,7 +193,7 @@ silence/timeouts, NAK, NXDOMAIN, truncation, CNAME, bad checksum, ARP conflict,
 TCP reset/retransmission, HTTP chunking/redirect/truncation/malformed framing,
 redirect loops, and malformed floods. Two modes reverse the roles: the guest
 announces a port over UDP and the peer opens a TCP connection *to* it, either to
-a port Sapote is listening on or to one with no listener. It writes
+a port Phipia is listening on or to one with no listener. It writes
 classic PCAP with deterministic packet timestamps.
 
 `tools/network_packet_audit.py` independently reconstructs the captured

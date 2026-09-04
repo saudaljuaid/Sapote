@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cut Sapote at every ext4 durability boundary and verify reboot recovery."""
+"""Cut Phipia at every ext4 durability boundary and verify reboot recovery."""
 
 from __future__ import annotations
 
@@ -48,23 +48,23 @@ def _build_iso(
     cut: int | None,
 ) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="sapote-ext4-cut-", dir=output.parent) as raw:
+    with tempfile.TemporaryDirectory(prefix="phipia-ext4-cut-", dir=output.parent) as raw:
         root = Path(raw)
         boot = root / "boot"
         grub = boot / "grub"
         grub.mkdir(parents=True)
-        shutil.copyfile(kernel, boot / "sapote.elf")
-        command_line = "sapote.test=ext4-recovery"
+        shutil.copyfile(kernel, boot / "phipia.elf")
+        command_line = "phipia.test=ext4-recovery"
         if cut is not None:
-            command_line += f" sapote.ext4-cut={cut}"
+            command_line += f" phipia.ext4-cut={cut}"
         (grub / "grub.cfg").write_text(
             "\n".join(
                 (
                     "set default=0",
                     "set timeout=0",
                     "",
-                    'menuentry "Sapote ext4 durability test" {',
-                    f"    multiboot2 /boot/sapote.elf {command_line}",
+                    'menuentry "Phipia ext4 durability test" {',
+                    f"    multiboot2 /boot/phipia.elf {command_line}",
                     "    boot",
                     "}",
                     "",
@@ -113,7 +113,7 @@ def _run_qemu(
         "-blockdev",
         "driver=raw,file=ext4-file,node-name=ext4-raw,read-only=off",
         "-device",
-        "nvme,serial=sapote-ext4-powercut,drive=ext4-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1",
+        "nvme,serial=phipia-ext4-powercut,drive=ext4-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1",
         "-cdrom",
         str(iso),
         "-display",
@@ -162,7 +162,7 @@ def _verify_guest_result(image: Path, tools: dict[str, str], temporary: Path) ->
     if result.returncode != 0 or not destination.is_file():
         raise PowerCutError("debugfs could not dump the recovered README:\n" + result.stdout)
     data = destination.read_bytes()
-    prefix = b"Sapote deterministic ext4 fixture\n"
+    prefix = b"Phipia deterministic ext4 fixture\n"
     if (
         len(data) != 4097
         or data[: len(prefix)] != prefix
@@ -206,7 +206,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 f"boundary {cut} did not cut exactly: status={status}, log={cut_log}\n"
                 + _transcript_tail(transcript)
             )
-        if PASS_MARKER in transcript or "ST FAIL" in transcript or "Sapote PANIC" in transcript:
+        if PASS_MARKER in transcript or "ST FAIL" in transcript or "Phipia PANIC" in transcript:
             raise PowerCutError(f"boundary {cut} reached an invalid terminal marker")
 
         status, transcript = _run_qemu(
@@ -217,14 +217,14 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             or transcript.count("ST BEGIN ext4-recovery") != 1
             or transcript.count(PASS_MARKER) != 1
             or "ST FAIL" in transcript
-            or "Sapote PANIC" in transcript
+            or "Phipia PANIC" in transcript
         ):
             raise PowerCutError(
                 f"boundary {cut} reboot failed: status={status}, log={reboot_log}\n"
                 + _transcript_tail(transcript)
             )
         after_report = ext4_image.inspect_image(image, tools=tools)
-        with tempfile.TemporaryDirectory(prefix="sapote-ext4-result-", dir=output) as raw:
+        with tempfile.TemporaryDirectory(prefix="phipia-ext4-result-", dir=output) as raw:
             _verify_guest_result(image, tools, Path(raw))
         image_sha256 = hashlib.sha256(image.read_bytes()).hexdigest()
         report = {

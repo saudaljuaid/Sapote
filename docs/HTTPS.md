@@ -2,17 +2,17 @@
 
 # Bounded native HTTPS profile
 
-`sapote_https_get()` and `sapote_https_get_stream()` are bounded HTTP/1.1
-download operations over Sapote's BearSSL TLS 1.2 client. They are Ring 3 SDK
-facilities; they reach the network only through `sapote_dns_resolve()` and the
-Sapote stream API. The first fills one caller buffer. The streaming form uses a
+`phipia_https_get()` and `phipia_https_get_stream()` are bounded HTTP/1.1
+download operations over Phipia's BearSSL TLS 1.2 client. They are Ring 3 SDK
+facilities; they reach the network only through `phipia_dns_resolve()` and the
+Phipia stream API. The first fills one caller buffer. The streaming form uses a
 bounded 4 KiB transfer buffer and requires a sink to accept each complete chunk,
 so repository indexes and packages do not need one contiguous application
 allocation. A short or failed sink write aborts the connection with a distinct
 status; callers can therefore stage to a temporary file, hash, sync, and publish
 only after the complete authenticated response succeeds.
 
-`sapote_package_fetch_stage()` applies that pattern to the Data volume. It
+`phipia_package_fetch_stage()` applies that pattern to the Data volume. It
 streams into a temporary path while computing SHA-256, optionally requires an
 exact signed length and digest, closes and flushes the temporary file, atomically
 replaces an inert staging path, and flushes the namespace change. Every
@@ -54,15 +54,15 @@ wall clock, entropy and DNS failures, deadline, cancellation, reset before any
 TLS record bytes, authenticated-stream truncation, hostname mismatch,
 certificate-time failure, unknown/bad authentication, TLS handshake/I/O,
 HTTP version/status/header framing, missing/oversized length, short/extra body,
-and close failure. `sapote_https_response` retains the BearSSL and raw Sapote
+and close failure. `phipia_https_response` retains the BearSSL and raw Phipia
 transport values for diagnostics.
 
 Every failure after stream creation cancels, shuts down, and closes the stream
 before returning. A reset after TLS record bytes is reported as
-TLS truncation; Sapote ABI v1 otherwise exposes orderly TCP closure and reset
+TLS truncation; Phipia ABI v1 otherwise exposes orderly TCP closure and reset
 through overlapping stream errors. Cancellation is also available directly
-through `sapote_tls_client_cancel()` on the lower-level client. The synchronous
-`sapote_https_get()` helper does not expose its internal client, so callers
+through `phipia_tls_client_cancel()` on the lower-level client. The synchronous
+`phipia_https_get()` helper does not expose its internal client, so callers
 cancel that complete operation through native process termination; teardown
 closes its typed network handles.
 
@@ -122,7 +122,7 @@ packet audit reconstructs the Ethernet/IP/TCP path, requires TLS 1.2 records on
 port 443, and refuses captures containing the request, HTTP status line, or
 body in plaintext.
 
-This is an in-guest TLS 1.2/HTTPS download over Sapote DNS and TCP. The client
+This is an in-guest TLS 1.2/HTTPS download over Phipia DNS and TCP. The client
 writes an exact-digest, durably staged inert body to its Data namespace and
 separately proves the non-path-based privileged upload boundary without
 installing or executing it. There is no general

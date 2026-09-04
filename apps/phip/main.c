@@ -1,0 +1,214 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Bounded signed-repository install/update client for the native ABI. */
+
+#include <phipia/package_control.h>
+#include <phipia/package_fetch.h>
+#include <phipia/package_upload.h>
+#include <phipia/runtime.h>
+
+#include <stdio.h>
+#include <string.h>
+
+#include "../native-https/trust_anchor.h"
+
+#define REPOSITORY_HOST "repo.phipia.test"
+#define REPOSITORY_PATH "/repository.sri"
+#define HTTPS_PORT 443U
+#define HTTPS_DEADLINE_NS UINT64_C(30000000000)
+#define REPOSITORY_MAX_BYTES (512U * 1024U)
+#define COPY_BYTES 4096U
+
+static uint64_t deadline(void)
+{
+    const uint64_t now = phipia_monotonic_ns();
+
+    return now > UINT64_MAX - HTTPS_DEADLINE_NS ? UINT64_MAX :
+        now + HTTPS_DEADLINE_NS;
+}
+
+static bool close_handle(phipia_handle_t handle)
+{
+    return handle == PHIPIA_HANDLE_INVALID || phipia_handle_close(handle) == 0;
+}
+
+static bool discard_repository(void)
+{
+    long unlinked = phipia_path_unlink(PHIPIA_VOLUME_DATA, "REPO.SRI");
+    long synced = phipia_volume_sync(PHIPIA_VOLUME_DATA);
+
+    return unlinked == 0 && synced == 0;
+}
+
+static long repository_upload(struct phipia_package_fetch_report *fetch)
+{
+    const struct phipia_package_fetch_request request = {
+        REPOSITORY_HOST, HTTPS_PORT, 0U, REPOSITORY_PATH,
+        phipia_https_test_anchors,
+        sizeof(phipia_https_test_anchors) /
+            sizeof(phipia_https_test_anchors[0]),
+        deadline(), REPOSITORY_MAX_BYTES, 0U, NULL,
+        "REPO.NEW", "REPO.SRI"
+    };
+    uint8_t buffer[COPY_BYTES];
+    phipia_handle_t file = PHIPIA_HANDLE_INVALID;
+    phipia_handle_t upload = PHIPIA_HANDLE_INVALID;
+    size_t total = 0U;
+
+    enum phipia_package_fetch_status status = phipia_package_fetch_stage(
+        &request, fetch);
+    if (status != PHIPIA_PACKAGE_FETCH_OK || fetch->bytes_received == 0U ||
+        fetch->bytes_received > REPOSITORY_MAX_BYTES || !fetch->durable) {
+        return -PHIPIA_EIO;
+    }
+    long opened = phipia_file_open(PHIPIA_VOLUME_DATA, "REPO.SRI",
+        PHIPIA_OPEN_READ);
+    if (opened < 0) {
+        return opened;
+    }
+    file = (phipia_handle_t)opened;
+    opened = phipia_package_upload_open();
+    if (opened < 0) {
+        (void)close_handle(file);
+        return opened;
+    }
+    upload = (phipia_handle_t)opened;
+    while (total < fetch->bytes_received) {
+        size_t wanted = fetch->bytes_received - total;
+        if (wanted > sizeof(buffer)) {
+            wanted = sizeof(buffer);
+        }
+        long read_bytes = phipia_file_read(file, buffer, wanted);
+        if (read_bytes <= 0 || (size_t)read_bytes > wanted) {
+            (void)close_handle(file);
+            (void)close_handle(upload);
+            return read_bytes < 0 ? read_bytes : -PHIPIA_EIO;
+        }
+        long written = phipia_package_upload_write(upload, buffer,
+            (size_t)read_bytes);
+        if (written != read_bytes) {
+            (void)close_handle(file);
+            (void)close_handle(upload);
+            return written < 0 ? written : -PHIPIA_EIO;
+        }
+        total += (size_t)read_bytes;
+    }
+    if (!close_handle(file)) {
+        (void)close_handle(upload);
+        return -PHIPIA_EIO;
+    }
+    struct phipia_package_upload_report sealed;
+    long result = phipia_package_upload_seal(upload, fetch->bytes_received,
+        fetch->sha256, &sealed);
+    if (result < 0 || sealed.actual_bytes != fetch->bytes_received ||
+        sealed.result_flags != (PHIPIA_PACKAGE_UPLOAD_SEALED |
+            PHIPIA_PACKAGE_UPLOAD_DURABLE)) {
+        (void)close_handle(upload);
+        return result < 0 ? result : -PHIPIA_EIO;
+    }
+    return (long)upload;
+}
+
+static int install(const char *identifier)
+{
+    struct phipia_package_fetch_report fetch;
+    struct phipia_package_control_report control_report;
+    struct phipia_package_control_item item;
+    phipia_handle_t repository = PHIPIA_HANDLE_INVALID;
+    phipia_handle_t control = PHIPIA_HANDLE_INVALID;
+
+    long result = repository_upload(&fetch);
+    if (result < 0) {
+        printf("phip: repository download failed: %ld\n", result);
+        return 20;
+    }
+    repository = (phipia_handle_t)result;
+    result = phipia_package_control_open_install(repository, identifier,
+        strlen(identifier), &control_report);
+    bool repository_closed = close_handle(repository);
+    bool repository_discarded = discard_repository();
+    if (!repository_closed || !repository_discarded) {
+        if (result >= 0) {
+            (void)close_handle((phipia_handle_t)result);
+        }
+        return 22;
+    }
+    if (result == -(long)PHIPIA_EEXIST) {
+        puts("PHIPIA PHIP PHASE already-installed PASS");
+        return 0;
+    }
+    if (result < 0) {
+        printf("phip: signed repository or plan refused: %ld\n", result);
+        return 21;
+    }
+    control = (phipia_handle_t)result;
+    puts("PHIPIA PHIP PHASE signed-plan PASS");
+
+    for (uint32_t index = 0U; index < control_report.plan_count; ++index) {
+        char path[PHIPIA_PACKAGE_CONTROL_PATH_BYTES + 2U];
+        if (phipia_package_control_item(control, index, &item) < 0 ||
+            item.path_bytes == 0U ||
+            item.path_bytes >= PHIPIA_PACKAGE_CONTROL_PATH_BYTES) {
+            (void)close_handle(control);
+            return 23;
+        }
+        path[0] = '/';
+        (void)memcpy(path + 1U, item.download_path, item.path_bytes);
+        path[item.path_bytes + 1U] = '\0';
+        const struct phipia_package_fetch_upload_request request = {
+            REPOSITORY_HOST, HTTPS_PORT, 0U, path,
+            phipia_https_test_anchors,
+            sizeof(phipia_https_test_anchors) /
+                sizeof(phipia_https_test_anchors[0]),
+            deadline(), (size_t)item.package_bytes, item.package_sha256
+        };
+        enum phipia_package_fetch_status status = phipia_package_fetch_upload(
+            &request, &fetch);
+        if (status != PHIPIA_PACKAGE_FETCH_OK ||
+            fetch.upload == PHIPIA_HANDLE_INVALID || !fetch.durable) {
+            printf("phip: payload %u download failed: %s\n", index,
+                phipia_package_fetch_status_string(status));
+            if (fetch.upload != PHIPIA_HANDLE_INVALID) {
+                (void)close_handle(fetch.upload);
+            }
+            (void)close_handle(control);
+            return 24;
+        }
+        result = phipia_package_control_attach(control, index, fetch.upload,
+            &control_report);
+        if (!close_handle(fetch.upload) || result < 0) {
+            printf("phip: payload %u refused: %ld\n", index, result);
+            (void)close_handle(control);
+            return 25;
+        }
+    }
+    puts("PHIPIA PHIP PHASE payloads-authenticated PASS");
+    result = phipia_package_control_commit(control, &control_report);
+    if (result < 0 &&
+        (control_report.result_flags & PHIPIA_PACKAGE_CONTROL_PREPARED) != 0U) {
+        result = phipia_package_control_commit(control, &control_report);
+    }
+    if (result < 0 ||
+        (control_report.result_flags & PHIPIA_PACKAGE_CONTROL_COMMITTED) == 0U ||
+        control_report.generation == 0U || !close_handle(control)) {
+        printf("phip: transaction commit failed: %ld flags=%u\n", result,
+            control_report.result_flags);
+        return 26;
+    }
+    printf("PHIPIA PHIP PHASE committed generation=%llu PASS\n",
+        (unsigned long long)control_report.generation);
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    if (argc != 3 || strcmp(argv[1], "install") != 0) {
+        puts("usage: phip install IDENTIFIER");
+        return 2;
+    }
+    puts("PHIPIA PHIP PHASE start");
+    int result = install(argv[2]);
+    if (result == 0) {
+        puts("PHIPIA PHIP PASS https trust plan payload transaction cleanup");
+    }
+    return result;
+}

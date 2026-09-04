@@ -8,7 +8,7 @@
 //! Every constant here is the exact decimal its standard prints, written as a
 //! rational and converted once. Every computation is the fixed-point
 //! arithmetic in [`sapstudio_core::Fixed`], so the result is the same on every machine
-//! (R-4.1) and needs no floating point, which is what lets it run on Sapote at
+//! (R-4.1) and needs no floating point, which is what lets it run on Phipia at
 //! all.
 //!
 //! Both directions are here, and they are named for what they do rather than

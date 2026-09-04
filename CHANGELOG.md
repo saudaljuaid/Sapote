@@ -2,10 +2,10 @@
 
 # Changelog
 
-## Sapote Redwood
+## Phipia Phipia
 
-- Replaced the former shell presentation with the Redwood desktop and the
-  canonical Sapote identity.
+- Replaced the former shell presentation with the Phipia desktop and the
+  canonical Phipia identity.
 - Added the six-application 3D Dock with magnification, reflections, tooltips,
   launch feedback, and light and dark shelf colours.
 - Added overlapping movable windows with focus, stacking, close controls, and

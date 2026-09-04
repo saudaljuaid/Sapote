@@ -803,7 +803,7 @@ impl Dir {
 
     /// Remove an empty, single-block directory entry and return its freed block.
     ///
-    /// Sapote uses the returned physical block to require the matching JBD2
+    /// Phipia uses the returned physical block to require the matching JBD2
     /// revocation before checkpointing the inode, bitmap, counter, and parent
     /// directory updates. The operation validates everything that can fail
     /// before changing the filesystem through its configured writer.
@@ -1512,7 +1512,7 @@ mod tests {
         let fs = load_test_disk1_rw().await;
         let root_inode = fs.read_root_inode().await.unwrap();
         let mut root = Dir::open_inode(&fs.0, root_inode).unwrap();
-        let name = DirEntryName::try_from("sapote_rmdir").unwrap();
+        let name = DirEntryName::try_from("phipia_rmdir").unwrap();
 
         let child_inode = fs
             .create_inode(InodeCreationOptions {

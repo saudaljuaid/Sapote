@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#include <sapote/zlib.h>
+#include <phipia/zlib.h>
 
 #include <limits.h>
 #include <stdint.h>
@@ -119,7 +119,7 @@ static int inflate_payload(const uint8_t *input, size_t input_length,
 
 static void make_payload(uint8_t payload[PAYLOAD_BYTES])
 {
-    static const char phrase[] = "Sapote reproducible zlib stream\n";
+    static const char phrase[] = "Phipia reproducible zlib stream\n";
 
     for (size_t index = 0U; index < PAYLOAD_BYTES; ++index) {
         payload[index] = (uint8_t)phrase[index % (sizeof(phrase) - 1U)];
@@ -143,7 +143,7 @@ static int allocation_failure_is_clean(void)
 
 static int sdk_allocator_round_trip(void)
 {
-    static const uint8_t source[] = "Sapote SDK zlib allocator";
+    static const uint8_t source[] = "Phipia SDK zlib allocator";
     uint8_t compressed[128];
     uint8_t decoded[sizeof(source)];
     z_stream encode;
@@ -151,8 +151,8 @@ static int sdk_allocator_round_trip(void)
     size_t compressed_length;
     int result;
 
-    if (sapote_zlib_stream_prepare(NULL) != -1 ||
-        sapote_zlib_stream_prepare(&encode) != 0 ||
+    if (phipia_zlib_stream_prepare(NULL) != -1 ||
+        phipia_zlib_stream_prepare(&encode) != 0 ||
         encode.zalloc == Z_NULL || encode.zfree == Z_NULL) {
         return 0;
     }
@@ -168,7 +168,7 @@ static int sdk_allocator_round_trip(void)
     compressed_length = (size_t)encode.total_out;
     if (deflateEnd(&encode) != Z_OK || result != Z_STREAM_END ||
         compressed_length == 0U ||
-        sapote_zlib_stream_prepare(&decode) != 0) {
+        phipia_zlib_stream_prepare(&decode) != 0) {
         return 0;
     }
     result = inflateInit(&decode);

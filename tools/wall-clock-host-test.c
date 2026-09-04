@@ -3,8 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/cpu.h>
-#include <sapote/wall_clock.h>
+#include <phipia/cpu.h>
+#include <phipia/wall_clock.h>
 
 #define TEST_RTC_SECONDS UINT8_C(0x00)
 #define TEST_RTC_STATUS_A UINT8_C(0x0A)

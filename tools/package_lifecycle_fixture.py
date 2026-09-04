@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Build the deterministic signed repository used by the guest sap proof."""
+"""Build the deterministic signed repository used by the guest phip proof."""
 
 from __future__ import annotations
 
@@ -25,9 +25,9 @@ def load(name: str, path: Path):
     return module
 
 
-PACKAGE = load("sapote_package_lifecycle", ROOT / "tools" / "sapote-package.py")
+PACKAGE = load("phipia_package_lifecycle", ROOT / "tools" / "phipia-package.py")
 REPOSITORY = load(
-    "sapote_repository_lifecycle", ROOT / "tools" / "sapote-repository.py"
+    "phipia_repository_lifecycle", ROOT / "tools" / "phipia-repository.py"
 )
 
 ROOT_SEED = bytes(range(32))
@@ -43,10 +43,10 @@ def build(output: Path, executable: Path) -> dict[str, object]:
         "architecture": "x86_64",
         "abi_min": 1,
         "abi_max": 1,
-        "identifier": "org.sapote.proof",
-        "name": "Sapote Installed Proof",
+        "identifier": "org.phipia.proof",
+        "name": "Phipia Installed Proof",
         "version": "1.0.0",
-        "publisher": "Sapote Development Publisher",
+        "publisher": "Phipia Development Publisher",
         "capabilities": ["console"],
         "dependencies": [],
         "conflicts": [],
@@ -65,10 +65,10 @@ def build(output: Path, executable: Path) -> dict[str, object]:
         PUBLISHER_SEED
     )
     publisher_key_id = hashlib.sha256(publisher_public).hexdigest()
-    download_path = "packages/org.sapote.proof/1.0.0.spk"
+    download_path = "packages/org.phipia.proof/1.0.0.spk"
     repository_spec = {
         "format": 1,
-        "repository": "org.sapote.main",
+        "repository": "org.phipia.main",
         "repository_version": 42,
         "generated_at": GENERATED,
         "expires_at": EXPIRES,
@@ -76,7 +76,7 @@ def build(output: Path, executable: Path) -> dict[str, object]:
         "abi_min": 1,
         "abi_max": 1,
         "packages": [{
-            "identifier": "org.sapote.proof",
+            "identifier": "org.phipia.proof",
             "version": "1.0.0",
             "download_path": download_path,
             "bytes": len(package),

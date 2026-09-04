@@ -9,9 +9,9 @@ int package_state_core_host_test_main(void);
 #include <stdlib.h>
 #include <string.h>
 
-#include <sapote/fat32_fs.h>
-#include <sapote/heap.h>
-#include <sapote/package_service.h>
+#include <phipia/fat32_fs.h>
+#include <phipia/heap.h>
+#include <phipia/package_service.h>
 
 #define MOCK_MAX_NODES 96U
 #define MOCK_MAX_FILE_BYTES 4096U
@@ -516,7 +516,7 @@ static bool prepare_workspace(
     struct package_builder_workspace *workspace
 )
 {
-    static const uint8_t target[] = "org.sapote.app";
+    static const uint8_t target[] = "org.phipia.app";
 
     memset(workspace, 0, sizeof(*workspace));
     if (package_state_database_parse(old_database, OLD_DATABASE_BYTES,
@@ -880,7 +880,7 @@ static int test_prepare_copies_unchanged_installed_file(
     const uint8_t new_authority[PACKAGE_STATE_AUTHORITY_BYTES]
 )
 {
-    static const uint8_t target[] = "org.sapote.app";
+    static const uint8_t target[] = "org.phipia.app";
     struct package_builder_workspace *workspace = malloc(sizeof(*workspace));
     struct package_state_database_view target_view;
     struct package_state_package_view library;

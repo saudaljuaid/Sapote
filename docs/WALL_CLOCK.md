@@ -2,7 +2,7 @@
 
 # UTC wall clock
 
-Sapote exposes two clocks with different contracts:
+Phipia exposes two clocks with different contracts:
 
 - `clock_monotonic_ns()` is elapsed nanoseconds since boot and remains the only
   source for deadlines, sleeps, cancellation, retry budgets, and animation.
@@ -25,7 +25,7 @@ year. Seconds range from 0 through 59; leap-second notation is not accepted by
 this RTC profile. A clock left frozen through Register B's update-inhibit bit is
 also rejected.
 
-The additive native call `0x0307 TIME_REALTIME()` requires `SAPOTE_CAP_TIME` and
+The additive native call `0x0307 TIME_REALTIME()` requires `PHIPIA_CAP_TIME` and
 returns whole Unix seconds. RTC instability, an update that never completes,
 or invalid/out-of-range data fails with `-EIO`; no guessed time is returned.
 `CLOCK_REALTIME` therefore currently has one-second resolution. There is no

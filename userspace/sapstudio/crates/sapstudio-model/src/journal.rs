@@ -20,7 +20,7 @@ use crate::status::{ModelStatus, Result};
 /// edits are dropped, which is a decision the editor should be told about
 /// rather than a silent one, so reaching it is refused instead.
 ///
-/// It is not the bound that bites on Sapote, and reading it as a promise of
+/// It is not the bound that bites on Phipia, and reading it as a promise of
 /// four thousand undos would be reading it wrong. An entry is a pair of
 /// edits, an edit is a little over three hundred bytes, and a program is
 /// given nineteen mapped pages for everything it holds — so the address space

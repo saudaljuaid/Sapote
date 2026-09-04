@@ -226,7 +226,7 @@ pub fn export(
     }
 
     Ok(Conformed {
-        list: edl::list("SAPSTUDIO", events)?,
+        list: edl::list("MEDIAEDTO", events)?,
         left_behind,
     })
 }

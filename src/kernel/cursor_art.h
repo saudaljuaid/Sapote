@@ -7,8 +7,8 @@
  * coverage mask.  See src/kernel/cursor.h for what these are and
  * the two Windows names this does not draw.
  */
-#ifndef SAPOTE_CURSOR_ART_H
-#define SAPOTE_CURSOR_ART_H
+#ifndef PHIPIA_CURSOR_ART_H
+#define PHIPIA_CURSOR_ART_H
 
 #include <stdint.h>
 

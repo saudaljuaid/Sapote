@@ -76,7 +76,7 @@ def fake_profile_image() -> bytearray:
 
 
 class SuperblockTests(unittest.TestCase):
-    def test_accepts_exact_sapote_profile(self) -> None:
+    def test_accepts_exact_phipia_profile(self) -> None:
         report = ext4.parse_superblock(fake_profile_image())
         self.assertEqual(report["block_size"], 4096)
         self.assertEqual(report["uuid"], ext4.FILESYSTEM_UUID)
@@ -177,7 +177,7 @@ class FixtureScriptTests(unittest.TestCase):
         ext4._write_u32be(block, 0x10, ext4.JOURNAL_BLOCK_COUNT)
         ext4._write_u32be(block, 0x14, 1)
         block[0x30:0x40] = uuid.UUID(ext4.FILESYSTEM_UUID).bytes
-        with tempfile.TemporaryDirectory(prefix="sapote-ext4-journal-test-") as raw:
+        with tempfile.TemporaryDirectory(prefix="phipia-ext4-journal-test-") as raw:
             image = Path(raw) / "journal.img"
             image.write_bytes(block)
             with mock.patch.object(ext4, "_journal_superblock_offset", return_value=0):
@@ -197,7 +197,7 @@ class FixtureScriptTests(unittest.TestCase):
 
     def test_format_invocation_and_debugfs_script_pin_reproducibility_inputs(self) -> None:
         completed = mock.Mock(returncode=0, stdout="")
-        with tempfile.TemporaryDirectory(prefix="sapote-ext4-script-test-") as raw:
+        with tempfile.TemporaryDirectory(prefix="phipia-ext4-script-test-") as raw:
             root = Path(raw)
             image = root / "fixture.img"
             with mock.patch.object(ext4, "_run", return_value=completed) as run, mock.patch.object(
@@ -232,7 +232,7 @@ class FixtureScriptTests(unittest.TestCase):
 )
 class E2fsprogsIntegrationTests(unittest.TestCase):
     def test_determinism_fixture_semantics_and_adversarial_refusals(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="sapote-ext4-host-test-") as raw:
+        with tempfile.TemporaryDirectory(prefix="phipia-ext4-host-test-") as raw:
             root = Path(raw)
             first = root / "first.img"
             second = root / "second.img"
@@ -262,7 +262,7 @@ class E2fsprogsIntegrationTests(unittest.TestCase):
             self.assertEqual(first.read_bytes()[:1024], recovery.read_bytes()[:1024])
             self.assertEqual(first.read_bytes()[2048:], recovery.read_bytes()[2048:])
 
-            rust_fixture = os.environ.get("SAPOTE_EXT4_RUST_FIXTURE")
+            rust_fixture = os.environ.get("PHIPIA_EXT4_RUST_FIXTURE")
             if rust_fixture:
                 destination = Path(rust_fixture).resolve()
                 destination.parent.mkdir(parents=True, exist_ok=True)

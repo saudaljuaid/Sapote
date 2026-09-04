@@ -12,13 +12,13 @@ made here against the vendored source.
 
 ## How to read this
 
-### Tier — can it run on Sapote?
+### Tier — can it run on Phipia?
 
 | Tier | Meaning |
 | --- | --- |
 | **T0** | Runs today's shape: `no_std`, no allocator required or `alloc` only, no operating-system services, no floating-point SIMD requirement. |
 | **T1** | Needs SapStudio's own runtime: a heap, a time source, and tens of megabytes. Available once `SAP-01`, `SAP-03`, and `SAP-05` exist. |
-| **T2** | Needs a Sapote capability that does not exist. The blocking `SAP-nn` is named. |
+| **T2** | Needs a Phipia capability that does not exist. The blocking `SAP-nn` is named. |
 | **T3** | Cannot be used: licence, hosted assumption, size, or it duplicates something SapStudio must own. |
 
 ### Verdict
@@ -33,7 +33,7 @@ made here against the vendored source.
 
 ### Licence compatibility
 
-SapStudio is GPL-3.0-only, like Sapote. That fixes what may be linked in.
+SapStudio is GPL-3.0-only, like Phipia. That fixes what may be linked in.
 
 | Compatible | MIT, BSD-2-Clause, BSD-3-Clause, ISC, Zlib, Apache-2.0, MPL-2.0, LGPL-2.1-or-later, LGPL-3.0, GPL-2.0-or-later, GPL-3.0, BSL-1.0, CC0-1.0, Unlicense |
 | --- | --- |
@@ -57,7 +57,7 @@ The `no_std` floor everything else stands on.
 | Component | Language | Licence | Tier | Verdict | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `core`, `alloc`, `compiler_builtins` | Rust | MIT / Apache-2.0 | T0 | Adopt | Ships with the toolchain. `alloc` only once the allocator exists. |
-| `libm` | Rust | MIT / Apache-2.0 | T0 | Adopt | Sapote has no libm and no FPU contract. Every transcendental goes through this. |
+| `libm` | Rust | MIT / Apache-2.0 | T0 | Adopt | Phipia has no libm and no FPU contract. Every transcendental goes through this. |
 | `bytemuck` | Rust | Zlib / MIT / Apache-2.0 | T0 | Adopt | Safe plain-old-data casts for pixel and sample buffers. |
 | `zerocopy` | Rust | BSD-2-Clause / Apache-2.0 / MIT | T0 | Candidate | Stronger parsing story than `bytemuck`; evaluate the two, adopt one, not both. |
 | `bitflags` | Rust | MIT / Apache-2.0 | T0 | Adopt | Typed flag sets without hand-rolled masks. |
@@ -70,7 +70,7 @@ The `no_std` floor everything else stands on.
 
 ## 2. Memory allocation
 
-SapStudio must bring its own allocator: Sapote gives pages, not a heap.
+SapStudio must bring its own allocator: Phipia gives pages, not a heap.
 
 | Component | Language | Licence | Tier | Verdict | Notes |
 | --- | --- | --- | --- | --- | --- |
@@ -117,7 +117,7 @@ path, not a formality.
 | Component | Language | Licence | Tier | Verdict | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `blake3` | Rust | CC0-1.0 / Apache-2.0 | T0 | Adopt | Content identity for media, cache keys, and frame hashes. Fast even scalar. |
-| `sha2` (RustCrypto) | Rust | MIT / Apache-2.0 | T0 | Watch | SHA-256 is Sapote's vocabulary for pinned artefacts and SapStudio speaks the same one — but it is already implemented here, checked against the published vectors, so this is now a replacement to be justified rather than a gap to be filled. |
+| `sha2` (RustCrypto) | Rust | MIT / Apache-2.0 | T0 | Watch | SHA-256 is Phipia's vocabulary for pinned artefacts and SapStudio speaks the same one — but it is already implemented here, checked against the published vectors, so this is now a replacement to be justified rather than a gap to be filled. |
 | `crc` | Rust | MIT / Apache-2.0 | T0 | Adopt | Container and chunk checks where a format specifies CRC. |
 | `crc32fast` | Rust | MIT / Apache-2.0 | T1 | Watch | Its value is the SIMD path, which is blocked until `SAP-04`. |
 | `xxhash-rust` | Rust | BSL-1.0 | T0 | Watch | Only if a profile shows BLAKE3 dominating a cache lookup. |
@@ -278,7 +278,7 @@ Colour is where an editor earns or loses professional trust.
 
 ## 17. Rasterisation, compositing, vector graphics
 
-Sapote has no GPU, so this is a CPU story for the foreseeable future.
+Phipia has no GPU, so this is a CPU story for the foreseeable future.
 
 | Component | Language | Licence | Tier | Verdict | Notes |
 | --- | --- | --- | --- | --- | --- |
@@ -290,7 +290,7 @@ Sapote has no GPU, so this is a CPU story for the foreseeable future.
 | `kurbo` | Rust | MIT / Apache-2.0 | T1 | Candidate | See section 7. |
 | Skia | C++ | BSD-3-Clause | T2 | Reject | An enormous hosted build system. `tiny-skia` exists precisely to avoid this. |
 | Cairo | C | LGPL-2.1 / MPL-1.1 | T2 | Reject | Hosted, and the MPL-1.1 half complicates what should be simple. |
-| Blend2D | C++ | Zlib | T2 | Reject | Its speed comes from a runtime JIT. A JIT means writable-executable memory, which Sapote refuses by construction. |
+| Blend2D | C++ | Zlib | T2 | Reject | Its speed comes from a runtime JIT. A JIT means writable-executable memory, which Phipia refuses by construction. |
 | AGG | C++ | BSD-ish / GPL | T2 | Watch | Unmaintained, but the algorithms are still a good reference. |
 
 ## 18. Text: fonts, shaping, layout
@@ -305,7 +305,7 @@ Sapote has no GPU, so this is a CPU story for the foreseeable future.
 | `cosmic-text` | Rust | MIT / Apache-2.0 | T2 | Watch | Full layout stack, but it assumes a hosted environment today. |
 | HarfBuzz | C++ | MIT | T2 | Watch | Only if `rustybuzz` falls behind. |
 | FreeType | C | FTL or GPL-2.0-or-later | T2 | Watch | Both halves are compatible; the Rust stack removes the need. |
-| Bitmap fonts (BDF, PSF) | — | per font | T0 | Adopt (early) | Sapote already ships a validated bitmap font path. The first interface reuses that idea rather than a shaping engine. |
+| Bitmap fonts (BDF, PSF) | — | per font | T0 | Adopt (early) | Phipia already ships a validated bitmap font path. The first interface reuses that idea rather than a shaping engine. |
 
 ## 19. Subtitles and captions
 
@@ -356,9 +356,9 @@ graph is designed for it now rather than retrofitted later.
 
 | Component | Language | Licence | Tier | Verdict | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `wgpu` | Rust | MIT / Apache-2.0 | T2 (`SAP-16`) | Watch | Needs a driver, a queue, and a memory model Sapote does not have. |
+| `wgpu` | Rust | MIT / Apache-2.0 | T2 (`SAP-16`) | Watch | Needs a driver, a queue, and a memory model Phipia does not have. |
 | `naga` | Rust | MIT / Apache-2.0 | T2 | Watch | Only alongside `wgpu`. |
-| Vulkan / Mesa | C | MIT | T2 | Watch | Writing a Vulkan driver is a Sapote project, not a SapStudio one. |
+| Vulkan / Mesa | C | MIT | T2 | Watch | Writing a Vulkan driver is a Phipia project, not a SapStudio one. |
 | Mesa `llvmpipe` / `lavapipe` | C | MIT | T2 | Reject | It brings LLVM and a runtime JIT into the address space. See Blend2D. |
 | Hand-written SIMD kernels | Rust / C++ | own | T2 (`SAP-04`) | Adopt (later) | The realistic acceleration path: sealed leaves under R-3.4, bit-exact with their Rust references. |
 
@@ -392,10 +392,10 @@ Host-side tools. None of these are linked into a shipping artefact.
 | `cargo-geiger` | Apache-2.0 / MIT | Candidate | Counts `unsafe` per dependency, which is R-12.5's budget. |
 | `cbindgen` | MPL-2.0 | Candidate | Generates the C header for the ABI crate so both sides cannot drift. |
 | `reuse` | Apache-2.0 / GPL-3.0-or-later | Candidate | Checks every file carries an SPDX identifier. |
-| GNU `ld`, `objdump`, `nm`, `readelf` | GPL-3.0-or-later | Adopt (tool) | The ELF audit in R-13.4 is these tools. Sapote already depends on them. |
+| GNU `ld`, `objdump`, `nm`, `readelf` | GPL-3.0-or-later | Adopt (tool) | The ELF audit in R-13.4 is these tools. Phipia already depends on them. |
 | GCC / Clang | GPL-3.0-or-later / Apache-2.0 with LLVM exception | Adopt (tool) | For the C shims and any C++ leaf. |
 | `clang-format`, `clang-tidy` | Apache-2.0 with LLVM exception | Adopt | R-15.1. |
-| Python 3 standard library | PSF-2.0 | Adopt (tool) | Fixture and asset builders, matching Sapote's practice. No third-party Python. |
+| Python 3 standard library | PSF-2.0 | Adopt (tool) | Fixture and asset builders, matching Phipia's practice. No third-party Python. |
 
 ## 26. Reference media
 
@@ -403,7 +403,7 @@ Test footage is a dependency with a licence like any other.
 
 | Source | Licence | Verdict | Notes |
 | --- | --- | --- | --- |
-| Generated test patterns | SapStudio's own | **Adopt** | Deterministic bars, ramps, sweeps, timecode burn-in, and pathological frames. Reproducible from a script, exactly as Sapote builds its fixtures. |
+| Generated test patterns | SapStudio's own | **Adopt** | Deterministic bars, ramps, sweeps, timecode burn-in, and pathological frames. Reproducible from a script, exactly as Phipia builds its fixtures. |
 | Xiph.org test media | CC-BY / public domain, per clip | Adopt | The standard uncompressed sequences the codec world measures against. |
 | Blender open movies | CC-BY | Candidate | Real footage with clear provenance, for timeline and playback work. |
 | Netflix / AOM test sets | per clip, mostly CC | Watch | Verify each clip individually; the sets are not uniformly licensed. |
@@ -417,7 +417,7 @@ semantics (R-12.7) or things no library can supply to a freestanding target.
 
 | Component | Why it cannot be a dependency |
 | --- | --- |
-| The Sapote runtime: entry, allocator policy, panic path, syscall shims | There is exactly one operating system this runs on and no library targets it. |
+| The Phipia runtime: entry, allocator policy, panic path, syscall shims | There is exactly one operating system this runs on and no library targets it. |
 | The C ABI boundary crate | It is the definition of the platform contract. |
 | The time model: rational time, timebases, drop-frame timecode | Core semantics, and the place editors are most often wrong. |
 | The project model, timeline, and edit operations | This *is* the application. |
@@ -430,7 +430,7 @@ semantics (R-12.7) or things no library can supply to a freestanding target.
 | The interface toolkit | No usable toolkit exists for a freestanding target with one kernel-owned framebuffer. |
 | Waveform and thumbnail overviews | Derived, cached, and specific to this model. |
 | The mezzanine codec (`SPRW`, then FFV1) | Owning the format end to end is the point. |
-| Build, fixture, and verification tooling | Following Sapote's practice exactly. |
+| Build, fixture, and verification tooling | Following Phipia's practice exactly. |
 
 ## 28. Rejected outright
 
@@ -440,9 +440,9 @@ semantics (R-12.7) or things no library can supply to a freestanding target.
 | Any GPL-2.0-only component | Incompatible with GPL-3.0-only. |
 | Any CDDL, EPL, SSPL, or BUSL component | Incompatible. |
 | Proprietary camera and codec SDKs | R-2.5, R-12.2. |
-| Anything requiring a JIT (Blend2D, `llvmpipe`) | Requires writable-executable memory, which Sapote refuses by construction. |
-| Anything requiring dynamic linking | Sapote has no dynamic linker, and R-13.4 forbids the shape. |
-| Anything requiring a network at build or run time | R-12.1, and Sapote has no network. |
+| Anything requiring a JIT (Blend2D, `llvmpipe`) | Requires writable-executable memory, which Phipia refuses by construction. |
+| Anything requiring dynamic linking | Phipia has no dynamic linker, and R-13.4 forbids the shape. |
+| Anything requiring a network at build or run time | R-12.1, and Phipia has no network. |
 | An umbrella crate pulling a tree for one feature (`image`) | R-12.3. |
 | A library that duplicates the product's core semantics | R-12.7. |
 | Telemetry, crash reporting, auto-update, licence checking | The charter's non-goals. |
@@ -461,7 +461,7 @@ short on purpose.
 
 Twenty-two libraries to a working cut. Every one of them is safe Rust, every
 one is compatible with GPL-3.0-only, and not one of them requires a capability
-Sapote is not already asked for in
+Phipia is not already asked for in
 [`PLATFORM_CONTRACT.md`](PLATFORM_CONTRACT.md).
 
 ### What the current implementation uses

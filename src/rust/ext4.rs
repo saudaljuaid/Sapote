@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Checked, read-only ext4 operations over Sapote's native block boundary.
+//! Checked, read-only ext4 operations over Phipia's native block boundary.
 
 extern crate alloc;
 
@@ -124,7 +124,7 @@ struct BlockReadError;
 
 impl Display for BlockReadError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        formatter.write_str("Sapote block read failed")
+        formatter.write_str("Phipia block read failed")
     }
 }
 
@@ -135,17 +135,17 @@ struct BlockStorageError;
 
 impl Display for BlockStorageError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        formatter.write_str("Sapote block write or flush failed")
+        formatter.write_str("Phipia block write or flush failed")
     }
 }
 
 impl Error for BlockStorageError {}
 
-struct SapoteReader {
+struct PhipiaReader {
     context: usize,
 }
 
-impl Ext4Read for SapoteReader {
+impl Ext4Read for PhipiaReader {
     fn read(
         &self,
         start_byte: u64,
@@ -159,11 +159,11 @@ impl Ext4Read for SapoteReader {
     }
 }
 
-struct SapoteJournalStorage {
+struct PhipiaJournalStorage {
     context: usize,
 }
 
-impl JournalStorage for SapoteJournalStorage {
+impl JournalStorage for PhipiaJournalStorage {
     type Error = BlockStorageError;
 
     fn write(&mut self, start_byte: u64, bytes: &[u8]) -> Result<(), Self::Error> {
@@ -195,7 +195,7 @@ fn execute_storage_plan(
     context: usize,
     operations: &[JournalCommitOperation],
 ) -> Result<(), Status> {
-    execute_commit_operations(&mut SapoteJournalStorage { context }, operations).map_err(|error| {
+    execute_commit_operations(&mut PhipiaJournalStorage { context }, operations).map_err(|error| {
         match error {
             JournalExecutionError::AddressOverflow => Status::Range,
             JournalExecutionError::Storage(_) => Status::Io,
@@ -209,7 +209,7 @@ fn load_staged_view(
     needs_recovery: bool,
 ) -> Result<(Ext4, Rc<JournalMutationStage>), Status> {
     let stage = Rc::new(
-        JournalMutationStage::new(Box::new(SapoteReader { context }), image_bytes)
+        JournalMutationStage::new(Box::new(PhipiaReader { context }), image_bytes)
             .map_err(|_| Status::Invalid)?,
     );
     let filesystem = if needs_recovery {
@@ -533,10 +533,10 @@ fn validate_namespace(filesystem: &Ext4) -> Result<(), Status> {
     Ok(())
 }
 
-/// Load and validate the exact Sapote ext4 profile and reachable namespace.
+/// Load and validate the exact Phipia ext4 profile and reachable namespace.
 pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, Identity), Status> {
     let mut image_bytes = validate_profile(context, media_bytes)?;
-    let mut filesystem = Ext4::load(Box::new(SapoteReader { context })).map_err(map_error)?;
+    let mut filesystem = Ext4::load(Box::new(PhipiaReader { context })).map_err(map_error)?;
     let mut journal = load_journal_inode_map(&filesystem).map_err(map_journal_error)?;
     let mut recovery = RecoveryReport::default();
     let mut recovery_performed = 0u8;
@@ -546,7 +546,7 @@ pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, I
         drop(journal);
         drop(filesystem);
         image_bytes = validate_profile(context, media_bytes)?;
-        filesystem = Ext4::load(Box::new(SapoteReader { context })).map_err(map_error)?;
+        filesystem = Ext4::load(Box::new(PhipiaReader { context })).map_err(map_error)?;
         journal = load_journal_inode_map(&filesystem).map_err(map_journal_error)?;
         if journal.filesystem_needs_recovery() {
             return Err(Status::Invalid);
@@ -555,7 +555,7 @@ pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, I
     drop(journal);
     drop(filesystem);
     let stage = Rc::new(
-        JournalMutationStage::new(Box::new(SapoteReader { context }), image_bytes)
+        JournalMutationStage::new(Box::new(PhipiaReader { context }), image_bytes)
             .map_err(|_| Status::Invalid)?,
     );
     let filesystem = Ext4::load_with_writer(Box::new(stage.clone()), Some(Box::new(stage.clone())))

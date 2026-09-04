@@ -11,7 +11,7 @@ compromise it arrives. Each crate below says which it is.
 A pure core, a thin platform edge, and exactly five seams between them. The
 project model, the timeline, the edit algebra, the render graph, the colour
 pipeline, and the mixer are pure functions over typed data with no knowledge of
-Sapote at all — they compile and are tested on a host with no operating system
+Phipia at all — they compile and are tested on a host with no operating system
 in the picture. Everything that touches the machine is behind five named seams
 in one crate. The application is the part in the middle that owns nothing but
 decisions.
@@ -40,7 +40,7 @@ sapstudio-ui   sapstudio-io      sapstudio-render   sapstudio-rt
                               |
         ......................|...................... the five seams
                               |
-                           Sapote
+                           Phipia
 ```
 
 `sapstudio-io` sits above every domain crate rather than below them, because
@@ -83,7 +83,7 @@ anything.
 | `sapstudio-abi` | The five seams, every `extern "C"`, every raw pointer from outside | **permitted** | **exists**, two seams of five |
 | `sapstudio-rt` | Program entry, the allocator, the panic path, page and mapping management | **permitted** | **exists**, M1 heap |
 | `sapstudio-media` | Frame and sample types, full colour and format descriptions, content addressing, the frame pool, test patterns including the offline slate | forbidden | **exists**, and a frame that takes a window rather than copying one, 47 tests |
-| `sapstudio-io` | Every format: the project file, the reel, the waveform summary, the save protocol, CMX 3600 interchange and the conform that turns a sequence into one and back, the `.cube` lookup table, PNG reference captures, bounded byte readers and writers, Sapote's own filesystem contract, 24-bit bitmaps, and the media vault that holds pasted photographs and footage, read through the seam an entry at a time, a reel read a frame — or a row — at a time, and a reel *written* a row at a time — and a frame of sound at a time — onto a sink that can only be extended, and a vault that serves a run of samples and the words that were said as well as a row of pixels, every one of them a window at a time, and a WebVTT caption sidecar written a cue at a time beside it | forbidden | **exists**, 351 tests |
+| `sapstudio-io` | Every format: the project file, the reel, the waveform summary, the save protocol, CMX 3600 interchange and the conform that turns a sequence into one and back, the `.cube` lookup table, PNG reference captures, bounded byte readers and writers, Phipia's own filesystem contract, 24-bit bitmaps, and the media vault that holds pasted photographs and footage, read through the seam an entry at a time, a reel read a frame — or a row — at a time, and a reel *written* a row at a time — and a frame of sound at a time — onto a sink that can only be extended, and a vault that serves a run of samples and the words that were said as well as a row of pixels, every one of them a window at a time, and a WebVTT caption sidecar written a cue at a time beside it | forbidden | **exists**, 351 tests |
 | `sapstudio-app` | The event loop, command dispatch, playback policy, session lifetime, rendering a sequence at an instant, mixing its sound over a span | forbidden | **exists** as the slate — which now renders — the timeline renderer with offline media and nested sequences, the scan that renders one instant a row at a time, the export that winds a span of it onto storage — picture and sound both — without ever holding a frame or a span of samples, the mixdown and the reference capture, and the words on screen burned into the picture as one block of lines, and the sidecar that says the same words the reel does, 117 tests |
 | `sapstudio-image` | The entry point and nothing else; outside the workspace because it cannot build for the host | **permitted** | **exists**, audited |
 | `sapstudio-render` | The render graph, compositor, colour pipeline, lookup tables, rasterisation | forbidden | **exists** as the graph the timeline renders through, colour pipeline, conversion, compositor, scopes, 3D lookup tables applied to frames and to graph nodes, and the exact-area shape rasteriser a wipe and a mask are both made of, hard edges and soft, masks, resampling in linear light, and a face written from scratch, capitals and lowercase, whose glyphs are disjoint convex pieces, the legend that sets one across a frame, and titles in a colour named as light, 266 tests, and a row form of the graph for a machine that cannot hold a frame — every node of it, generators included, and every invertible transform — a scale in one strip and a turn in several — and a band form above it, which draws a rectangle at a time so a turn reads its source once for many rows rather than once for each |
@@ -105,10 +105,10 @@ review comment.
 ## The five seams
 
 Everything the platform provides arrives through exactly five interfaces. Each
-is a trait in `sapstudio-abi` with two implementations: the Sapote one, and a
+is a trait in `sapstudio-abi` with two implementations: the Phipia one, and a
 deterministic test one used by the host suite.
 
-| Seam | Provides | Sapote capability | State |
+| Seam | Provides | Phipia capability | State |
 | --- | --- | --- | --- |
 | `Console` | Write bytes to the kernel transcript | `SAP-01` | **exists** |
 | `Time` | Monotonic nanoseconds | `SAP-05` | **exists** |
@@ -121,7 +121,7 @@ deterministic test one used by the host suite.
 and it is what the slate writes its report through today. `Storage` has its
 trait and its deterministic in-memory implementation, which is what lets the
 save protocol below be tested — including all four of its failure modes —
-before Sapote can write a byte.
+before Phipia can write a byte.
 
 Six, and the sixth is a transcript. Not seven, and no general "system"
 interface that would become a seventh by accretion. Adding a seam is an

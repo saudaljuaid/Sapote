@@ -2,12 +2,12 @@
 
 # NVIDIA register probes
 
-Sapote has fifteen bounded probes for NVIDIA graphics and audio functions.
+Phipia has fifteen bounded probes for NVIDIA graphics and audio functions.
 They identify a device through PCI configuration, BAR layout, documented MMIO
 registers, and the video BIOS. The probes release every claimed resource and
 leave bus mastering disabled.
 
-The QEMU model in `tools/qemu/sapote_nvidia_model.c` exercises the complete bind
+The QEMU model in `tools/qemu/phipia_nvidia_model.c` exercises the complete bind
 path. It supplies the register interface, while scenario parameters provide the
 boot identity, straps, board identity, timer scale, and ROM image.
 
@@ -64,7 +64,7 @@ Fourteen probes are read-only. The video-BIOS probe clears the PROM shadow bit,
 reads the ROM window, restores the original value, and verifies the restored
 state. Verification pins that write sequence and rejects additional writes.
 
-No probe enables bus mastering or allocates DMA. Sapote has no IOMMU, so these
+No probe enables bus mastering or allocates DMA. Phipia has no IOMMU, so these
 paths remain configuration- and register-only.
 
 ## Identity decode

@@ -62,7 +62,7 @@ pub const MAX_CAPTION_TEXT: usize = 128;
 ///
 /// A caption is 24 bytes of fields plus up to [`MAX_CAPTION_TEXT`] characters,
 /// which is 512 bytes of UTF-8 in the worst case: 536 bytes each, so 34,304
-/// for sixty-four of them. A Sapote program is mapped **76 KiB**, and the
+/// for sixty-four of them. A Phipia program is mapped **76 KiB**, and the
 /// project file is read whole — so one fully captioned asset is already 45% of
 /// the program's entire address space, and two are over it.
 ///
@@ -209,7 +209,7 @@ pub const MAX_CAPTIONS_SHOWN: usize = 512;
 /// same reason both of those did: the words do not fit in the project file.
 ///
 /// Sixty-four captions an asset is 34,304 bytes at worst, which is 45% of the
-/// seventy-six kilobytes a Sapote program is mapped, **for one asset**, in a
+/// seventy-six kilobytes a Phipia program is mapped, **for one asset**, in a
 /// file that is read in one piece. A transcript of an interview is thousands.
 /// So a transcript lives where the material does, and this is how a projection
 /// asks for it.

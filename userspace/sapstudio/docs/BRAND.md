@@ -5,11 +5,11 @@
 `SapStudio` is the only public name of this application. Public prose uses
 `SapStudio`; paths, command-line keys, symbols, crate names, and build
 artefacts use `sapstudio`; preprocessor guards and build environment variables
-use `SAPSTUDIO`. `SapStudio Slate` is the historical name of the first
+use `MEDIAEDTO`. `SapStudio Slate` is the historical name of the first
 workspace, part of SapStudio and not a separate product.
 
-The application is part of the Sapote project and says so. It never claims to
-be an operating system, and Sapote never claims to be an editor.
+The application is part of the Phipia project and says so. It never claims to
+be an operating system, and Phipia never claims to be an editor.
 
 ## The canonical mark
 
@@ -32,15 +32,15 @@ above, which is the only name it will ever have here.
 SapStudio has no PNG decoder and will not gain one for its own mark. When the
 interface exists, a deterministic build tool converts this file into a bounded
 runtime stream that safe Rust validates before anything draws it, exactly as
-`tools/make-logo-asset.py` does for Sapote's pebble, and both the source digest
+`tools/make-logo-asset.py` does for Phipia's pebble, and both the source digest
 above and the tool's output digest are pinned by `make verify`.
 
-The rules on the mark are Sapote's rules, and they are absolute. Do not redraw,
+The rules on the mark are Phipia's rules, and they are absolute. Do not redraw,
 trace, recolour, crop, mirror, rotate, flatten its transparency, add type to it,
 place it in a frame or tile, or substitute a visually similar clapperboard.
 Public uses preserve its aspect ratio.
 
-SapStudio's clapperboard and Sapote's pebble may appear beside one another with
+SapStudio's clapperboard and Phipia's pebble may appear beside one another with
 clear space between them. They are never merged into a combined mark.
 
 ## The palette
@@ -63,25 +63,25 @@ not a style preference; it is the reason colourists work in grey rooms.
 | Primary text | `#E8E8E8` | Neutral. |
 | Secondary text | `#9A9A9A` | Neutral. |
 | Timeline track base | `#1F1F1F` | Neutral. |
-| Teal accent | `#4F837F` | Selection and focus. Sapote's teal. |
-| Gold accent | `#C4A44E` | Attention and unsaved state. Sapote's gold. |
-| Green accent | `#598561` | Completion. Sapote's green. |
-| Red accent | `#A55050` | Refusal and record. Sapote's red. |
-| Violet accent | `#705984` | Markers. Sapote's violet. |
+| Teal accent | `#4F837F` | Selection and focus. Phipia's teal. |
+| Gold accent | `#C4A44E` | Attention and unsaved state. Phipia's gold. |
+| Green accent | `#598561` | Completion. Phipia's green. |
+| Red accent | `#A55050` | Refusal and record. Phipia's red. |
+| Violet accent | `#705984` | Markers. Phipia's violet. |
 
-Accents come from Sapote Redwood's palette: the two
+Accents come from Phipia Phipia's palette: the two
 programs are one project and should look like it. Accents belong to controls,
 never to the viewer, and never inside the picture area. No gradient, no glow,
 no translucency over a frame, no coloured overlay a user could mistake for
 something in the image.
 
-Sapote's warm white `#F7F6F0` and slate-violet desktop `#595976` are First
+Phipia's warm white `#F7F6F0` and slate-violet desktop `#595976` are First
 Light's, not SapStudio's. They appear in documentation and never in the
 application.
 
 ## Typography and interface language
 
-The first interface uses a validated bitmap font, exactly as Sapote does, and
+The first interface uses a validated bitmap font, exactly as Phipia does, and
 gains a shaped-text path only when titles require one. Type in the chrome is
 small, dense, and legible at a glance; type in a title is whatever the editor
 chose, rendered faithfully.
@@ -96,7 +96,7 @@ diagnostics, never in front of the editor. An error names what was refused and
 what is still true: "the media file ends mid-frame; the timeline is unchanged"
 rather than "an error occurred".
 
-Never claim a capability the release does not have. Sapote's project status
+Never claim a capability the release does not have. Phipia's project status
 section is the model: state the boundary plainly, and let the work speak.
 
 ## Public surfaces
@@ -112,7 +112,7 @@ defect, not a detail.
 `make lint` enforces the naming rules in this document. When the interface
 exists, `make verify` will pin the source digest above, the runtime encoding
 digest, and the branded symbol and artefact names, and a QEMU scenario will
-compare the drawn pixels against the decoded stream, as Sapote's boot proof
+compare the drawn pixels against the decoded stream, as Phipia's boot proof
 already does for the pebble.
 
 Until then the rule that matters is the negative one: nothing claims a mark it

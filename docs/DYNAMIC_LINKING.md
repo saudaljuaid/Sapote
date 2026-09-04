@@ -2,7 +2,7 @@
 
 # Native dynamic ELF loading
 
-Sapote can execute a bounded x86-64 PIE root with authenticated shared-object
+Phipia can execute a bounded x86-64 PIE root with authenticated shared-object
 dependencies in Ring 3. The Rust boundary admits and relocates `ET_DYN` bytes;
 the C process loader reads the root, catalog, and libraries from the read-only
 System volume, chooses non-overlapping biases, installs final permissions and
@@ -19,12 +19,12 @@ appear exactly twice, and the kernel must report a positive count of immutable
 RX pages reused by the second process:
 
 ```text
-SAPOTE DYNAMIC LIB INIT
-SAPOTE DYNAMIC ROOT INIT
-SAPOTE DYNAMIC RING3 PASS
-SAPOTE DYNAMIC ROOT FINI
-SAPOTE DYNAMIC LIB FINI
-Sapote: dynamic ELF shared RX, private TLS and lifecycle passed
+PHIPIA DYNAMIC LIB INIT
+PHIPIA DYNAMIC ROOT INIT
+PHIPIA DYNAMIC RING3 PASS
+PHIPIA DYNAMIC ROOT FINI
+PHIPIA DYNAMIC LIB FINI
+Phipia: dynamic ELF shared RX, private TLS and lifecycle passed
 ```
 
 The kernel also requires a zero exit status, at least seven real Ring 3
@@ -40,7 +40,7 @@ duplicate, ambiguous, cyclic, changed, or out-of-bound dependencies are
 refused before a user mapping is entered.
 
 This proof package uses legacy format 2, whose body has integrity hashing but
-no publisher signature. Sapote's Ed25519-signed format-v3 repository and trust
+no publisher signature. Phipia's Ed25519-signed format-v3 repository and trust
 policy are separate. The dynamic proof covers authenticated System-image
 loading; publisher provenance and in-guest installation belong to the package
 service boundary.
@@ -123,7 +123,7 @@ native-process teardown census.
 hash families and covers dependency ordering, TLS, lifecycle tables,
 relocations, authentication, hostile bounds, W+X, unsupported tags, malformed
 hashes, relocation target/overflow failures, and missing/ambiguous/cyclic
-graphs. `tools/sapote_package_host_test.py` covers catalog/resource digest
+graphs. `tools/phipia_package_host_test.py` covers catalog/resource digest
 agreement and changed-library/catalog refusal.
 
 `make native-dynamic-proof` builds and inspects the real PIE/DSO, creates the
@@ -144,4 +144,4 @@ and a clean final cache/resource census. It retains the root, library, catalog,
   per instance, and one initial thread per process. Host tests cover transitive
   graphs and hostile inputs.
 - This does not add a hosted libc ABI or make arbitrary Linux shared objects
-  compatible with Sapote's native ABI.
+  compatible with Phipia's native ABI.

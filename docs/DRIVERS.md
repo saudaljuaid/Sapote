@@ -2,7 +2,7 @@
 
 # Device identification drivers
 
-Sapote has bounded identification drivers for thirteen PCI devices from Intel,
+Phipia has bounded identification drivers for thirteen PCI devices from Intel,
 Realtek, AMD, and Cirrus Logic, plus the Bochs Display Interface. Each driver
 matches the device, establishes a known state, checks its identity against the
 hardware specification, and releases its resources.
@@ -24,7 +24,7 @@ Every driver here:
   DMA, PCI, vector and MSI-X census from before the first bind to after the
   last one.
 
-These drivers keep bus mastering disabled. Sapote has no IOMMU, so a
+These drivers keep bus mastering disabled. Phipia has no IOMMU, so a
 bus-mastering device could reach all physical memory. The four chipset drivers
 also leave configuration space unchanged while inspecting the machine's legacy
 I/O setup.
@@ -66,7 +66,7 @@ extension-lock state.
 ## Where it runs
 
 `src/kernel/driver.c` contains the drivers and binding matrix;
-`include/sapote/driver.h` defines their interface. Two Boot Ledger stages cover
+`include/phipia/driver.h` defines their interface. Two Boot Ledger stages cover
 the matrix:
 
 - **bounded PCI driver matrix foundation** validates duplicate identities,

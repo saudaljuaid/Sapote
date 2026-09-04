@@ -2,9 +2,9 @@
 
 # Architecture
 
-Sapote is a single-core x86_64 kernel built as one fixed-address ELF image. It
+Phipia is a single-core x86_64 kernel built as one fixed-address ELF image. It
 boots through Multiboot2, installs its own memory and interrupt foundations,
-discovers emulated hardware, and can hand control to the Sapote Redwood workspace
+discovers emulated hardware, and can hand control to the Phipia Phipia workspace
 or one of the bounded QEMU proof scenarios.
 
 Source, headers, self-tests, and the Boot Ledger define the implementation. This
@@ -62,7 +62,7 @@ calendar-time consumers. Wall time is never used for deadlines; see
 [`WALL_CLOCK.md`](WALL_CLOCK.md).
 
 `thread.c` provides guarded kernel stacks, a small scheduler, and preemption.
-Sapote remains single-core.
+Phipia remains single-core.
 
 `multiprocess.c` and the native scheduler add bounded user scheduling above
 them: up to four processes
@@ -92,7 +92,7 @@ The device boundaries are explicit:
 - ext4: exact-profile, metadata-checksummed, read-only lookup, 64-bit stat/read,
   symlink/hardlink identity, and directory enumeration through pinned ext4plus;
 - FAT16: retained read-only compatibility proofs for historical releases;
-- PS/2: keyboard and three-byte pointer input for the shell and Sapote Redwood.
+- PS/2: keyboard and three-byte pointer input for the shell and Phipia Phipia.
 
 `driver.c` adds thirteen bounded drivers for real Intel, Realtek, AMD, Cirrus
 Logic and Bochs Display Interface devices. Each binds through the same typed
@@ -187,7 +187,7 @@ events, network objects, timers, and threads. The public C SDK and Rust
 
 Separately, the Linux compatibility boundary programs
 the x86_64 `SYSCALL` MSRs and runs three checksum-pinned static BusyBox
-profiles: `echo SAPOTE`, `uname -s`, and `cat`. Sapote Redwood's `linux` command
+profiles: `echo PHIPIA`, `uname -s`, and `cat`. Phipia Phipia's `linux` command
 selects one of the three exact root entries on the deterministic read-only
 FAT32 system volume attached as an ordinary emulated NVMe namespace. Each
 launch validates
@@ -198,7 +198,7 @@ prompt.
 Echo and uname remain synchronous. Cat alone may suspend at its measured
 `read(0, 0x400001203f00, 4096)` entry. The syscall boundary saves an
 authenticated user frame, restores the kernel CR3 and safe launch stack, and
-returns to Sapote Redwood without printing a prompt. Keyboard events then belong
+returns to Phipia Phipia without printing a prompt. Keyboard events then belong
 to the bounded foreground line state. A complete line or EOF is revalidated,
 copied all-or-nothing into the authenticated RW/NX mapping, and resumes the
 same generation immediately after the real `SYSCALL`. The cycle may repeat
@@ -208,7 +208,7 @@ frame, input, output ownership, mappings, and generation.
 The v0.8.0 echo, v0.9.0 uname, and v1.1.0 FAT16 fixtures remain independent
 historical proof scenarios. v2.0.0 repackages the same exact executable bytes
 on the immutable FAT32 system volume without changing their measured ABI. This
-surface is not POSIX and is not Sapote's native application ABI. It accepts
+surface is not POSIX and is not Phipia's native application ABI. It accepts
 only the measured calls, arguments, mappings, input/output relationship, and
 lifecycle documented in [`LINUX_SYSCALL_ABI.md`](LINUX_SYSCALL_ABI.md).
 
@@ -219,36 +219,36 @@ streams that the kernel did not create: packed fonts and logo data, FAT16/FAT32
 metadata, and ELF64 program records. Only validated, pointer-free results cross
 back to C. See [`RUST.md`](RUST.md).
 
-## Sapote Redwood
+## Phipia Phipia
 
 `framebuffer.c` validates and maps the linear framebuffer. `surface.c` provides
 cached clipped drawing and damage tracking; `screen.c` implements text cells.
 `keyboard.c`, `pointer.c`, `shell.c`, and `ui.c` form the interactive boundary.
 `ui_anim.c` implements the bounded fixed-point window genie used by the
-interactive compositor; it snapshots pixels already owned by Redwood and does
+interactive compositor; it snapshots pixels already owned by Phipia and does
 not introduce floating-point work into the kernel.
 
-Sapote Redwood is a bounded eight-application workspace with a menu bar,
+Phipia Phipia is a bounded eight-application workspace with a menu bar,
 native 3D Dock, movable overlapping windows, Settings, Store, Camera, Canvas,
 Files, Notes, Terminal, and SapStudio. Native processes may additionally own
-bounded xRGB content surfaces while Redwood retains chrome, focus, stacking,
+bounded xRGB content surfaces while Phipia retains chrome, focus, stacking,
 movement, close, maximize, minimize controls, and composition. Its design and
 capture contract are in
-[`REDWOOD.md`](REDWOOD.md) and [`NATIVE_GRAPHICS.md`](NATIVE_GRAPHICS.md).
+[`PHIPIA.md`](PHIPIA.md) and [`NATIVE_GRAPHICS.md`](NATIVE_GRAPHICS.md).
 
 ## Repository map
 
 | Path | Purpose |
 | --- | --- |
-| `include/sapote/` | Public kernel subsystem contracts |
+| `include/phipia/` | Public kernel subsystem contracts |
 | `src/arch/x86_64/` | Entry, interrupts, process entry, syscall entry, context switch |
 | `src/kernel/` | Kernel implementation and guest-side tests |
 | `src/rust/` | Freestanding bounded parsers and the C ABI |
-| `include/sapote/abi/` | Versioned public native syscall records |
+| `include/phipia/abi/` | Versioned public native syscall records |
 | `sdk/` | Freestanding C startup, headers, runtime and linker contract |
-| `rust/sapote/` | Rust `no_std` native application crate |
+| `rust/phipia/` | Rust `no_std` native application crate |
 | `apps/native-*` | Native ABI, graphics, networking and Rust proof applications |
-| `ports/` | Pinned upstream application inputs and Sapote adaptations |
+| `ports/` | Pinned upstream application inputs and Phipia adaptations |
 | `userspace/busybox/` | Pinned configurations, traces, licenses, and source inputs |
 | `tools/` | Deterministic asset, fixture, and BusyBox builders |
 | `.github/workflows/` | Required build and measured-profile evidence |
@@ -260,7 +260,7 @@ keeping development diaries in the active documentation set.
 
 ## Current limits
 
-Sapote is single-core and has no IPv6, firewall, routing, Wi-Fi, IOMMU, general
+Phipia is single-core and has no IPv6, firewall, routing, Wi-Fi, IOMMU, general
 Unix VFS, hosted `ld.so`/`dlopen`, signals, ambient Unix descriptor table, or
 browser. Native ABI v1 supports its documented static and bounded PIE/DSO
 profiles rather than a POSIX personality. Process creation, fork, exec, process

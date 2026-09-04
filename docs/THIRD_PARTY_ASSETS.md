@@ -2,7 +2,7 @@
 
 # Third-party sources and visual assets
 
-Sapote's build is offline and deterministic. The exact third-party source
+Phipia's build is offline and deterministic. The exact third-party source
 files used by the runtime and UI are committed and licensed beside the code or
 assets. Runtime sources are pinned to exact upstream Git objects or release
 archives. Visual sources are converted by host tools and then parsed through
@@ -15,16 +15,16 @@ The sole ext4 implementation candidate is the official
 commit `ec7e8443e474376977bb752cde370762226a5a50`, Git tree
 `a4aea888632546b2bbfbefa97b43ca6c8f945fc8`. The exact `no_std` source tree,
 README, MIT license, and Apache-2.0 license are retained under
-`vendor/ext4plus/`. Sapote selects the MIT terms for GPL-3.0-only distribution;
+`vendor/ext4plus/`. Phipia selects the MIT terms for GPL-3.0-only distribution;
 both upstream notices remain available.
 
 The local manifest removes workspace inheritance and development-only inputs;
 the local lock resolves that manifest to the repository's exact offline Cargo
 mirror, matching the kernel lock. The implementation source is otherwise
-pinned to the recorded tree apart from reviewable Sapote deltas. The accepted
+pinned to the recorded tree apart from reviewable Phipia deltas. The accepted
 runtime profile is currently read-only. Upstream does not implement a journaled
 write path, so vendoring it does not establish crash-consistent ext4 writes.
-`vendor/ext4plus/SAPOTE-PORT.md` records that boundary and the exact feature
+`vendor/ext4plus/PHIPIA-PORT.md` records that boundary and the exact feature
 configuration.
 
 ## BearSSL
@@ -37,7 +37,7 @@ commit `8ef7680081c61b486622f2d983c0d3d21e83caad`, and Git tree
 trees are byte-for-byte upstream files. BearSSL's MIT license and README are
 preserved under `vendor/bearssl/`.
 
-Sapote disables BearSSL's hosted entropy and time adapters and its optional
+Phipia disables BearSSL's hosted entropy and time adapters and its optional
 SSE2, AES-NI, and POWER8 implementations. The SDK wrapper supplies native
 entropy, validated realtime, trust anchors, a canonical DNS hostname,
 monotonic transport deadlines, and a bounded TLS 1.2 cipher profile. The
@@ -53,14 +53,14 @@ It corresponds to annotated tag object
 `da607da739fa6047df13e66a2af6b8bec7c2a498` in the official repository.
 The zlib license is retained verbatim.
 
-Sapote carries the byte-exact public headers and nine-source `Z_SOLO` core for
+Phipia carries the byte-exact public headers and nine-source `Z_SOLO` core for
 bounded in-memory deflate/inflate and checksums. Hosted gzip-file adapters and
 the allocation-backed `compress*` convenience API are excluded.
 `vendor/zlib/SOURCE-MANIFEST.sha256` pins each retained upstream file, while
-`vendor/zlib/SAPOTE-PORT.md` defines the freestanding build and allocator
+`vendor/zlib/PHIPIA-PORT.md` defines the freestanding build and allocator
 contract. The reproducible SDK installs this profile as the static `libz.a`.
-Sapote's bounded native shared-object loader is separate; zlib itself is not
-shipped as a Sapote DSO. Authenticated Sapote DSOs can share immutable RX
+Phipia's bounded native shared-object loader is separate; zlib itself is not
+shipped as a Phipia DSO. Authenticated Phipia DSOs can share immutable RX
 physical pages across processes, but the current zlib SDK artifact remains the
 reproducible static `libz.a` described above.
 
@@ -73,10 +73,10 @@ retained `include/` and `src/` trees and upstream zlib license are committed
 under `vendor/sdl2/`; exact retained-tree and license hashes are recorded in
 `vendor/sdl2/UPSTREAM-COMMIT.txt`.
 
-Sapote adds an explicitly selected `__SAPOTE__` configuration and native
-Redwood video/input, PCM audio, pthread/futex, timer, and preference-filesystem
+Phipia adds an explicitly selected `__PHIPIA__` configuration and native
+Phipia video/input, PCM audio, pthread/futex, timer, and preference-filesystem
 backends. Disabled subsystems and the evidence boundary are recorded in
-`vendor/sdl2/SAPOTE-PORT.md` and `docs/SDL.md`. No Linux compatibility layer or
+`vendor/sdl2/PHIPIA-PORT.md` and `docs/SDL.md`. No Linux compatibility layer or
 SDL dummy video/audio backend is used.
 
 ## Inter
@@ -102,11 +102,11 @@ Lucide ISC license are committed under `assets/icons/lucide/`.
 
 `tools/rasterize-settings-icons.py` composes those pictograms into one coherent
 4×3 glossy category sheet. The sheet is committed, so CairoSVG is a development
-regeneration dependency only; a normal Sapote build remains self-contained.
+regeneration dependency only; a normal Phipia build remains self-contained.
 `tools/rasterize-canvas-icons.py` parses the selected SVG path, arc, circle, and
 rounded-rectangle geometry with only Python's standard library, then applies
 bounded 4× coverage sampling to produce the checked `SCI1` alpha resource used
-by the native Canvas package. Redwood rasterizes the pinned Lucide search
+by the native Canvas package. Phipia rasterizes the pinned Lucide search
 geometry with bounded integer supersampling at its two small display sizes,
 avoiding both a jagged hand-drawn glyph and a new kernel image decoder.
 The same bounded sampler renders the pinned Lucide X, square, and minus
@@ -119,18 +119,18 @@ committed raster resources by SHA-256.
 
 ## 3d-dock
 
-Sapote's Dock interaction and glass-shelf geometry are a native fixed-point
+Phipia's Dock interaction and glass-shelf geometry are a native fixed-point
 port of [`saudaljuaid/3d-dock`](https://github.com/saudaljuaid/3d-dock) at
 commit `8ab14d0c372ab797475e49b8a658d54f30f706bc`. The original implementation is
-written in C with Cairo and X11. Sapote preserves its raised-cosine hover
+written in C with Cairo and X11. Phipia preserves its raised-cosine hover
 curve, pointer-anchored layout, eased panel width, press squash, decaying
 bounce, trapezoidal shelf flare, warped reflection strips, running lights, and
 tooltip fades, while replacing those hosted dependencies with bounded Q16.16
-math and direct cached-framebuffer drawing. Only Sapote's eight applications are
+math and direct cached-framebuffer drawing. Only Phipia's eight applications are
 present. The upstream MIT license is committed as
 `docs/third-party/3d-dock-LICENSE`.
 
-## Sapote photographic scenes
+## Phipia photographic scenes
 
 The fourteen wallpaper sources are real photographs downloaded from Unsplash
 and used under the [Unsplash License](https://unsplash.com/license). The exact

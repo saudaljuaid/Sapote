@@ -5,9 +5,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/fat32_fs.h>
-#include <sapote/package_state.h>
-#include <sapote/package_upload.h>
+#include <phipia/fat32_fs.h>
+#include <phipia/package_state.h>
+#include <phipia/package_upload.h>
 
 struct upload_slot {
     struct package_state_sha256_context sha256;

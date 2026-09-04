@@ -10,7 +10,7 @@
 //! It is not the allocator SapStudio will ship. That is a bounded, constant
 //! time allocator over pages obtained from `SAP-03`, and it arrives with the
 //! capability. This one exists so that the model can run on the target before
-//! Sapote can hand out a page, and its limits are stated rather than hidden:
+//! Phipia can hand out a page, and its limits are stated rather than hidden:
 //! reclaim only in reverse order, one arena, no growth.
 
 use core::alloc::{GlobalAlloc, Layout};
@@ -19,7 +19,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 /// How much the static arena holds.
 ///
-/// Sixty-four kibibytes: a Sapote program is given seventy-six kibibytes of
+/// Sixty-four kibibytes: a Phipia program is given seventy-six kibibytes of
 /// mapped address space in total today, so this is most of what there is. Real
 /// editing needs `SAP-03` and `SAP-12`, and this constant is what will be
 /// deleted when they arrive rather than quietly raised.
@@ -33,7 +33,7 @@ pub struct BumpHeap {
 }
 
 // SAFETY: every field is either an atomic or is reached only through the
-// cursor, which is atomic. Sapote is single-core and SapStudio has no
+// cursor, which is atomic. Phipia is single-core and SapStudio has no
 // userspace threads, so the only concurrency this must survive is none; the
 // atomics are here so that the type is sound rather than merely adequate.
 unsafe impl Sync for BumpHeap {}

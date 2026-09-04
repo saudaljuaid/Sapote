@@ -9,7 +9,7 @@
 //!
 //! Two are defined here because two are all that `SAP-01` supports. The rest
 //! arrive with the capabilities they need, each one in this module, each one
-//! with a Sapote implementation and a deterministic test implementation.
+//! with a Phipia implementation and a deterministic test implementation.
 
 use core::fmt::Write;
 
@@ -35,7 +35,7 @@ pub type Result<T> = core::result::Result<T, SeamStatus>;
 
 /// Somewhere to write diagnostics.
 ///
-/// On Sapote this is the kernel's console and serial transcript. In the host
+/// On Phipia this is the kernel's console and serial transcript. In the host
 /// suite it is a buffer a test compares against, which is what makes an
 /// application's whole output checkable without an emulator.
 pub trait Console {
@@ -101,8 +101,8 @@ impl<C: Console + ?Sized> Write for ConsoleWriter<'_, C> {
 
 /// Which fixed storage slot an operation names.
 ///
-/// This enum's first version said "Sapote has no paths, no directories, and no
-/// rename (`SAP-08`)", which was true at v1.1.0 and is not true now: Sapote
+/// This enum's first version said "Phipia has no paths, no directories, and no
+/// rename (`SAP-08`)", which was true at v1.1.0 and is not true now: Phipia
 /// 2.1.0 has a read-write FAT32 volume with nested directories, rename and
 /// sync. The shape below survived the correction anyway, and it is worth
 /// saying why rather than leaving it looking like an accident.
@@ -110,7 +110,7 @@ impl<C: Console + ?Sized> Write for ConsoleWriter<'_, C> {
 /// A named slot is **less** than a path on purpose. An application that could
 /// name any file could lose any file, and the property R-9.4 asks for — that
 /// an interrupted save leaves the previous file exactly where it was — is a
-/// property of a *protocol*, not of a filesystem. Sapote's own SapStudio
+/// property of a *protocol*, not of a filesystem. Phipia's own SapStudio
 /// workspace performs that protocol by hand in five steps with three names and
 /// four syncs; [`Storage::commit`] is the name for the one step in it that
 /// must be indivisible.
@@ -132,8 +132,8 @@ pub enum Slot {
     /// Where a save is assembled and verified before it is committed.
     ///
     /// One scratch for both, because a save is a sequence and there is never
-    /// more than one in flight — which is also why Sapote's workspace uses one
-    /// `STUTEMP.SAP` for its own.
+    /// more than one in flight — which is also why Phipia's workspace uses one
+    /// `STUTEMP.PHI` for its own.
     Scratch,
 }
 
@@ -167,13 +167,13 @@ pub trait Storage {
     /// Copy a run of bytes beginning at `offset`, and say how many that was.
     ///
     /// **This is the method a vault needs and a project does not.** One of
-    /// Sapote's files holds sixteen mebibytes and a Sapote program is mapped
+    /// Phipia's files holds sixteen mebibytes and a Phipia program is mapped
     /// seventy-six kilobytes, so [`Storage::read`] — which fills a buffer the
     /// size of the whole slot — cannot read a full vault on the target by
     /// three orders of magnitude. A store that is read an entry at a time can
     /// be, and this is what makes that possible.
     ///
-    /// It is also what Sapote itself does. Its bitmap importer "issues random
+    /// It is also what Phipia itself does. Its bitmap importer "issues random
     /// row reads through the normal filesystem and NVMe paths" rather than
     /// holding a picture, which is `sapfs_seek` followed by `sapfs_read` —
     /// exactly the shape below.
@@ -181,7 +181,7 @@ pub trait Storage {
     /// Short at the end, like every read of a file: a run that begins inside
     /// the slot and reaches past it fills what there is and says how much.
     /// A run beginning **at or past** the end fills nothing and says nought,
-    /// which is what Sapote's `sapfs_read` does at end of file and is a
+    /// which is what Phipia's `sapfs_read` does at end of file and is a
     /// different thing from a refusal.
     ///
     /// # Errors
@@ -203,7 +203,7 @@ pub trait Storage {
     /// **This is the method a recorder needs and a project does not**, and it
     /// is the mirror of [`Storage::read_at`] one milestone later. A reel this
     /// build writes is bounded at five hundred and twelve mebibytes against
-    /// the seventy-six kilobytes a Sapote program is mapped, so
+    /// the seventy-six kilobytes a Phipia program is mapped, so
     /// [`Storage::write`] — which takes the whole file in one slice — cannot
     /// write a full reel on the target by four orders of magnitude. A file
     /// that is extended a row at a time can be.
@@ -220,7 +220,7 @@ pub trait Storage {
     ///
     /// ## Why appending rather than writing at an offset
     ///
-    /// Sapote's FAT32 offers both — it has random access as well as file
+    /// Phipia's FAT32 offers both — it has random access as well as file
     /// growth — so this is a choice rather than a limitation. Appending is
     /// **strictly weaker**, and a writer that cannot seek backwards is a
     /// writer that cannot damage what it has already written. It is why

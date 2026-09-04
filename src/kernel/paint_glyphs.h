@@ -17,8 +17,8 @@
  *
  * Lucide is ISC licensed; see assets/icons/lucide/LICENSE.
  */
-#ifndef SAPOTE_PAINT_GLYPHS_H
-#define SAPOTE_PAINT_GLYPHS_H
+#ifndef PHIPIA_PAINT_GLYPHS_H
+#define PHIPIA_PAINT_GLYPHS_H
 
 #include <stddef.h>
 #include <stdint.h>

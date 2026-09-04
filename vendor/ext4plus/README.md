@@ -35,9 +35,9 @@ This has known limitations due to features needing to be additive, but it should
 - Lack of write support for journaling, although journaling can be read. It is recommended to disable journaling when using this library.
 - Limited extended attribute (xattr) support. Small xattrs can be read and written when they fit in the inode body. Writing external xattr blocks is not supported yet.
 
-The Sapote vendor branch includes a bounded JBD2 transaction-image and ordered
+The Phipia vendor branch includes a bounded JBD2 transaction-image and ordered
 flush-plan primitive. It is not connected to the mutation API and does not make
-filesystem writes crash-consistent; see `SAPOTE-PORT.md` for that boundary.
+filesystem writes crash-consistent; see `PHIPIA-PORT.md` for that boundary.
 
 Everything else should be fully supported, minus the features listed in the compatibility section below.
 

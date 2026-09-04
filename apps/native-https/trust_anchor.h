@@ -1,15 +1,15 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#ifndef SAPOTE_NATIVE_HTTPS_TRUST_ANCHOR_H
-#define SAPOTE_NATIVE_HTTPS_TRUST_ANCHOR_H
+#ifndef PHIPIA_NATIVE_HTTPS_TRUST_ANCHOR_H
+#define PHIPIA_NATIVE_HTTPS_TRUST_ANCHOR_H
 
 /* Public test-only key material for tests/fixtures/tls/ca.pem.  The SDK takes
  * a bounded private snapshot before DNS or transport I/O, so these backing
  * arrays are never retained by the TLS engine. */
-static unsigned char sapote_https_test_dn[] =
+static unsigned char phipia_https_test_dn[] =
     "\x30\x2f\x31\x2d\x30\x2b\x06\x03\x55\x04\x03\x0c\x24\x53\x61\x70\x6f"
     "\x74\x65\x20\x44\x65\x74\x65\x72\x6d\x69\x6e\x69\x73\x74\x69\x63"
     "\x20\x4f\x66\x66\x6c\x69\x6e\x65\x20\x54\x65\x73\x74\x20\x43\x41";
-static unsigned char sapote_https_test_n[] =
+static unsigned char phipia_https_test_n[] =
     "\xe3\x3c\xf8\x2a\x8d\xd7\x8c\xa1\x09\xda\x61\x7b\xa3\xac\x69\x58"
     "\xee\xb1\xc1\xd9\xce\x56\xab\xfd\x69\x84\x66\x35\xe8\x28\x16\x67"
     "\xa8\x3b\x1b\xf7\x7e\x5e\x35\xc7\x8d\x98\x3e\xb4\x4d\xc8\x3c\x03"
@@ -26,14 +26,14 @@ static unsigned char sapote_https_test_n[] =
     "\x39\x4f\x67\x99\x34\x58\x2c\x02\x56\x1e\x52\xbd\xc2\xa2\x8e\xc9"
     "\x51\x3d\x53\x97\x60\x3a\xef\x88\x79\x3f\xdc\xde\x22\x64\x04\x0d"
     "\xab\xdc\xe0\x6e\xf8\x71\x43\x9d\xda\x9f\x8f\x47\xb5\xb4\x55\xfb";
-static unsigned char sapote_https_test_e[] = "\x01\x00\x01";
+static unsigned char phipia_https_test_e[] = "\x01\x00\x01";
 
-static const br_x509_trust_anchor sapote_https_test_anchors[] = {{
-    {sapote_https_test_dn, sizeof(sapote_https_test_dn) - 1U},
+static const br_x509_trust_anchor phipia_https_test_anchors[] = {{
+    {phipia_https_test_dn, sizeof(phipia_https_test_dn) - 1U},
     BR_X509_TA_CA,
     {BR_KEYTYPE_RSA, {.rsa = {
-        sapote_https_test_n, sizeof(sapote_https_test_n) - 1U,
-        sapote_https_test_e, sizeof(sapote_https_test_e) - 1U
+        phipia_https_test_n, sizeof(phipia_https_test_n) - 1U,
+        phipia_https_test_e, sizeof(phipia_https_test_e) - 1U
     }}}
 }};
 

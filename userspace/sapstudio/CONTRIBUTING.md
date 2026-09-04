@@ -2,7 +2,7 @@
 
 # Contributing to SapStudio
 
-SapStudio is a Sapote application. Changes stay narrow, preserve the trust
+SapStudio is a Phipia application. Changes stay narrow, preserve the trust
 boundaries, and arrive with evidence that matches their risk.
 
 Read [`docs/ENGINEERING_RULES.md`](docs/ENGINEERING_RULES.md) before your first
@@ -19,7 +19,7 @@ make verify    # run the complete local verification gate
 `make hooks` sets the clone-local `core.hooksPath`; run it once for each clone.
 
 Ubuntu 24.04 or a compatible Debian system is the reference host, as it is for
-Sapote, and the same GNU binutils build both. The pinned compiler is in
+Phipia, and the same GNU binutils build both. The pinned compiler is in
 `rust-toolchain.toml`.
 
 ## Work on a branch

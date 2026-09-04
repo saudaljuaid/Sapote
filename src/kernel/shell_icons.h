@@ -10,8 +10,8 @@
  * Channels are packed 0x00RRGGBB; the drawing code recomposes if
  * the framebuffer disagrees.
  */
-#ifndef SAPOTE_SHELL_ICONS_H
-#define SAPOTE_SHELL_ICONS_H
+#ifndef PHIPIA_SHELL_ICONS_H
+#define PHIPIA_SHELL_ICONS_H
 
 #include <stddef.h>
 #include <stdint.h>

@@ -2,19 +2,19 @@
 /*
  * A Windows 10 console window.
  *
- * See include/sapote/terminal.h for what this is and what is sourced.  The
+ * See include/phipia/terminal.h for what this is and what is sourced.  The
  * short version: the palette is Microsoft's Campbell scheme, published with
  * the ColorTool that shipped with Windows 10 1709; the chrome is measured
  * off a Windows 10 window; the font is DejaVu Sans Mono because Consolas
  * cannot be redistributed.
  */
 
-#include <sapote/terminal.h>
+#include <phipia/terminal.h>
 
-#include <sapote/cursor.h>
+#include <phipia/cursor.h>
 
-#include <sapote/clock.h>
-#include <sapote/framebuffer.h>
+#include <phipia/clock.h>
+#include <phipia/framebuffer.h>
 
 #include "console_font.h"
 

@@ -6,7 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "SapStudio's freestanding runtime on Sapote: entry, heap, panic path."
+description = "SapStudio's freestanding runtime on Phipia: entry, heap, panic path."
 
 [dependencies]
 sapstudio-abi = { path = "../sapstudio-abi" }

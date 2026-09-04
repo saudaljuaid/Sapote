@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /*
- * Sapote's bounded VFS object layer. The public sapfs_* names are retained as
+ * Phipia's bounded VFS object layer. The public sapfs_* names are retained as
  * the native ABI v1 compatibility surface, while concrete filesystem handles
  * and path rules remain behind a backend contract.
  */
@@ -8,10 +8,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/fat32_backend.h>
-#include <sapote/fat32_fs.h>
-#include <sapote/ext4_fs.h>
-#include <sapote/vfs_backend.h>
+#include <phipia/fat32_backend.h>
+#include <phipia/fat32_fs.h>
+#include <phipia/ext4_fs.h>
+#include <phipia/vfs_backend.h>
 
 #define VFS_MAX_VNODES 128U
 #define VFS_VNODE_BUCKETS 64U

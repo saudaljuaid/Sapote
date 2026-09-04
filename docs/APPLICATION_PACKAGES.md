@@ -2,7 +2,7 @@
 
 # Native application manifests and packages
 
-`tools/sapote-package.py` builds, inspects, and installs Sapote application
+`tools/phipia-package.py` builds, inspects, and installs Phipia application
 packages without network access. JSON is only the host-side build input. The
 guest validates a deterministic 1,024-byte binary manifest at the Rust
 admission boundary.
@@ -25,7 +25,7 @@ admission boundary.
 | `arguments` | At most eight nonempty printable-ASCII strings of at most 31 bytes each. They are opaque program arguments, so URL and option punctuation are permitted. |
 | `resources` | Optional list of `{ "path": "NAME.EXT", "source": "host/path" }` records. Sources are resolved relative to the JSON file. |
 
-The binary manifest starts with `SAPOTEA1`, format version and size, ABI
+The binary manifest starts with `PHIPIAA1`, format version and size, ABI
 version, limits, capability bits, fixed-width text records, the executable
 SHA-256, and zero-filled reserved space. Nonzero reserved bytes, unterminated
 text, nonzero text tails, unknown capabilities, or unused argument records are
@@ -47,12 +47,12 @@ format version 3 was added.
 Typical commands are:
 
 ```sh
-python3 tools/sapote-package.py build \
+python3 tools/phipia-package.py build \
     --spec apps/my-app/manifest.json \
     --executable build/my-app/MYAPP.APP \
     --output build/my-app/MYAPP.SPK
-python3 tools/sapote-package.py inspect build/my-app/MYAPP.SPK
-python3 tools/sapote-package.py install-system \
+python3 tools/phipia-package.py inspect build/my-app/MYAPP.SPK
+python3 tools/phipia-package.py install-system \
     --output build/my-app/system.raw build/my-app/MYAPP.SPK
 ```
 
@@ -156,13 +156,13 @@ relative to the JSON specification:
   "architecture": "x86_64",
   "abi_min": 1,
   "abi_max": 1,
-  "identifier": "org.sapote.example",
+  "identifier": "org.phipia.example",
   "name": "Example",
   "version": "1.0.0",
-  "publisher": "Sapote Project",
+  "publisher": "Phipia Project",
   "capabilities": ["console", "system-read"],
   "dependencies": [
-    {"identifier": "org.sapote.libc", "constraint": "^1.0.0"}
+    {"identifier": "org.phipia.libc", "constraint": "^1.0.0"}
   ],
   "conflicts": [],
   "files": [
@@ -176,11 +176,11 @@ relative to the JSON specification:
 Build and inspect with a real Ed25519 private/public key pair:
 
 ```sh
-python3 tools/sapote-package.py build --format 3 \
+python3 tools/phipia-package.py build --format 3 \
     --spec apps/example/package-v3.json \
     --signing-key keys/repository-ed25519-private.pem \
     --output build/example/example.spk
-python3 tools/sapote-package.py inspect \
+python3 tools/phipia-package.py inspect \
     --trusted-key keys/repository-ed25519-public.pem \
     build/example/example.spk
 ```

@@ -2,7 +2,7 @@
 
 # TLS profile and release gate
 
-Sapote includes a pinned BearSSL TLS 1.2 SDK client for bounded,
+Phipia includes a pinned BearSSL TLS 1.2 SDK client for bounded,
 single-response HTTPS downloads. The desktop HTTP parser remains a separate
 plaintext facility. `TLS.md` and `HTTPS.md` define the implemented profile.
 
@@ -33,10 +33,10 @@ BearSSL fits the bounded client. Its
 does no dynamic allocation, is intended for small and bare-metal systems, and
 can integrate with polling outside the engine. Its
 [API documentation](https://bearssl.org/apidoc/index.html) makes callers own
-all context and record buffers, which is compatible with Sapote's explicit
+all context and record buffers, which is compatible with Phipia's explicit
 bounds.
 
-BearSSL supplies the TLS 1.2 engine, not the surrounding web stack. Sapote owns
+BearSSL supplies the TLS 1.2 engine, not the surrounding web stack. Phipia owns
 entropy, time, trust anchors, hostname policy, I/O adaptation, updates,
 zeroization, and security response.
 

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include <SDL.h>
 
-#include <sapote/runtime.h>
+#include <phipia/runtime.h>
 
 #include <stdint.h>
 #include <stdio.h>
@@ -18,7 +18,7 @@ static int persistent_run(char **preference_path)
     char state_path[64];
     SDL_RWops *state;
 
-    *preference_path = SDL_GetPrefPath("Sapote", "SDL proof");
+    *preference_path = SDL_GetPrefPath("Phipia", "SDL proof");
     if (*preference_path == NULL ||
         SDL_snprintf(state_path, sizeof(state_path), "%sSTATE.BIN",
             *preference_path) <= 0) {
@@ -43,7 +43,7 @@ static int persistent_run(char **preference_path)
     const int close_status = SDL_RWclose(state);
 
     if (written != 1U || close_status != 0 ||
-        sapote_volume_sync(SAPOTE_VOLUME_DATA) != 0) {
+        phipia_volume_sync(PHIPIA_VOLUME_DATA) != 0) {
         return -1;
     }
     return (int)run;
@@ -168,27 +168,27 @@ int main(int argc, char **argv, char **environment)
     (void)environment;
     (void)setvbuf(stdout, NULL, _IONBF, 0U);
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER | SDL_INIT_EVENTS) != 0 ||
-        strcmp(SDL_GetPlatform(), "Sapote") != 0 ||
-        strcmp(SDL_GetCurrentVideoDriver(), "sapote") != 0) {
-        printf("SAPOTE SDL FAIL init=%s\n", SDL_GetError());
+        strcmp(SDL_GetPlatform(), "Phipia") != 0 ||
+        strcmp(SDL_GetCurrentVideoDriver(), "phipia") != 0) {
+        printf("PHIPIA SDL FAIL init=%s\n", SDL_GetError());
         goto cleanup;
     }
     run = persistent_run(&preference_path);
-    window = SDL_CreateWindow("Sapote SDL 2 proof", SDL_WINDOWPOS_CENTERED,
+    window = SDL_CreateWindow("Phipia SDL 2 proof", SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED, 360, 240, SDL_WINDOW_SHOWN);
     if (run <= 0 || window == NULL || draw_window(window, &renderer) != 0 ||
         play_audio(&audio) != 0) {
-        printf("SAPOTE SDL FAIL setup=%s\n", SDL_GetError());
+        printf("PHIPIA SDL FAIL setup=%s\n", SDL_GetError());
         goto cleanup;
     }
-    printf("SAPOTE SDL READY run=%d video=%s audio=%s pref=%s\n", run,
+    printf("PHIPIA SDL READY run=%d video=%s audio=%s pref=%s\n", run,
         SDL_GetCurrentVideoDriver(), SDL_GetCurrentAudioDriver(),
         preference_path);
     if ((run == 1 && await_input() != 0) || wait_for_audio(audio) != 0) {
-        printf("SAPOTE SDL FAIL evidence=%s\n", SDL_GetError());
+        printf("PHIPIA SDL FAIL evidence=%s\n", SDL_GetError());
         goto cleanup;
     }
-    printf("SAPOTE SDL PASS run=%d present=partial input=%s audio=non-silent persistent=yes\n",
+    printf("PHIPIA SDL PASS run=%d present=partial input=%s audio=non-silent persistent=yes\n",
         run, run == 1 ? "key-pointer" : "prior-run");
     result = 0;
 

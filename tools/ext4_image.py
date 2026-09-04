@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build, inspect, verify, and deliberately damage Sapote ext4 fixtures.
+"""Build, inspect, verify, and deliberately damage Phipia ext4 fixtures.
 
 The builder intentionally uses e2fsprogs instead of a mounted loop device, so it
 can run in an unprivileged Linux CI job.  Every format-affecting input is pinned;
@@ -40,10 +40,10 @@ JOURNAL_CHECKSUM_TYPE_CRC32C = 4
 FIXED_EPOCH = 1704067200  # 2024-01-01 00:00:00 UTC
 FILESYSTEM_UUID = "5a706f74-652d-4558-5434-000000000001"
 HASH_SEED_UUID = "5a706f74-652d-4841-5348-000000000001"
-VOLUME_LABEL = "SAPOTEEXT4"
-LAST_MOUNTED = "/sapote"
+VOLUME_LABEL = "PHIPIAEXT4"
+LAST_MOUNTED = "/phipia"
 LARGE_SPARSE_BYTES = 5 * 1024 * 1024 * 1024 + 123
-XATTR_NAME = "user.sapote"
+XATTR_NAME = "user.phipia"
 XATTR_VALUE = "profile-v1"
 
 FEATURES = (
@@ -155,7 +155,7 @@ def _refuse(message: str) -> None:
 
 
 def parse_superblock(image: bytes | bytearray) -> dict[str, object]:
-    """Parse and strictly validate the Sapote ext4 superblock profile."""
+    """Parse and strictly validate the Phipia ext4 superblock profile."""
     if len(image) < 2048:
         _refuse("image is too small to contain an ext4 superblock")
     sb = memoryview(image)[1024:2048]
@@ -216,7 +216,7 @@ def parse_superblock(image: bytes | bytearray) -> dict[str, object]:
 
     fs_uuid = str(uuid.UUID(bytes=bytes(sb[0x68:0x78])))
     if fs_uuid != FILESYSTEM_UUID:
-        _refuse(f"UUID {fs_uuid} does not match the pinned Sapote UUID")
+        _refuse(f"UUID {fs_uuid} does not match the pinned Phipia UUID")
     label = bytes(sb[0x78:0x88]).split(b"\0", 1)[0].decode("ascii", "strict")
     if label != VOLUME_LABEL:
         _refuse(f"volume label {label!r} does not match {VOLUME_LABEL!r}")
@@ -406,7 +406,7 @@ def _parse_journal_superblock(data: bytes | bytearray) -> dict[str, object]:
 
 
 def _upgrade_journal_superblock(image: Path, tools: dict[str, str]) -> None:
-    """Upgrade mke2fs's unmounted clean journal to Sapote's JBD2 profile."""
+    """Upgrade mke2fs's unmounted clean journal to Phipia's JBD2 profile."""
     offset = _journal_superblock_offset(tools, image)
     with image.open("r+b") as stream:
         stream.seek(offset)
@@ -485,7 +485,7 @@ def _write_debugfs_script(path: Path, payloads: dict[str, Path]) -> None:
     ]
     # Enough deterministic entries to force e2fsck -D to build an htree.
     for index in range(256):
-        lines.append(f"write {payloads['entry']} /indexed/entry-{index:04d}-sapote-fixture")
+        lines.append(f"write {payloads['entry']} /indexed/entry-{index:04d}-phipia-fixture")
     lines.extend(
         [
             f"set_super_value mkfs_time @{FIXED_EPOCH}",
@@ -583,8 +583,8 @@ features = has_journal,extent,huge_file,metadata_csum,metadata_csum_seed,64bit,d
         "empty": temporary / "empty",
         "entry": temporary / "entry",
     }
-    payloads["readme"].write_bytes(b"Sapote deterministic ext4 fixture\n")
-    payloads["app"].write_bytes(b"SAPOTE-APP\x00\x01\x02\x03\n")
+    payloads["readme"].write_bytes(b"Phipia deterministic ext4 fixture\n")
+    payloads["app"].write_bytes(b"PHIPIA-APP\x00\x01\x02\x03\n")
     payloads["state"].write_bytes(b"counter=7\nmessage=persisted\n")
     payloads["empty"].write_bytes(b"")
     payloads["entry"].write_bytes(b"x\n")
@@ -604,9 +604,9 @@ def build_image(output: Path) -> dict[str, object]:
     tools = require_tools()
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="sapote-ext4-", dir=output.parent) as raw:
+    with tempfile.TemporaryDirectory(prefix="phipia-ext4-", dir=output.parent) as raw:
         temporary = Path(raw)
-        candidate = temporary / "sapote-ext4.img"
+        candidate = temporary / "phipia-ext4.img"
         _format_image(candidate, tools, temporary)
         report = inspect_image(candidate, tools=tools)
         os.replace(candidate, output)
@@ -831,7 +831,7 @@ def malform_image(kind: str, source: Path, output: Path) -> None:
     parse_superblock(data)
     _mutation(kind, data, source, tools)
     output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(prefix="sapote-ext4-malform-", dir=output.parent, delete=False) as stream:
+    with tempfile.NamedTemporaryFile(prefix="phipia-ext4-malform-", dir=output.parent, delete=False) as stream:
         temporary = Path(stream.name)
         stream.write(data)
     try:

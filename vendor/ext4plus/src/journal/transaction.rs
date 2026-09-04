@@ -1,4 +1,4 @@
-// Copyright 2026 Sapote contributors
+// Copyright 2026 Phipia contributors
 //
 // Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
 // https://www.apache.org/licenses/LICENSE-2.0> or the MIT license
@@ -38,7 +38,7 @@ use alloc::vec::Vec;
 use core::error::Error;
 use core::fmt::{self, Display, Formatter};
 
-/// The only journal block size admitted by Sapote's ext4 profile.
+/// The only journal block size admitted by Phipia's ext4 profile.
 pub const JOURNAL_BLOCK_BYTES: usize = 4096;
 
 /// A deliberately small upper bound for one transaction's metadata images.
@@ -273,7 +273,7 @@ pub enum JournalTransactionError {
     EmptyTransaction,
     /// A transaction exceeded the fixed metadata or ordered-data bound.
     TooManyBlocks,
-    /// A supplied image was not exactly one Sapote filesystem block.
+    /// A supplied image was not exactly one Phipia filesystem block.
     IncorrectBlockLength,
     /// A home or journal block lies beyond the admitted filesystem geometry.
     BlockOutOfRange,
@@ -396,10 +396,10 @@ impl Display for JournalTransactionError {
     }
 }
 
-/// A checksum-validated JBD2 superblock for Sapote's bounded 4 KiB profile.
+/// A checksum-validated JBD2 superblock for Phipia's bounded 4 KiB profile.
 ///
 /// The image preserves every admitted byte when its sequence/start state is
-/// changed. Sapote admits logical journal data beginning at block one; callers
+/// changed. Phipia admits logical journal data beginning at block one; callers
 /// must supply the complete physical journal-inode map, including logical block
 /// zero, before a clean ring can be constructed.
 #[derive(Clone, Debug, Eq, PartialEq)]

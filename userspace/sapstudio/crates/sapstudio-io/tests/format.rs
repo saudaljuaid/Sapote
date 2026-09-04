@@ -1962,11 +1962,11 @@ fn carded(text: &str) -> Project {
 
 #[test]
 fn a_title_survives_the_file_with_its_words_and_its_place() {
-    let project = carded("SAPSTUDIO");
+    let project = carded("MEDIAEDTO");
     let back = round_tripped(&project);
     let (id, asset) = back.media().iter().next().expect("an asset");
     let title = asset.title().expect("a title");
-    assert_eq!(title.lines(), ["SAPSTUDIO"]);
+    assert_eq!(title.lines(), ["MEDIAEDTO"]);
     assert_eq!(title.size(), Rational::new(1, 6).expect("a size"));
     assert_eq!(title.across(), Rational::new(3, 7).expect("a place"));
     assert_eq!(title.down(), Rational::new(5, 11).expect("a place"));
@@ -2017,11 +2017,11 @@ fn a_title_whose_name_is_not_what_it_says_is_refused() {
     // A title is *named by* its description, so the two are one fact written
     // twice. A file where they disagree has been edited, and recomputing the
     // digest and accepting it would silently repoint every clip of the card.
-    let project = carded("SAPSTUDIO");
+    let project = carded("MEDIAEDTO");
     let file = encode(&project).expect("an encoding");
     let at = file
         .windows(9)
-        .position(|window| window == b"SAPSTUDIO")
+        .position(|window| window == b"MEDIAEDTO")
         .expect("the words are in the file");
     let mut edited = file.clone();
     edited[at + 3] = b'X';
@@ -2034,11 +2034,11 @@ fn a_title_whose_name_is_not_what_it_says_is_refused() {
 
 #[test]
 fn a_media_source_tag_this_build_does_not_read_is_refused() {
-    let project = carded("SAPSTUDIO");
+    let project = carded("MEDIAEDTO");
     let file = encode(&project).expect("an encoding");
     let at = file
         .windows(9)
-        .position(|window| window == b"SAPSTUDIO")
+        .position(|window| window == b"MEDIAEDTO")
         .expect("the words are in the file");
     // Straight before the words: the line's length, before that the count of
     // lines, and before that the source tag.
@@ -2054,11 +2054,11 @@ fn a_media_source_tag_this_build_does_not_read_is_refused() {
 
 #[test]
 fn a_title_whose_words_are_not_text_is_refused() {
-    let project = carded("SAPSTUDIO");
+    let project = carded("MEDIAEDTO");
     let file = encode(&project).expect("an encoding");
     let at = file
         .windows(9)
-        .position(|window| window == b"SAPSTUDIO")
+        .position(|window| window == b"MEDIAEDTO")
         .expect("the words are in the file");
     let mut mangled = file.clone();
     // A byte no UTF-8 sequence starts or continues with.
@@ -2077,11 +2077,11 @@ fn a_title_that_a_file_says_is_somewhere_is_refused() {
     // Without that splice this test would be asserting the model's refusal a
     // second time and the decoder's line would have no test at all, which is
     // the shape a guard is usually missing in.
-    let project = carded("SAPSTUDIO");
+    let project = carded("MEDIAEDTO");
     let file = encode(&project).expect("an encoding");
     let at = file
         .windows(9)
-        .position(|window| window == b"SAPSTUDIO")
+        .position(|window| window == b"MEDIAEDTO")
         .expect("the words are in the file");
     // The source tag sits nine bytes before the words -- one tag, a four-byte
     // count of lines and a four-byte length -- and the location's own length
@@ -2482,7 +2482,7 @@ fn inked(ink: sapstudio_model::Ink) -> Project {
 
     let mut project = Project::new();
     let title = Title::line(
-        "SAPSTUDIO".into(),
+        "MEDIAEDTO".into(),
         Rational::new(1, 6).expect("a size"),
         Rational::new(3, 7).expect("a place"),
         Rational::new(5, 11).expect("a place"),
@@ -2548,7 +2548,7 @@ fn an_ink_tag_this_build_does_not_read_is_refused() {
     let file = encode(&project).expect("an encoding");
     let at = file
         .windows(9)
-        .position(|window| window == b"SAPSTUDIO")
+        .position(|window| window == b"MEDIAEDTO")
         .expect("the words are in the file");
     // After the words: the alignment, then three rationals, then the ink tag.
     let tag = at + 9 + 1 + 3 * 16;
@@ -2570,7 +2570,7 @@ fn a_file_holding_an_ink_the_model_refuses_is_refused() {
     let file = encode(&project).expect("an encoding");
     let at = file
         .windows(9)
-        .position(|window| window == b"SAPSTUDIO")
+        .position(|window| window == b"MEDIAEDTO")
         .expect("the words are in the file");
     // The first channel's numerator, straight after the ink tag.
     let numerator = at + 9 + 1 + 3 * 16 + 1;

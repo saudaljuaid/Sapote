@@ -3,12 +3,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/clock.h>
-#include <sapote/fat32_fs.h>
-#include <sapote/memory.h>
-#include <sapote/network.h>
-#include <sapote/network_syscall.h>
-#include <sapote/random.h>
+#include <phipia/clock.h>
+#include <phipia/fat32_fs.h>
+#include <phipia/memory.h>
+#include <phipia/network.h>
+#include <phipia/network_syscall.h>
+#include <phipia/random.h>
 
 #define TOKEN_KIND UINT64_C(0x4e53000000000000)
 #define TOKEN_KIND_MASK UINT64_C(0xffff000000000000)

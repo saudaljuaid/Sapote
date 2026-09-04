@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#include <sapote/package_trust.h>
+#include <phipia/package_trust.h>
 
 #include <monocypher-ed25519.h>
 

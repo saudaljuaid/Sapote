@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/package_state.h>
+#include <phipia/package_state.h>
 
 #define DATABASE_FLAG_EXPLICIT UINT32_C(1)
 #define PACKAGE_MAX_DEPENDENCIES 64U

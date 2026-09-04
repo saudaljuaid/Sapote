@@ -160,7 +160,7 @@ fn a_hint_longer_than_the_bound_is_refused() {
 
 #[test]
 fn a_hint_is_bytes_rather_than_text() {
-    // A path is whatever the platform says it is, and Sapote's is not decided.
+    // A path is whatever the platform says it is, and Phipia's is not decided.
     // Refusing to interpret it is what keeps this crate free of the operating
     // system -- so a hint that is not valid text is still a hint.
     let held = Location::new(&[0xFF, 0xFE, b'/', 0x80]).expect("a hint");

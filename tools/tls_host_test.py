@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Run the Sapote BearSSL wrapper against deterministic offline peers."""
+"""Run the Phipia BearSSL wrapper against deterministic offline peers."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURE = ROOT / "tests" / "fixtures" / "tls"
-HOSTNAME = "repo.sapote.test"
+HOSTNAME = "repo.phipia.test"
 TLS_OK = 0
 TLS_TRANSPORT = 7
 TLS_HANDSHAKE = 8
@@ -117,13 +117,13 @@ def main() -> int:
     if not binary.is_file():
         raise SystemExit(f"missing TLS host client: {binary}")
     run_case(binary, "trusted", "valid", HOSTNAME, TLS_OK)
-    run_case(binary, "hostname-mismatch", "valid", "wrong.sapote.test", TLS_HANDSHAKE)
+    run_case(binary, "hostname-mismatch", "valid", "wrong.phipia.test", TLS_HANDSHAKE)
     run_case(binary, "expired", "expired", HOSTNAME, TLS_HANDSHAKE)
     run_case(binary, "not-yet-valid", "future", HOSTNAME, TLS_HANDSHAKE)
     run_case(binary, "untrusted-root", "untrusted", HOSTNAME, TLS_HANDSHAKE)
     run_case(binary, "truncated-handshake", None, HOSTNAME, TLS_TRANSPORT, "truncated")
     run_case(binary, "deadline", None, HOSTNAME, TLS_TRANSPORT, "timeout")
-    print("Sapote TLS host tests passed: chain, hostname, time, truncation, deadline, close")
+    print("Phipia TLS host tests passed: chain, hostname, time, truncation, deadline, close")
     return 0
 
 

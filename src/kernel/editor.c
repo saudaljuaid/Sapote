@@ -1,14 +1,14 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /*
- * Editor.  See include/sapote/editor.h for the shape and for what it
+ * Editor.  See include/phipia/editor.h for the shape and for what it
  * deliberately leaves out.
  */
 
-#include <sapote/editor.h>
+#include <phipia/editor.h>
 
-#include <sapote/clock.h>
-#include <sapote/framebuffer.h>
-#include <sapote/ui_font.h>
+#include <phipia/clock.h>
+#include <phipia/framebuffer.h>
+#include <phipia/ui_font.h>
 
 #include "editor_glyphs.h"
 #include "ui_motion.h"

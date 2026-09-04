@@ -1,34 +1,34 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* General native application admission, scheduling, syscalls, and teardown. */
 
-#include <sapote/native_process.h>
+#include <phipia/native_process.h>
 
-#include <sapote/abi.h>
-#include <sapote/audio.h>
-#include <sapote/clock.h>
-#include <sapote/console.h>
-#include <sapote/cpu.h>
-#include <sapote/elf64_dynamic.h>
-#include <sapote/fat32_fs.h>
-#include <sapote/framebuffer.h>
-#include <sapote/heap.h>
-#include <sapote/interrupts.h>
-#include <sapote/memory.h>
-#include <sapote/native_fpu.h>
-#include <sapote/native_handle.h>
-#include <sapote/native_image.h>
-#include <sapote/native_syscall.h>
-#include <sapote/network.h>
-#include <sapote/keyboard.h>
-#include <sapote/paging.h>
-#include <sapote/package_control.h>
-#include <sapote/package_upload.h>
-#include <sapote/process.h>
-#include <sapote/random.h>
-#include <sapote/timer.h>
-#include <sapote/tsc.h>
-#include <sapote/ui.h>
-#include <sapote/wall_clock.h>
+#include <phipia/abi.h>
+#include <phipia/audio.h>
+#include <phipia/clock.h>
+#include <phipia/console.h>
+#include <phipia/cpu.h>
+#include <phipia/elf64_dynamic.h>
+#include <phipia/fat32_fs.h>
+#include <phipia/framebuffer.h>
+#include <phipia/heap.h>
+#include <phipia/interrupts.h>
+#include <phipia/memory.h>
+#include <phipia/native_fpu.h>
+#include <phipia/native_handle.h>
+#include <phipia/native_image.h>
+#include <phipia/native_syscall.h>
+#include <phipia/network.h>
+#include <phipia/keyboard.h>
+#include <phipia/paging.h>
+#include <phipia/package_control.h>
+#include <phipia/package_upload.h>
+#include <phipia/process.h>
+#include <phipia/random.h>
+#include <phipia/timer.h>
+#include <phipia/tsc.h>
+#include <phipia/ui.h>
+#include <phipia/wall_clock.h>
 
 #define IA32_FS_BASE UINT32_C(0xC0000100)
 #define NATIVE_MAIN_STACK_GUARD PAGING_NATIVE_STACK_BASE
@@ -39,7 +39,7 @@
 #define NATIVE_AUX_NULL UINT64_C(0)
 #define NATIVE_AUX_PAGESZ UINT64_C(6)
 #define NATIVE_AUX_ENTRY UINT64_C(9)
-#define NATIVE_AUX_SAPOTE_ABI UINT64_C(0x53500001)
+#define NATIVE_AUX_PHIPIA_ABI UINT64_C(0x53500001)
 #define NATIVE_AUX_TLS_IMAGE UINT64_C(0x53500002)
 #define NATIVE_AUX_TLS_SIZE UINT64_C(0x53500003)
 #define NATIVE_AUX_TLS_ALIGN UINT64_C(0x53500004)
@@ -74,29 +74,29 @@ _Static_assert(
     "shared-code cache must hold the maximum live process-page census"
 );
 
-_Static_assert(SAPOTE_AUDIO_SAMPLE_RATE == AUDIO_PCM_SAMPLE_RATE,
+_Static_assert(PHIPIA_AUDIO_SAMPLE_RATE == AUDIO_PCM_SAMPLE_RATE,
     "kernel and public audio sample rates differ");
-_Static_assert(SAPOTE_AUDIO_CHANNELS == AUDIO_PCM_CHANNELS,
+_Static_assert(PHIPIA_AUDIO_CHANNELS == AUDIO_PCM_CHANNELS,
     "kernel and public audio channel counts differ");
-_Static_assert(SAPOTE_AUDIO_BITS_PER_SAMPLE == AUDIO_PCM_BITS_PER_SAMPLE,
+_Static_assert(PHIPIA_AUDIO_BITS_PER_SAMPLE == AUDIO_PCM_BITS_PER_SAMPLE,
     "kernel and public audio sample widths differ");
-_Static_assert(SAPOTE_AUDIO_CHUNK_BYTES == AUDIO_PCM_BYTES,
+_Static_assert(PHIPIA_AUDIO_CHUNK_BYTES == AUDIO_PCM_BYTES,
     "kernel and public audio chunk sizes differ");
-_Static_assert(SAPOTE_AUDIO_MAX_STREAMS == AUDIO_NATIVE_STREAMS,
+_Static_assert(PHIPIA_AUDIO_MAX_STREAMS == AUDIO_NATIVE_STREAMS,
     "kernel and public audio stream bounds differ");
-_Static_assert(SAPOTE_AUDIO_VOLUME_UNITY == AUDIO_NATIVE_VOLUME_UNITY,
+_Static_assert(PHIPIA_AUDIO_VOLUME_UNITY == AUDIO_NATIVE_VOLUME_UNITY,
     "kernel and public audio gain scales differ");
-_Static_assert(SAPOTE_PACKAGE_UPLOAD_WRITE_MAX == PACKAGE_UPLOAD_WRITE_MAX,
+_Static_assert(PHIPIA_PACKAGE_UPLOAD_WRITE_MAX == PACKAGE_UPLOAD_WRITE_MAX,
     "kernel and public package-upload write bounds differ");
-_Static_assert(SAPOTE_PACKAGE_UPLOAD_MAX_BYTES == PACKAGE_UPLOAD_MAX_BYTES,
+_Static_assert(PHIPIA_PACKAGE_UPLOAD_MAX_BYTES == PACKAGE_UPLOAD_MAX_BYTES,
     "kernel and public package-upload size bounds differ");
-_Static_assert(SAPOTE_PACKAGE_CONTROL_PLAN_MAX ==
+_Static_assert(PHIPIA_PACKAGE_CONTROL_PLAN_MAX ==
     PACKAGE_CONTROL_PLAN_MAX_PACKAGES,
     "kernel and public package-control plan bounds differ");
-_Static_assert(SAPOTE_PACKAGE_CONTROL_TEXT_BYTES ==
+_Static_assert(PHIPIA_PACKAGE_CONTROL_TEXT_BYTES ==
     PACKAGE_CONTROL_TEXT_BYTES,
     "kernel and public package-control text bounds differ");
-_Static_assert(SAPOTE_PACKAGE_CONTROL_PATH_BYTES ==
+_Static_assert(PHIPIA_PACKAGE_CONTROL_PATH_BYTES ==
     PACKAGE_CONTROL_PATH_BYTES,
     "kernel and public package-control path bounds differ");
 
@@ -138,7 +138,7 @@ struct native_thread {
     uint64_t audio_token;
     size_t console_length;
     size_t wait_item_count;
-    struct sapote_wait_item wait_items[SAPOTE_WAIT_MAX];
+    struct phipia_wait_item wait_items[PHIPIA_WAIT_MAX];
     int32_t exit_status;
     enum native_thread_state state;
 };
@@ -149,7 +149,7 @@ struct native_directory_resource {
 };
 
 struct native_window_state {
-    struct sapote_event events[NATIVE_EVENT_QUEUE_CAPACITY];
+    struct phipia_event events[NATIVE_EVENT_QUEUE_CAPACITY];
     uint32_t *shadow_pixels;
     uint64_t surface_address;
     uint64_t generation;
@@ -740,19 +740,19 @@ static int64_t handle_error(enum native_handle_status status)
     case NATIVE_HANDLE_OK:
         return 0;
     case NATIVE_HANDLE_FULL:
-        return -SAPOTE_ENOMEM;
+        return -PHIPIA_ENOMEM;
     case NATIVE_HANDLE_WRONG_TYPE:
-        return -SAPOTE_EBADF;
+        return -PHIPIA_EBADF;
     case NATIVE_HANDLE_STALE:
-        return -SAPOTE_ESTALE;
+        return -PHIPIA_ESTALE;
     case NATIVE_HANDLE_CLOSE_FAILED:
-        return -SAPOTE_EIO;
+        return -PHIPIA_EIO;
     case NATIVE_HANDLE_NULL_ARGUMENT:
     case NATIVE_HANDLE_BAD_LIMIT:
     case NATIVE_HANDLE_BAD_TYPE:
     case NATIVE_HANDLE_STATUS_COUNT:
     default:
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
 }
 
@@ -762,20 +762,20 @@ static int64_t audio_error(enum audio_native_status status)
     case AUDIO_NATIVE_OK:
         return 0;
     case AUDIO_NATIVE_ABSENT:
-        return -SAPOTE_ENOTSUP;
+        return -PHIPIA_ENOTSUP;
     case AUDIO_NATIVE_BUSY:
-        return -SAPOTE_EBUSY;
+        return -PHIPIA_EBUSY;
     case AUDIO_NATIVE_STALE:
-        return -SAPOTE_ESTALE;
+        return -PHIPIA_ESTALE;
     case AUDIO_NATIVE_CANCELED:
-        return -SAPOTE_ECANCELED;
+        return -PHIPIA_ECANCELED;
     case AUDIO_NATIVE_NULL_ARGUMENT:
     case AUDIO_NATIVE_INVALID:
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     case AUDIO_NATIVE_IO:
     case AUDIO_NATIVE_STATUS_COUNT:
     default:
-        return -SAPOTE_EIO;
+        return -PHIPIA_EIO;
     }
 }
 
@@ -785,37 +785,37 @@ static int64_t filesystem_error(enum sapfs_status status)
     case SAPFS_STATUS_OK:
         return 0;
     case SAPFS_STATUS_NOT_FOUND:
-        return -SAPOTE_ENOENT;
+        return -PHIPIA_ENOENT;
     case SAPFS_STATUS_EXISTS:
-        return -SAPOTE_EEXIST;
+        return -PHIPIA_EEXIST;
     case SAPFS_STATUS_READ_ONLY:
-        return -SAPOTE_EROFS;
+        return -PHIPIA_EROFS;
     case SAPFS_STATUS_ACCESS:
-        return -SAPOTE_EACCES;
+        return -PHIPIA_EACCES;
     case SAPFS_STATUS_NOT_DIRECTORY:
-        return -SAPOTE_ENOTDIR;
+        return -PHIPIA_ENOTDIR;
     case SAPFS_STATUS_IS_DIRECTORY:
-        return -SAPOTE_EISDIR;
+        return -PHIPIA_EISDIR;
     case SAPFS_STATUS_NOT_EMPTY:
-        return -SAPOTE_ENOTEMPTY;
+        return -PHIPIA_ENOTEMPTY;
     case SAPFS_STATUS_BUSY:
-        return -SAPOTE_EBUSY;
+        return -PHIPIA_EBUSY;
     case SAPFS_STATUS_NO_HANDLES:
-        return -SAPOTE_ENOMEM;
+        return -PHIPIA_ENOMEM;
     case SAPFS_STATUS_STALE_HANDLE:
-        return -SAPOTE_ESTALE;
+        return -PHIPIA_ESTALE;
     case SAPFS_STATUS_FULL:
     case SAPFS_STATUS_DIRECTORY_FULL:
-        return -SAPOTE_ENOSPC;
+        return -PHIPIA_ENOSPC;
     case SAPFS_STATUS_NAME:
-        return -SAPOTE_ENAMETOOLONG;
+        return -PHIPIA_ENAMETOOLONG;
     case SAPFS_STATUS_PATH:
     case SAPFS_STATUS_INVALID_ARGUMENT:
     case SAPFS_STATUS_RANGE:
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     case SAPFS_STATUS_ABSENT:
     case SAPFS_STATUS_NOT_MOUNTED:
-        return -SAPOTE_ENOENT;
+        return -PHIPIA_ENOENT;
     case SAPFS_STATUS_CORRUPT:
     case SAPFS_STATUS_IO:
     case SAPFS_STATUS_WRITEBACK:
@@ -823,7 +823,7 @@ static int64_t filesystem_error(enum sapfs_status status)
     case SAPFS_STATUS_ALREADY_MOUNTED:
     case SAPFS_STATUS_COUNT:
     default:
-        return -SAPOTE_EIO;
+        return -PHIPIA_EIO;
     }
 }
 
@@ -836,26 +836,26 @@ static int64_t package_upload_error(
     case PACKAGE_UPLOAD_STATUS_OK:
         return 0;
     case PACKAGE_UPLOAD_STATUS_NOT_INITIALIZED:
-        return -SAPOTE_ENOTSUP;
+        return -PHIPIA_ENOTSUP;
     case PACKAGE_UPLOAD_STATUS_BUSY:
-        return -SAPOTE_EBUSY;
+        return -PHIPIA_EBUSY;
     case PACKAGE_UPLOAD_STATUS_NO_SLOT:
-        return -SAPOTE_ENOMEM;
+        return -PHIPIA_ENOMEM;
     case PACKAGE_UPLOAD_STATUS_STALE:
-        return -SAPOTE_ESTALE;
+        return -PHIPIA_ESTALE;
     case PACKAGE_UPLOAD_STATUS_DIGEST:
-        return -SAPOTE_EACCES;
+        return -PHIPIA_EACCES;
     case PACKAGE_UPLOAD_STATUS_FILESYSTEM:
         return filesystem_error(filesystem_status);
     case PACKAGE_UPLOAD_STATUS_DURABILITY:
-        return -SAPOTE_EIO;
+        return -PHIPIA_EIO;
     case PACKAGE_UPLOAD_STATUS_NULL_ARGUMENT:
     case PACKAGE_UPLOAD_STATUS_STATE:
     case PACKAGE_UPLOAD_STATUS_RANGE:
     case PACKAGE_UPLOAD_STATUS_LENGTH:
     case PACKAGE_UPLOAD_STATUS_COUNT:
     default:
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
 }
 
@@ -868,42 +868,42 @@ static int64_t package_control_error(
     case PACKAGE_CONTROL_STATUS_OK:
         return 0;
     case PACKAGE_CONTROL_STATUS_BUSY:
-        return -SAPOTE_EBUSY;
+        return -PHIPIA_EBUSY;
     case PACKAGE_CONTROL_STATUS_NO_SLOT:
     case PACKAGE_CONTROL_STATUS_RESOURCE:
-        return -SAPOTE_ENOMEM;
+        return -PHIPIA_ENOMEM;
     case PACKAGE_CONTROL_STATUS_STALE:
-        return -SAPOTE_ESTALE;
+        return -PHIPIA_ESTALE;
     case PACKAGE_CONTROL_STATUS_UPLOAD:
-        return report == NULL ? -SAPOTE_EIO : package_upload_error(
+        return report == NULL ? -PHIPIA_EIO : package_upload_error(
             report->upload_status, SAPFS_STATUS_IO);
     case PACKAGE_CONTROL_STATUS_MANAGER:
         if (report == NULL) {
-            return -SAPOTE_EIO;
+            return -PHIPIA_EIO;
         }
         if (report->manager_status == PACKAGE_MANAGER_STATUS_NOT_FOUND) {
-            return -SAPOTE_ENOENT;
+            return -PHIPIA_ENOENT;
         }
         if (report->manager_status ==
                 PACKAGE_MANAGER_STATUS_ALREADY_INSTALLED) {
-            return -SAPOTE_EEXIST;
+            return -PHIPIA_EEXIST;
         }
         if (report->manager_status ==
                 PACKAGE_MANAGER_STATUS_CRYPTO_UNAVAILABLE) {
-            return -SAPOTE_ENOTSUP;
+            return -PHIPIA_ENOTSUP;
         }
-        return -SAPOTE_EACCES;
+        return -PHIPIA_EACCES;
     case PACKAGE_CONTROL_STATUS_CLOCK:
     case PACKAGE_CONTROL_STATUS_SERVICE:
-        return -SAPOTE_EIO;
+        return -PHIPIA_EIO;
     case PACKAGE_CONTROL_STATUS_TRUST:
-        return -SAPOTE_EACCES;
+        return -PHIPIA_EACCES;
     case PACKAGE_CONTROL_STATUS_NULL_ARGUMENT:
     case PACKAGE_CONTROL_STATUS_STATE:
     case PACKAGE_CONTROL_STATUS_RANGE:
     case PACKAGE_CONTROL_STATUS_COUNT:
     default:
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
 }
 
@@ -914,10 +914,10 @@ static uint32_t package_control_result_flags(
     uint32_t result = 0U;
 
     if (report->prepared) {
-        result |= SAPOTE_PACKAGE_CONTROL_PREPARED;
+        result |= PHIPIA_PACKAGE_CONTROL_PREPARED;
     }
     if (report->committed) {
-        result |= SAPOTE_PACKAGE_CONTROL_COMMITTED;
+        result |= PHIPIA_PACKAGE_CONTROL_COMMITTED;
     }
     return result;
 }
@@ -1002,9 +1002,9 @@ static bool close_resource(
         return false;
     }
     switch (type) {
-    case SAPOTE_HANDLE_FILE:
+    case PHIPIA_HANDLE_FILE:
         return sapfs_close((sapfs_handle)resource->words[0]) == SAPFS_STATUS_OK;
-    case SAPOTE_HANDLE_DIRECTORY:
+    case PHIPIA_HANDLE_DIRECTORY:
         if (resource->words[0] >= NATIVE_HANDLE_LIMIT) {
             return false;
         }
@@ -1016,20 +1016,20 @@ static bool close_resource(
         zero_bytes(&process->directories[resource->words[0]],
             sizeof(process->directories[resource->words[0]]));
         return true;
-    case SAPOTE_HANDLE_STREAM:
-    case SAPOTE_HANDLE_DATAGRAM:
+    case PHIPIA_HANDLE_STREAM:
+    case PHIPIA_HANDLE_DATAGRAM:
         return network_close(process->generation,
             (network_handle)resource->words[0]) == NETWORK_STATUS_OK;
-    case SAPOTE_HANDLE_TIMER:
+    case PHIPIA_HANDLE_TIMER:
         return true;
-    case SAPOTE_HANDLE_WINDOW:
+    case PHIPIA_HANDLE_WINDOW:
         if (!process->window.allocated ||
             process->window.generation != resource->words[1] ||
             process->window.ui_slot != resource->words[0]) {
             return false;
         }
         return window_release_surface(process);
-    case SAPOTE_HANDLE_EVENT_QUEUE:
+    case PHIPIA_HANDLE_EVENT_QUEUE:
         if (!process->window.allocated ||
             process->window.generation != resource->words[1]) {
             return false;
@@ -1039,9 +1039,9 @@ static bool close_resource(
         process->window.overflow_pending = false;
         window_finalize_if_unreferenced(process);
         return true;
-    case SAPOTE_HANDLE_THREAD:
+    case PHIPIA_HANDLE_THREAD:
         return true;
-    case SAPOTE_HANDLE_AUDIO_OUTPUT: {
+    case PHIPIA_HANDLE_AUDIO_OUTPUT: {
         const bool enabled = cpu_interrupts_enabled();
         enum audio_native_status status;
 
@@ -1053,13 +1053,13 @@ static bool close_resource(
         }
         return status == AUDIO_NATIVE_OK;
     }
-    case SAPOTE_HANDLE_PACKAGE_UPLOAD: {
+    case PHIPIA_HANDLE_PACKAGE_UPLOAD: {
         struct package_upload_report report;
 
         return package_upload_close(process->generation, resource->words[0],
             &report) == PACKAGE_UPLOAD_STATUS_OK;
     }
-    case SAPOTE_HANDLE_PACKAGE_CONTROL: {
+    case PHIPIA_HANDLE_PACKAGE_CONTROL: {
         struct package_control_report report;
 
         return package_control_close(process->generation, resource->words[0],
@@ -1107,7 +1107,7 @@ static bool safe_relative_path(const char *path, size_t length)
 
 static bool path_from_user(
     struct native_process *process,
-    const struct sapote_path *path,
+    const struct phipia_path *path,
     char output[SAPFS_MAX_PATH],
     enum sapfs_volume *volume
 )
@@ -1124,10 +1124,10 @@ static bool path_from_user(
     }
     relative[path->length] = '\0';
     zero_bytes(output, SAPFS_MAX_PATH);
-    if (path->volume == SAPOTE_VOLUME_SYSTEM) {
+    if (path->volume == PHIPIA_VOLUME_SYSTEM) {
         size_t resource_length;
 
-        if ((process->manifest.capabilities & SAPOTE_CAP_SYSTEM_READ) == 0U) {
+        if ((process->manifest.capabilities & PHIPIA_CAP_SYSTEM_READ) == 0U) {
             return false;
         }
         resource_length = bounded_length(process->manifest.resource_directory,
@@ -1150,9 +1150,9 @@ static bool path_from_user(
         *volume = SAPFS_VOLUME_SYSTEM;
         return true;
     }
-    if (path->volume != SAPOTE_VOLUME_DATA ||
+    if (path->volume != PHIPIA_VOLUME_DATA ||
         (process->manifest.capabilities &
-            (SAPOTE_CAP_DATA_READ | SAPOTE_CAP_DATA_WRITE)) == 0U) {
+            (PHIPIA_CAP_DATA_READ | PHIPIA_CAP_DATA_WRITE)) == 0U) {
         return false;
     }
     namespace_length = bounded_length(process->manifest.data_namespace,
@@ -1514,7 +1514,7 @@ static enum native_process_status dynamic_read_catalog(
     }
     if (read_system_file(path, bytes, ELF64_DYNAMIC_CATALOG_BYTES,
             &read_bytes) && read_bytes == ELF64_DYNAMIC_CATALOG_BYTES &&
-        sapote_elf64_dynamic_catalog_authenticate(bytes, read_bytes,
+        phipia_elf64_dynamic_catalog_authenticate(bytes, read_bytes,
             process->manifest.dynamic_catalog_sha256, &load->catalog) ==
                 ELF64_DYNAMIC_OK) {
         result = NATIVE_PROCESS_OK;
@@ -1555,7 +1555,7 @@ static enum native_process_status dynamic_load_library(
     load->file_lengths[index] = (size_t)stat.size;
     if (!read_system_file(path, load->files[index], (size_t)stat.size,
             &read_bytes) || read_bytes != stat.size ||
-        sapote_elf64_dynamic_object_authenticate(load->files[index], read_bytes,
+        phipia_elf64_dynamic_object_authenticate(load->files[index], read_bytes,
             catalog->sha256, &load->images[index]) != ELF64_DYNAMIC_OK ||
         !dynamic_name_equal(&load->images[index].soname, name) ||
         !dynamic_object_supported(process, &load->images[index], false)) {
@@ -1626,7 +1626,7 @@ static enum native_process_status dynamic_build_scope(
         }
         ++scan;
     }
-    dynamic_status = sapote_elf64_dynamic_dependency_order(&load->images[0],
+    dynamic_status = phipia_elf64_dynamic_dependency_order(&load->images[0],
         &load->images[1], load->library_count, order, sizeof(order),
         &order_count);
     if (dynamic_status != ELF64_DYNAMIC_OK || order_count != load->library_count) {
@@ -1732,18 +1732,18 @@ static enum native_process_status dynamic_build_scope(
         lifecycle_scope[index + 1U] =
             load->prepared[(size_t)order[index] + 1U];
     }
-    dynamic_status = sapote_elf64_dynamic_relocate_scope(load->prepared,
+    dynamic_status = phipia_elf64_dynamic_relocate_scope(load->prepared,
         load->object_count);
     if (dynamic_status != ELF64_DYNAMIC_OK) {
-        console_write("Sapote: dynamic ELF relocation status ");
+        console_write("Phipia: dynamic ELF relocation status ");
         console_write_u64((uint64_t)dynamic_status);
         console_putc('\n');
         return NATIVE_PROCESS_IMAGE_REFUSED;
     }
-    dynamic_status = sapote_elf64_dynamic_lifecycle(lifecycle_scope,
+    dynamic_status = phipia_elf64_dynamic_lifecycle(lifecycle_scope,
         load->object_count, &load->lifecycle);
     if (dynamic_status != ELF64_DYNAMIC_OK) {
-        console_write("Sapote: dynamic ELF lifecycle status ");
+        console_write("Phipia: dynamic ELF lifecycle status ");
         console_write_u64((uint64_t)dynamic_status);
         console_putc('\n');
         return NATIVE_PROCESS_IMAGE_REFUSED;
@@ -2005,10 +2005,10 @@ static bool dynamic_prepare_trampolines(
     static const uint8_t fini_epilogue[] = {
         /* mov %r12,%rdi; mov $SYS_EXIT,%eax; syscall; ud2. */
         0x4cU, 0x89U, 0xe7U, 0xb8U,
-        (uint8_t)(SAPOTE_SYS_EXIT & 0xffU),
-        (uint8_t)((SAPOTE_SYS_EXIT >> 8U) & 0xffU),
-        (uint8_t)((SAPOTE_SYS_EXIT >> 16U) & 0xffU),
-        (uint8_t)((SAPOTE_SYS_EXIT >> 24U) & 0xffU),
+        (uint8_t)(PHIPIA_SYS_EXIT & 0xffU),
+        (uint8_t)((PHIPIA_SYS_EXIT >> 8U) & 0xffU),
+        (uint8_t)((PHIPIA_SYS_EXIT >> 16U) & 0xffU),
+        (uint8_t)((PHIPIA_SYS_EXIT >> 24U) & 0xffU),
         0x0fU, 0x05U, 0x0fU, 0x0bU
     };
     struct dynamic_code_writer start = {
@@ -2432,11 +2432,11 @@ static bool initialize_stack(
     const size_t argc = (size_t)process->manifest.argument_count + 1U;
 
     zero_bytes(environment, sizeof(environment));
-    copy_bytes(environment[0], "SAPOTE_ABI=1", 13U);
-    copy_bytes(environment[1], "SAPOTE_APP_ID=", 14U);
+    copy_bytes(environment[0], "PHIPIA_ABI=1", 13U);
+    copy_bytes(environment[1], "PHIPIA_APP_ID=", 14U);
     copy_bytes(environment[1] + 14U, process->manifest.identifier,
         identifier_length);
-    copy_bytes(environment[2], "SAPOTE_DATA=", 12U);
+    copy_bytes(environment[2], "PHIPIA_DATA=", 12U);
     copy_bytes(environment[2] + 12U, process->manifest.data_namespace,
         namespace_length);
     environment_lengths[0] = 13U;
@@ -2486,8 +2486,8 @@ static bool initialize_stack(
     vector[vector_count++] = PAGING_PAGE_SIZE;
     vector[vector_count++] = NATIVE_AUX_ENTRY;
     vector[vector_count++] = process->image.entry;
-    vector[vector_count++] = NATIVE_AUX_SAPOTE_ABI;
-    vector[vector_count++] = SAPOTE_ABI_VERSION;
+    vector[vector_count++] = NATIVE_AUX_PHIPIA_ABI;
+    vector[vector_count++] = PHIPIA_ABI_VERSION;
     vector[vector_count++] = NATIVE_AUX_TLS_IMAGE;
     vector[vector_count++] = process->image.tls.virtual_address;
     vector[vector_count++] = NATIVE_AUX_TLS_SIZE;
@@ -2622,40 +2622,40 @@ static enum native_process_status load_process(
         result = NATIVE_PROCESS_EXECUTABLE_READ;
         goto finish;
     }
-    admission_status = sapote_native_image_validate(manifest_bytes,
+    admission_status = phipia_native_image_validate(manifest_bytes,
         sizeof(manifest_bytes), elf, elf_read, &process->manifest,
         &process->image);
     if (admission_status != NATIVE_IMAGE_OK) {
         enum elf64_dynamic_status dynamic_status;
 
         if (admission_status != NATIVE_IMAGE_ELF_TYPE ||
-            sapote_native_manifest_authenticate(manifest_bytes,
+            phipia_native_manifest_authenticate(manifest_bytes,
                 sizeof(manifest_bytes), elf, elf_read,
                 &process->manifest) != NATIVE_IMAGE_OK) {
-            console_write("Sapote: native admission status ");
+            console_write("Phipia: native admission status ");
             console_write_u64((uint64_t)admission_status);
             console_putc('\n');
             result = NATIVE_PROCESS_IMAGE_REFUSED;
             goto finish;
         }
-        dynamic_status = sapote_elf64_dynamic_parse(elf, elf_read,
+        dynamic_status = phipia_elf64_dynamic_parse(elf, elf_read,
             &dynamic_image);
         if (dynamic_status != ELF64_DYNAMIC_OK) {
-            console_write("Sapote: dynamic ELF admission status ");
+            console_write("Phipia: dynamic ELF admission status ");
             console_write_u64((uint64_t)dynamic_status);
             console_putc('\n');
             result = NATIVE_PROCESS_IMAGE_REFUSED;
             goto finish;
         }
         if (!dynamic_object_supported(process, &dynamic_image, true)) {
-            console_write("Sapote: dynamic ELF root policy refused\n");
+            console_write("Phipia: dynamic ELF root policy refused\n");
             result = NATIVE_PROCESS_IMAGE_REFUSED;
             goto finish;
         }
         result = dynamic_load_create(process, &dynamic_image, elf, elf_read,
             &dynamic_load);
         if (result != NATIVE_PROCESS_OK) {
-            console_write("Sapote: dynamic ELF dependency scope refused\n");
+            console_write("Phipia: dynamic ELF dependency scope refused\n");
             goto finish;
         }
         dynamic = true;
@@ -2721,7 +2721,7 @@ static enum native_process_status load_process(
     }
     process->active = true;
     if (dynamic && process->shared_code_reuses != 0U) {
-        console_write("Sapote: dynamic immutable RX shared pages ");
+        console_write("Phipia: dynamic immutable RX shared pages ");
         console_write_u64(process->shared_code_reuses);
         console_putc('\n');
     }
@@ -2792,14 +2792,14 @@ static int64_t syscall_console_write(
 {
     size_t completed = 0U;
 
-    if ((process->manifest.capabilities & SAPOTE_CAP_CONSOLE) == 0U) {
-        return -SAPOTE_EACCES;
+    if ((process->manifest.capabilities & PHIPIA_CAP_CONSOLE) == 0U) {
+        return -PHIPIA_EACCES;
     }
     if (length == 0U) {
         return 0;
     }
     if (!validate_user_range(process, address, length, false)) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     while (completed < length) {
         size_t chunk = length - completed;
@@ -2809,7 +2809,7 @@ static int64_t syscall_console_write(
         }
         if (!copy_from_user(process, process->transfer, address + completed,
                 chunk)) {
-            return completed == 0U ? -SAPOTE_EFAULT : (int64_t)completed;
+            return completed == 0U ? -PHIPIA_EFAULT : (int64_t)completed;
         }
         console_write_n((const char *)process->transfer, chunk);
         completed += chunk;
@@ -2855,20 +2855,20 @@ static int64_t syscall_console_read(
     struct native_thread *thread = running_thread(process);
     size_t copied;
 
-    if ((process->manifest.capabilities & SAPOTE_CAP_CONSOLE) == 0U) {
-        return -SAPOTE_EACCES;
+    if ((process->manifest.capabilities & PHIPIA_CAP_CONSOLE) == 0U) {
+        return -PHIPIA_EACCES;
     }
     if (thread == NULL) {
-        return -SAPOTE_EIO;
+        return -PHIPIA_EIO;
     }
     if (length == 0U) {
         return 0;
     }
     if (length > sizeof(process->transfer)) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     if (!validate_user_range(process, address, length, true)) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (process->console_input_count == 0U) {
         thread->console_address = address;
@@ -2878,7 +2878,7 @@ static int64_t syscall_console_read(
     }
     copied = console_input_copy(process, process->transfer, length);
     if (!copy_to_user(process, address, process->transfer, copied)) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     console_input_consume(process, copied);
     return (int64_t)copied;
@@ -2922,9 +2922,9 @@ static int64_t syscall_memory_map(
     uint64_t response_address
 )
 {
-    struct sapote_memory_map_request request;
-    struct sapote_memory_map_response response = {
-        sizeof(response), SAPOTE_ABI_VERSION, 0U, 0U
+    struct phipia_memory_map_request request;
+    struct phipia_memory_map_response response = {
+        sizeof(response), PHIPIA_ABI_VERSION, 0U, 0U
     };
     size_t page_count;
     uint64_t length;
@@ -2936,21 +2936,21 @@ static int64_t syscall_memory_map(
             sizeof(request)) ||
         !validate_user_range(process, response_address, sizeof(response),
             true)) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.reserved != 0U ||
-        (request.flags & ~SAPOTE_MEMORY_FLAGS_V1) != 0U ||
-        (request.flags & (SAPOTE_MEMORY_READ | SAPOTE_MEMORY_WRITE)) !=
-            (SAPOTE_MEMORY_READ | SAPOTE_MEMORY_WRITE) ||
+        request.version != PHIPIA_ABI_VERSION || request.reserved != 0U ||
+        (request.flags & ~PHIPIA_MEMORY_FLAGS_V1) != 0U ||
+        (request.flags & (PHIPIA_MEMORY_READ | PHIPIA_MEMORY_WRITE)) !=
+            (PHIPIA_MEMORY_READ | PHIPIA_MEMORY_WRITE) ||
         request.length == 0U || request.length > UINT64_MAX -
             (PAGING_PAGE_SIZE - 1U)) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     guard_before_flag =
-        (request.flags & SAPOTE_MEMORY_GUARD_BEFORE) != 0U;
+        (request.flags & PHIPIA_MEMORY_GUARD_BEFORE) != 0U;
     guard_after_flag =
-        (request.flags & SAPOTE_MEMORY_GUARD_AFTER) != 0U;
+        (request.flags & PHIPIA_MEMORY_GUARD_AFTER) != 0U;
     length = (request.length + PAGING_PAGE_SIZE - 1U) &
         ~(PAGING_PAGE_SIZE - 1U);
     page_count = (size_t)(length / PAGING_PAGE_SIZE);
@@ -2958,16 +2958,16 @@ static int64_t syscall_memory_map(
         process->page_count > NATIVE_PROCESS_PAGE_LIMIT - page_count ||
         (process->page_count + page_count) * PAGING_PAGE_SIZE >
             process->manifest.memory_limit) {
-        return -SAPOTE_ENOMEM;
+        return -PHIPIA_ENOMEM;
     }
     if (request.address_hint != 0U) {
         if ((request.address_hint & (PAGING_PAGE_SIZE - 1U)) != 0U) {
-            return -SAPOTE_EINVAL;
+            return -PHIPIA_EINVAL;
         }
         base = request.address_hint;
         if (!anonymous_span_free(process, base, page_count,
                 guard_before_flag, guard_after_flag)) {
-            return -SAPOTE_EBUSY;
+            return -PHIPIA_EBUSY;
         }
     } else {
         const size_t prefix = guard_before_flag ? 1U : 0U;
@@ -2989,7 +2989,7 @@ static int64_t syscall_memory_map(
             candidate += PAGING_PAGE_SIZE;
         }
         if (base == 0U) {
-            return -SAPOTE_ENOMEM;
+            return -PHIPIA_ENOMEM;
         }
     }
     for (size_t page = 0U; page < page_count; ++page) {
@@ -3021,7 +3021,7 @@ static int64_t syscall_memory_map(
                     (void)release_page_frame(&removed);
                 }
             }
-            return -SAPOTE_ENOMEM;
+            return -PHIPIA_ENOMEM;
         }
         page_at(process, address)->mapped = true;
     }
@@ -3029,7 +3029,7 @@ static int64_t syscall_memory_map(
     response.length = length;
     if (!copy_to_user(process, response_address, &response, sizeof(response))) {
         (void)syscall_memory_unmap(process, base, length);
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     return 0;
 }
@@ -3046,7 +3046,7 @@ static int64_t syscall_memory_unmap(
         (length & (PAGING_PAGE_SIZE - 1U)) != 0U ||
         address < PAGING_NATIVE_ANON_BASE ||
         length > PAGING_NATIVE_ANON_END - address) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     page_count = (size_t)(length / PAGING_PAGE_SIZE);
     for (size_t page = 0U; page < page_count; ++page) {
@@ -3055,7 +3055,7 @@ static int64_t syscall_memory_unmap(
 
         if (record == NULL || !record->mapped ||
             record->kind != PAGING_PROCESS_MAPPING_NATIVE_ANON) {
-            return -SAPOTE_EFAULT;
+            return -PHIPIA_EFAULT;
         }
     }
     for (size_t page = 0U; page < page_count; ++page) {
@@ -3069,7 +3069,7 @@ static int64_t syscall_memory_unmap(
             !release_page_frame(&removed)) {
             process->faulted = true;
             process->exiting = true;
-            return -SAPOTE_EIO;
+            return -PHIPIA_EIO;
         }
     }
     return 0;
@@ -3080,47 +3080,47 @@ static int64_t syscall_file_open(
     uint64_t request_address
 )
 {
-    struct sapote_file_open_request request;
+    struct phipia_file_open_request request;
     struct native_resource resource = {{0U, 0U, 0U, 0U}};
     char path[SAPFS_MAX_PATH];
     enum sapfs_volume volume;
     enum sapfs_access access;
     sapfs_handle file;
-    sapote_handle_t handle;
+    phipia_handle_t handle;
     enum sapfs_status status;
 
     if (!copy_from_user(process, &request, request_address,
             sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.reserved != 0U ||
-        (request.flags & ~SAPOTE_OPEN_FLAGS_V1) != 0U ||
-        (request.flags & (SAPOTE_OPEN_READ | SAPOTE_OPEN_WRITE)) == 0U ||
+        request.version != PHIPIA_ABI_VERSION || request.reserved != 0U ||
+        (request.flags & ~PHIPIA_OPEN_FLAGS_V1) != 0U ||
+        (request.flags & (PHIPIA_OPEN_READ | PHIPIA_OPEN_WRITE)) == 0U ||
         !path_from_user(process, &request.path, path, &volume)) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     if (volume == SAPFS_VOLUME_SYSTEM &&
-        (request.flags & (SAPOTE_OPEN_WRITE | SAPOTE_OPEN_CREATE |
-            SAPOTE_OPEN_TRUNCATE)) != 0U) {
-        return -SAPOTE_EACCES;
+        (request.flags & (PHIPIA_OPEN_WRITE | PHIPIA_OPEN_CREATE |
+            PHIPIA_OPEN_TRUNCATE)) != 0U) {
+        return -PHIPIA_EACCES;
     }
-    if ((request.flags & (SAPOTE_OPEN_WRITE | SAPOTE_OPEN_CREATE |
-            SAPOTE_OPEN_TRUNCATE)) != 0U &&
-        (process->manifest.capabilities & SAPOTE_CAP_DATA_WRITE) == 0U) {
-        return -SAPOTE_EACCES;
+    if ((request.flags & (PHIPIA_OPEN_WRITE | PHIPIA_OPEN_CREATE |
+            PHIPIA_OPEN_TRUNCATE)) != 0U &&
+        (process->manifest.capabilities & PHIPIA_CAP_DATA_WRITE) == 0U) {
+        return -PHIPIA_EACCES;
     }
-    access = (request.flags & SAPOTE_OPEN_WRITE) != 0U ?
-        ((request.flags & SAPOTE_OPEN_READ) != 0U ? SAPFS_ACCESS_READ_WRITE :
+    access = (request.flags & PHIPIA_OPEN_WRITE) != 0U ?
+        ((request.flags & PHIPIA_OPEN_READ) != 0U ? SAPFS_ACCESS_READ_WRITE :
             SAPFS_ACCESS_WRITE) : SAPFS_ACCESS_READ;
     cpu_interrupt_enable();
     status = sapfs_stat_path(volume, path, &(struct sapfs_stat){0});
     if (status == SAPFS_STATUS_NOT_FOUND &&
-        (request.flags & SAPOTE_OPEN_CREATE) != 0U) {
+        (request.flags & PHIPIA_OPEN_CREATE) != 0U) {
         status = sapfs_create(volume, path);
     }
     if (status == SAPFS_STATUS_OK &&
-        (request.flags & SAPOTE_OPEN_TRUNCATE) != 0U) {
+        (request.flags & PHIPIA_OPEN_TRUNCATE) != 0U) {
         status = sapfs_truncate(volume, path, 0U);
     }
     if (status == SAPFS_STATUS_OK) {
@@ -3133,7 +3133,7 @@ static int64_t syscall_file_open(
     resource.words[0] = file;
     {
         const enum native_handle_status handle_status = native_handle_install(
-            &process->handles, SAPOTE_HANDLE_FILE, &resource, &handle);
+            &process->handles, PHIPIA_HANDLE_FILE, &resource, &handle);
 
         if (handle_status != NATIVE_HANDLE_OK) {
             cpu_interrupt_enable();
@@ -3154,21 +3154,21 @@ static int64_t syscall_file_io(
     bool write
 )
 {
-    struct sapote_io_request request;
+    struct phipia_io_request request;
     struct native_resource *resource;
     size_t completed = 0U;
     enum native_handle_status handle_status;
 
     if (!copy_from_user(process, &request, request_address,
             sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.flags != 0U) {
-        return -SAPOTE_EINVAL;
+        request.version != PHIPIA_ABI_VERSION || request.flags != 0U) {
+        return -PHIPIA_EINVAL;
     }
     handle_status = native_handle_resolve(&process->handles, request.handle,
-        SAPOTE_HANDLE_FILE, &resource);
+        PHIPIA_HANDLE_FILE, &resource);
     if (handle_status != NATIVE_HANDLE_OK) {
         return handle_error(handle_status);
     }
@@ -3176,13 +3176,13 @@ static int64_t syscall_file_io(
         return 0;
     }
     if (!validate_user_range(process, request.buffer, request.length, !write)) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (write && request.offset != UINT64_MAX) {
         uint64_t position;
 
         if (request.offset > INT64_MAX) {
-            return -SAPOTE_EINVAL;
+            return -PHIPIA_EINVAL;
         }
         cpu_interrupt_enable();
         const enum sapfs_status seek_status = sapfs_seek(
@@ -3203,7 +3203,7 @@ static int64_t syscall_file_io(
         }
         if (write && !copy_from_user(process, process->transfer,
                 request.buffer + completed, chunk)) {
-            return completed == 0U ? -SAPOTE_EFAULT : (int64_t)completed;
+            return completed == 0U ? -PHIPIA_EFAULT : (int64_t)completed;
         }
         cpu_interrupt_enable();
         if (write) {
@@ -3212,7 +3212,7 @@ static int64_t syscall_file_io(
         } else if (request.offset != UINT64_MAX) {
             if (completed > UINT64_MAX - request.offset) {
                 cpu_interrupt_disable();
-                return completed == 0U ? -SAPOTE_EINVAL : (int64_t)completed;
+                return completed == 0U ? -PHIPIA_EINVAL : (int64_t)completed;
             }
             status = sapfs_pread((sapfs_handle)resource->words[0],
                 process->transfer, chunk, request.offset + completed,
@@ -3229,7 +3229,7 @@ static int64_t syscall_file_io(
         if (!write && transferred != 0U &&
             !copy_to_user(process, request.buffer + completed,
                 process->transfer, transferred)) {
-            return completed == 0U ? -SAPOTE_EFAULT : (int64_t)completed;
+            return completed == 0U ? -PHIPIA_EFAULT : (int64_t)completed;
         }
         completed += transferred;
         if (transferred < chunk) {
@@ -3244,7 +3244,7 @@ static int64_t syscall_file_seek(
     uint64_t request_address
 )
 {
-    struct sapote_seek_request request;
+    struct phipia_seek_request request;
     struct native_resource *resource;
     enum sapfs_seek_origin origin;
     uint64_t position;
@@ -3252,19 +3252,19 @@ static int64_t syscall_file_seek(
 
     if (!copy_from_user(process, &request, request_address,
             sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.reserved != 0U ||
-        request.origin > SAPOTE_SEEK_END) {
-        return -SAPOTE_EINVAL;
+        request.version != PHIPIA_ABI_VERSION || request.reserved != 0U ||
+        request.origin > PHIPIA_SEEK_END) {
+        return -PHIPIA_EINVAL;
     }
     if (native_handle_resolve(&process->handles, request.handle,
-            SAPOTE_HANDLE_FILE, &resource) != NATIVE_HANDLE_OK) {
-        return -SAPOTE_EBADF;
+            PHIPIA_HANDLE_FILE, &resource) != NATIVE_HANDLE_OK) {
+        return -PHIPIA_EBADF;
     }
-    origin = request.origin == SAPOTE_SEEK_START ? SAPFS_SEEK_START :
-        (request.origin == SAPOTE_SEEK_CURRENT ? SAPFS_SEEK_CURRENT :
+    origin = request.origin == PHIPIA_SEEK_START ? SAPFS_SEEK_START :
+        (request.origin == PHIPIA_SEEK_CURRENT ? SAPFS_SEEK_CURRENT :
             SAPFS_SEEK_END);
     cpu_interrupt_enable();
     status = sapfs_seek((sapfs_handle)resource->words[0], request.offset,
@@ -3280,9 +3280,9 @@ static int64_t syscall_path_stat(
     uint64_t output_address
 )
 {
-    struct sapote_path path_request;
-    struct sapote_path_stat output = {
-        sizeof(output), SAPOTE_ABI_VERSION, 0U, 0U, 0U
+    struct phipia_path path_request;
+    struct phipia_path_stat output = {
+        sizeof(output), PHIPIA_ABI_VERSION, 0U, 0U, 0U
     };
     struct sapfs_stat stat;
     char path[SAPFS_MAX_PATH];
@@ -3292,10 +3292,10 @@ static int64_t syscall_path_stat(
     if (!copy_from_user(process, &path_request, path_address,
             sizeof(path_request)) ||
         !validate_user_range(process, output_address, sizeof(output), true)) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (!path_from_user(process, &path_request, path, &volume)) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     cpu_interrupt_enable();
     status = sapfs_stat_path(volume, path, &stat);
@@ -3304,10 +3304,10 @@ static int64_t syscall_path_stat(
         return filesystem_error(status);
     }
     output.byte_length = stat.size;
-    output.attributes = (stat.directory ? SAPOTE_PATH_DIRECTORY : 0U) |
-        (stat.read_only ? SAPOTE_PATH_READ_ONLY : 0U);
+    output.attributes = (stat.directory ? PHIPIA_PATH_DIRECTORY : 0U) |
+        (stat.read_only ? PHIPIA_PATH_READ_ONLY : 0U);
     return copy_to_user(process, output_address, &output, sizeof(output)) ?
-        0 : -SAPOTE_EFAULT;
+        0 : -PHIPIA_EFAULT;
 }
 
 static int64_t syscall_directory_open(
@@ -3315,21 +3315,21 @@ static int64_t syscall_directory_open(
     uint64_t path_address
 )
 {
-    struct sapote_path path_request;
+    struct phipia_path path_request;
     struct native_resource resource = {{0U, 0U, 0U, 0U}};
     char path[SAPFS_MAX_PATH];
     enum sapfs_volume volume;
     enum sapfs_status status;
     sapfs_directory_handle iterator = 0U;
-    sapote_handle_t handle;
+    phipia_handle_t handle;
     size_t slot = SIZE_MAX;
 
     if (!copy_from_user(process, &path_request, path_address,
             sizeof(path_request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (!path_from_user(process, &path_request, path, &volume)) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     for (size_t index = 0U; index < NATIVE_HANDLE_LIMIT; ++index) {
         if (!process->directories[index].active) {
@@ -3338,7 +3338,7 @@ static int64_t syscall_directory_open(
         }
     }
     if (slot == SIZE_MAX) {
-        return -SAPOTE_ENOMEM;
+        return -PHIPIA_ENOMEM;
     }
     cpu_interrupt_enable();
     status = sapfs_directory_open(volume, path, &iterator);
@@ -3351,7 +3351,7 @@ static int64_t syscall_directory_open(
     resource.words[0] = slot;
     {
         const enum native_handle_status handle_status = native_handle_install(
-            &process->handles, SAPOTE_HANDLE_DIRECTORY, &resource, &handle);
+            &process->handles, PHIPIA_HANDLE_DIRECTORY, &resource, &handle);
 
         if (handle_status != NATIVE_HANDLE_OK) {
             (void)sapfs_directory_close(iterator);
@@ -3368,34 +3368,34 @@ static int64_t syscall_directory_open(
 
 static int64_t syscall_directory_read(
     struct native_process *process,
-    sapote_handle_t handle,
+    phipia_handle_t handle,
     uint64_t output_address
 )
 {
     struct native_resource *resource;
     struct sapfs_list_entry entry;
-    struct sapote_directory_entry output;
+    struct phipia_directory_entry output;
     struct native_directory_resource *directory;
     bool present = false;
     enum sapfs_status status;
 
     if (!validate_user_range(process, output_address, sizeof(output), true)) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     {
         const enum native_handle_status handle_status = native_handle_resolve(
-            &process->handles, handle, SAPOTE_HANDLE_DIRECTORY, &resource);
+            &process->handles, handle, PHIPIA_HANDLE_DIRECTORY, &resource);
 
         if (handle_status != NATIVE_HANDLE_OK) {
             return handle_error(handle_status);
         }
     }
     if (resource->words[0] >= NATIVE_HANDLE_LIMIT) {
-        return -SAPOTE_EBADF;
+        return -PHIPIA_EBADF;
     }
     directory = &process->directories[resource->words[0]];
     if (!directory->active) {
-        return -SAPOTE_ESTALE;
+        return -PHIPIA_ESTALE;
     }
     cpu_interrupt_enable();
     status = sapfs_directory_read(directory->iterator, &entry, &present);
@@ -3408,18 +3408,18 @@ static int64_t syscall_directory_read(
     }
     zero_bytes(&output, sizeof(output));
     output.size = sizeof(output);
-    output.version = SAPOTE_ABI_VERSION;
+    output.version = PHIPIA_ABI_VERSION;
     output.byte_length = entry.size;
     output.attributes = entry.directory ?
-        SAPOTE_PATH_DIRECTORY : 0U;
+        PHIPIA_PATH_DIRECTORY : 0U;
     output.name_length = (uint16_t)bounded_length(
         (const uint8_t *)entry.name, sizeof(entry.name));
     if (output.name_length > sizeof(output.name)) {
-        return -SAPOTE_EIO;
+        return -PHIPIA_EIO;
     }
     copy_bytes(output.name, entry.name, output.name_length);
     if (!copy_to_user(process, output_address, &output, sizeof(output))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     return 1;
 }
@@ -3431,7 +3431,7 @@ static int64_t syscall_single_path_mutation(
     uint64_t number
 )
 {
-    struct sapote_path path_request;
+    struct phipia_path path_request;
     struct sapfs_stat stat;
     char path[SAPFS_MAX_PATH];
     enum sapfs_volume volume;
@@ -3439,19 +3439,19 @@ static int64_t syscall_single_path_mutation(
 
     if (!copy_from_user(process, &path_request, path_address,
             sizeof(path_request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (!path_from_user(process, &path_request, path, &volume)) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     if (volume != SAPFS_VOLUME_DATA ||
-        (process->manifest.capabilities & SAPOTE_CAP_DATA_WRITE) == 0U) {
-        return -SAPOTE_EACCES;
+        (process->manifest.capabilities & PHIPIA_CAP_DATA_WRITE) == 0U) {
+        return -PHIPIA_EACCES;
     }
     cpu_interrupt_enable();
-    if (number == SAPOTE_SYS_PATH_MKDIR) {
+    if (number == PHIPIA_SYS_PATH_MKDIR) {
         status = sapfs_mkdir(volume, path);
-    } else if (number == SAPOTE_SYS_PATH_TRUNCATE) {
+    } else if (number == PHIPIA_SYS_PATH_TRUNCATE) {
         status = sapfs_truncate(volume, path, value);
     } else {
         status = sapfs_stat_path(volume, path, &stat);
@@ -3500,7 +3500,7 @@ static int64_t syscall_rename(
     bool replace
 )
 {
-    struct sapote_rename_request request;
+    struct phipia_rename_request request;
     struct sapfs_stat destination_stat;
     struct sapfs_stat backup_stat;
     char source[SAPFS_MAX_PATH];
@@ -3512,20 +3512,20 @@ static int64_t syscall_rename(
 
     if (!copy_from_user(process, &request, request_address,
             sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
+        request.version != PHIPIA_ABI_VERSION || request.flags != 0U ||
         request.reserved != 0U ||
         !path_from_user(process, &request.source, source, &source_volume) ||
         !path_from_user(process, &request.destination, destination,
             &destination_volume)) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     if (source_volume != SAPFS_VOLUME_DATA ||
         destination_volume != SAPFS_VOLUME_DATA ||
-        (process->manifest.capabilities & SAPOTE_CAP_DATA_WRITE) == 0U) {
-        return -SAPOTE_EACCES;
+        (process->manifest.capabilities & PHIPIA_CAP_DATA_WRITE) == 0U) {
+        return -PHIPIA_EACCES;
     }
     cpu_interrupt_enable();
     status = sapfs_rename(SAPFS_VOLUME_DATA, source, destination);
@@ -3556,18 +3556,18 @@ static int64_t syscall_volume_sync(
 {
     enum sapfs_volume volume;
 
-    if (volume_number == SAPOTE_VOLUME_SYSTEM) {
-        if ((process->manifest.capabilities & SAPOTE_CAP_SYSTEM_READ) == 0U) {
-            return -SAPOTE_EACCES;
+    if (volume_number == PHIPIA_VOLUME_SYSTEM) {
+        if ((process->manifest.capabilities & PHIPIA_CAP_SYSTEM_READ) == 0U) {
+            return -PHIPIA_EACCES;
         }
         volume = SAPFS_VOLUME_SYSTEM;
-    } else if (volume_number == SAPOTE_VOLUME_DATA) {
-        if ((process->manifest.capabilities & SAPOTE_CAP_DATA_WRITE) == 0U) {
-            return -SAPOTE_EACCES;
+    } else if (volume_number == PHIPIA_VOLUME_DATA) {
+        if ((process->manifest.capabilities & PHIPIA_CAP_DATA_WRITE) == 0U) {
+            return -PHIPIA_EACCES;
         }
         volume = SAPFS_VOLUME_DATA;
     } else {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     cpu_interrupt_enable();
     const enum sapfs_status status = sapfs_sync(volume);
@@ -3581,33 +3581,33 @@ static int64_t syscall_volume_space(
     uint64_t output_address
 )
 {
-    struct sapote_volume_space output = {
-        sizeof(output), SAPOTE_ABI_VERSION, 0U, 0U,
+    struct phipia_volume_space output = {
+        sizeof(output), PHIPIA_ABI_VERSION, 0U, 0U,
         (uint32_t)PAGING_PAGE_SIZE, 0U
     };
     enum sapfs_volume volume;
     struct sapfs_drive_info drive;
 
     if (!validate_user_range(process, output_address, sizeof(output), true)) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
-    if (volume_number == SAPOTE_VOLUME_SYSTEM &&
-        (process->manifest.capabilities & SAPOTE_CAP_SYSTEM_READ) != 0U) {
+    if (volume_number == PHIPIA_VOLUME_SYSTEM &&
+        (process->manifest.capabilities & PHIPIA_CAP_SYSTEM_READ) != 0U) {
         volume = SAPFS_VOLUME_SYSTEM;
-    } else if (volume_number == SAPOTE_VOLUME_DATA &&
-        (process->manifest.capabilities & SAPOTE_CAP_DATA_READ) != 0U) {
+    } else if (volume_number == PHIPIA_VOLUME_DATA &&
+        (process->manifest.capabilities & PHIPIA_CAP_DATA_READ) != 0U) {
         volume = SAPFS_VOLUME_DATA;
     } else {
-        return -SAPOTE_EACCES;
+        return -PHIPIA_EACCES;
     }
     drive = sapfs_drive(volume);
     if (!drive.mounted || !drive.healthy) {
-        return -SAPOTE_EIO;
+        return -PHIPIA_EIO;
     }
     output.total_bytes = drive.total_bytes;
     output.free_bytes = drive.free_bytes;
     return copy_to_user(process, output_address, &output, sizeof(output)) ?
-        0 : -SAPOTE_EFAULT;
+        0 : -PHIPIA_EFAULT;
 }
 
 static int64_t network_error(enum network_status status)
@@ -3616,32 +3616,32 @@ static int64_t network_error(enum network_status status)
     case NETWORK_STATUS_OK:
         return 0;
     case NETWORK_STATUS_TIMEOUT:
-        return -SAPOTE_ETIMEDOUT;
+        return -PHIPIA_ETIMEDOUT;
     case NETWORK_STATUS_CANCELLED:
-        return -SAPOTE_ECANCELED;
+        return -PHIPIA_ECANCELED;
     case NETWORK_STATUS_WOULD_BLOCK:
-        return -SAPOTE_EAGAIN;
+        return -PHIPIA_EAGAIN;
     case NETWORK_STATUS_NO_RESOURCES:
-        return -SAPOTE_ENOMEM;
+        return -PHIPIA_ENOMEM;
     case NETWORK_STATUS_STALE_HANDLE:
-        return -SAPOTE_ESTALE;
+        return -PHIPIA_ESTALE;
     case NETWORK_STATUS_WRONG_OWNER:
     case NETWORK_STATUS_WRONG_MODE:
-        return -SAPOTE_EBADF;
+        return -PHIPIA_EBADF;
     case NETWORK_STATUS_ALREADY_BOUND:
     case NETWORK_STATUS_PORT_IN_USE:
-        return -SAPOTE_EBUSY;
+        return -PHIPIA_EBUSY;
     case NETWORK_STATUS_CONNECTION_CLOSED:
-        return -SAPOTE_EPIPE;
+        return -PHIPIA_EPIPE;
     case NETWORK_STATUS_RESET:
     case NETWORK_STATUS_CONNECTION_RESET:
-        return -SAPOTE_EIO;
+        return -PHIPIA_EIO;
     case NETWORK_STATUS_INVALID_ARGUMENT:
     case NETWORK_STATUS_RANGE:
     case NETWORK_STATUS_NULL_ARGUMENT:
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     case NETWORK_STATUS_UNSUPPORTED:
-        return -SAPOTE_ENOTSUP;
+        return -PHIPIA_ENOTSUP;
     case NETWORK_STATUS_UNAVAILABLE:
     case NETWORK_STATUS_LINK_DOWN:
     case NETWORK_STATUS_UNCONFIGURED:
@@ -3658,7 +3658,7 @@ static int64_t network_error(enum network_status status)
     case NETWORK_STATUS_ALREADY_INITIALIZED:
     case NETWORK_STATUS_COUNT:
     default:
-        return -SAPOTE_EIO;
+        return -PHIPIA_EIO;
     }
 }
 
@@ -3706,17 +3706,17 @@ static int64_t syscall_random(
 {
     size_t completed = 0U;
 
-    if ((process->manifest.capabilities & SAPOTE_CAP_ENTROPY) == 0U) {
-        return -SAPOTE_EACCES;
+    if ((process->manifest.capabilities & PHIPIA_CAP_ENTROPY) == 0U) {
+        return -PHIPIA_EACCES;
     }
     if (length > RANDOM_MAX_REQUEST_BYTES) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     if (length == 0U) {
         return 0;
     }
     if (!validate_user_range(process, address, length, true)) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     while (completed < length) {
         size_t chunk = length - completed;
@@ -3731,7 +3731,7 @@ static int64_t syscall_random(
         if (status != RANDOM_STATUS_OK ||
             !copy_to_user(process, address + completed, process->transfer,
                 chunk)) {
-            return completed == 0U ? -SAPOTE_EIO : (int64_t)completed;
+            return completed == 0U ? -PHIPIA_EIO : (int64_t)completed;
         }
         completed += chunk;
     }
@@ -3742,19 +3742,19 @@ static int64_t syscall_time_realtime(const struct native_process *process)
 {
     int64_t seconds;
 
-    if ((process->manifest.capabilities & SAPOTE_CAP_TIME) == 0U) {
-        return -SAPOTE_EACCES;
+    if ((process->manifest.capabilities & PHIPIA_CAP_TIME) == 0U) {
+        return -PHIPIA_EACCES;
     }
     return wall_clock_read_unix_seconds(&seconds) == WALL_CLOCK_STATUS_OK ?
-        seconds : -SAPOTE_EIO;
+        seconds : -PHIPIA_EIO;
 }
 
 static int64_t syscall_timer_create(struct native_process *process)
 {
     struct native_resource resource = {{0U, 0U, 0U, 0U}};
-    sapote_handle_t handle;
+    phipia_handle_t handle;
     const enum native_handle_status status = native_handle_install(
-        &process->handles, SAPOTE_HANDLE_TIMER, &resource, &handle);
+        &process->handles, PHIPIA_HANDLE_TIMER, &resource, &handle);
 
     if (status != NATIVE_HANDLE_OK) {
         return handle_error(status);
@@ -3770,21 +3770,21 @@ static int64_t syscall_timer_set(
     uint64_t request_address
 )
 {
-    struct sapote_timer_set_request request;
+    struct phipia_timer_set_request request;
     struct native_resource *resource;
     enum native_handle_status status;
 
     if (!copy_from_user(process, &request, request_address,
             sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
+        request.version != PHIPIA_ABI_VERSION || request.flags != 0U ||
         request.reserved != 0U) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     status = native_handle_resolve(&process->handles, request.handle,
-        SAPOTE_HANDLE_TIMER, &resource);
+        PHIPIA_HANDLE_TIMER, &resource);
     if (status != NATIVE_HANDLE_OK) {
         return handle_error(status);
     }
@@ -3800,11 +3800,11 @@ static int64_t syscall_sleep_until(
     struct native_thread *thread = running_thread(process);
     const uint64_t now = clock_monotonic_ns();
 
-    if ((process->manifest.capabilities & SAPOTE_CAP_TIME) == 0U) {
-        return -SAPOTE_EACCES;
+    if ((process->manifest.capabilities & PHIPIA_CAP_TIME) == 0U) {
+        return -PHIPIA_EACCES;
     }
     if (thread == NULL) {
-        return -SAPOTE_EIO;
+        return -PHIPIA_EIO;
     }
     if (deadline <= now) {
         return 0;
@@ -3816,13 +3816,13 @@ static int64_t syscall_sleep_until(
 
 static int64_t poll_wait_items(
     struct native_process *process,
-    struct sapote_wait_item *items,
+    struct phipia_wait_item *items,
     size_t count
 )
 {
-    struct network_poll_request network_requests[SAPOTE_WAIT_MAX];
-    struct network_poll_result network_results[SAPOTE_WAIT_MAX];
-    size_t network_indices[SAPOTE_WAIT_MAX];
+    struct network_poll_request network_requests[PHIPIA_WAIT_MAX];
+    struct network_poll_result network_results[PHIPIA_WAIT_MAX];
+    size_t network_indices[PHIPIA_WAIT_MAX];
     size_t network_count = 0U;
     size_t ready_count = 0U;
 
@@ -3837,57 +3837,57 @@ static int64_t poll_wait_items(
         if (status != NATIVE_HANDLE_OK) {
             return handle_error(status);
         }
-        if ((items[index].interests & ~SAPOTE_WAIT_INTERESTS_V1) != 0U ||
+        if ((items[index].interests & ~PHIPIA_WAIT_INTERESTS_V1) != 0U ||
             items[index].interests == 0U) {
-            return -SAPOTE_EINVAL;
+            return -PHIPIA_EINVAL;
         }
-        if (type == SAPOTE_HANDLE_FILE || type == SAPOTE_HANDLE_DIRECTORY) {
+        if (type == PHIPIA_HANDLE_FILE || type == PHIPIA_HANDLE_DIRECTORY) {
             items[index].ready = items[index].interests &
-                (SAPOTE_WAIT_READABLE | SAPOTE_WAIT_WRITABLE);
-        } else if (type == SAPOTE_HANDLE_TIMER) {
+                (PHIPIA_WAIT_READABLE | PHIPIA_WAIT_WRITABLE);
+        } else if (type == PHIPIA_HANDLE_TIMER) {
             if (resource->words[0] != 0U &&
                 clock_monotonic_ns() >= resource->words[0]) {
                 items[index].ready = items[index].interests &
-                    SAPOTE_WAIT_SIGNALED;
+                    PHIPIA_WAIT_SIGNALED;
             }
-        } else if (type == SAPOTE_HANDLE_EVENT_QUEUE) {
+        } else if (type == PHIPIA_HANDLE_EVENT_QUEUE) {
             if (process->window.allocated &&
                 process->window.generation == resource->words[1] &&
                 (process->window.event_count != 0U ||
                     process->window.overflow_pending)) {
                 items[index].ready = items[index].interests &
-                    SAPOTE_WAIT_READABLE;
+                    PHIPIA_WAIT_READABLE;
             }
-        } else if (type == SAPOTE_HANDLE_AUDIO_OUTPUT) {
+        } else if (type == PHIPIA_HANDLE_AUDIO_OUTPUT) {
             bool writable;
             bool closed;
             const enum audio_native_status audio_status = audio_native_poll(
                 process->generation, resource->words[0], &writable, &closed);
 
             if ((items[index].interests &
-                    ~(SAPOTE_WAIT_WRITABLE | SAPOTE_WAIT_CLOSED)) != 0U) {
-                return -SAPOTE_EINVAL;
+                    ~(PHIPIA_WAIT_WRITABLE | PHIPIA_WAIT_CLOSED)) != 0U) {
+                return -PHIPIA_EINVAL;
             }
             if (audio_status != AUDIO_NATIVE_OK) {
                 return audio_error(audio_status);
             }
             if (writable) {
                 items[index].ready |= items[index].interests &
-                    SAPOTE_WAIT_WRITABLE;
+                    PHIPIA_WAIT_WRITABLE;
             }
             if (closed) {
                 items[index].ready |= items[index].interests &
-                    SAPOTE_WAIT_CLOSED;
+                    PHIPIA_WAIT_CLOSED;
             }
-        } else if (type == SAPOTE_HANDLE_STREAM ||
-            type == SAPOTE_HANDLE_DATAGRAM) {
+        } else if (type == PHIPIA_HANDLE_STREAM ||
+            type == PHIPIA_HANDLE_DATAGRAM) {
             network_requests[network_count].handle = resource->words[0];
             network_requests[network_count].interests = 0U;
-            if ((items[index].interests & SAPOTE_WAIT_READABLE) != 0U) {
+            if ((items[index].interests & PHIPIA_WAIT_READABLE) != 0U) {
                 network_requests[network_count].interests |=
                     NETWORK_READY_READABLE;
             }
-            if ((items[index].interests & SAPOTE_WAIT_WRITABLE) != 0U) {
+            if ((items[index].interests & PHIPIA_WAIT_WRITABLE) != 0U) {
                 network_requests[network_count].interests |=
                     NETWORK_READY_WRITABLE;
             }
@@ -3912,15 +3912,15 @@ static int64_t poll_wait_items(
             const size_t index = network_indices[result];
 
             if ((network_results[result].ready & NETWORK_READY_READABLE) != 0U) {
-                items[index].ready |= SAPOTE_WAIT_READABLE;
+                items[index].ready |= PHIPIA_WAIT_READABLE;
             }
             if ((network_results[result].ready & NETWORK_READY_WRITABLE) != 0U) {
-                items[index].ready |= SAPOTE_WAIT_WRITABLE;
+                items[index].ready |= PHIPIA_WAIT_WRITABLE;
             }
             if ((network_results[result].ready &
                     (NETWORK_READY_PEER_CLOSED | NETWORK_READY_ERROR |
                         NETWORK_READY_CANCELLED)) != 0U) {
-                items[index].ready |= SAPOTE_WAIT_CLOSED;
+                items[index].ready |= PHIPIA_WAIT_CLOSED;
             }
             if (items[index].ready != 0U) {
                 ++ready_count;
@@ -3935,25 +3935,25 @@ static int64_t syscall_wait(
     uint64_t request_address
 )
 {
-    struct sapote_wait_request request;
-    struct sapote_wait_item items[SAPOTE_WAIT_MAX];
+    struct phipia_wait_request request;
+    struct phipia_wait_item items[PHIPIA_WAIT_MAX];
     struct native_thread *thread = running_thread(process);
     int64_t ready;
 
     if (!copy_from_user(process, &request, request_address,
             sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
-        request.count == 0U || request.count > SAPOTE_WAIT_MAX) {
-        return -SAPOTE_EINVAL;
+        request.version != PHIPIA_ABI_VERSION || request.flags != 0U ||
+        request.count == 0U || request.count > PHIPIA_WAIT_MAX) {
+        return -PHIPIA_EINVAL;
     }
     if (thread == NULL || !validate_user_range(process, request.items,
             request.count * sizeof(items[0]), true) ||
         !copy_from_user(process, items, request.items,
             request.count * sizeof(items[0]))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     ready = poll_wait_items(process, items, request.count);
     if (ready < 0) {
@@ -3962,9 +3962,9 @@ static int64_t syscall_wait(
     if (ready != 0 || request.deadline_ns <= clock_monotonic_ns()) {
         if (!copy_to_user(process, request.items, items,
                 request.count * sizeof(items[0]))) {
-            return -SAPOTE_EFAULT;
+            return -PHIPIA_EFAULT;
         }
-        return ready == 0 ? -SAPOTE_ETIMEDOUT : ready;
+        return ready == 0 ? -PHIPIA_ETIMEDOUT : ready;
     }
     copy_bytes(thread->wait_items, items,
         request.count * sizeof(items[0]));
@@ -3983,7 +3983,7 @@ static void native_ui_event(
 {
     struct native_process *process = context;
     struct native_window_state *window;
-    struct sapote_event event;
+    struct phipia_event event;
 
     if (process == NULL || source == NULL || !process->active ||
         !process->window.allocated ||
@@ -3994,13 +3994,13 @@ static void native_ui_event(
     if ((source->type == UI_NATIVE_EVENT_KEY ||
             source->type == UI_NATIVE_EVENT_POINTER_MOVE ||
             source->type == UI_NATIVE_EVENT_POINTER_BUTTON) &&
-        (process->manifest.capabilities & SAPOTE_CAP_INPUT) == 0U) {
+        (process->manifest.capabilities & PHIPIA_CAP_INPUT) == 0U) {
         return;
     }
     window = &process->window;
     zero_bytes(&event, sizeof(event));
     event.size = sizeof(event);
-    event.version = SAPOTE_ABI_VERSION;
+    event.version = PHIPIA_ABI_VERSION;
     event.monotonic_ns = source->monotonic_ns;
     event.x = source->x;
     event.y = source->y;
@@ -4011,26 +4011,26 @@ static void native_ui_event(
     event.modifiers = source->modifiers;
     switch (source->type) {
     case UI_NATIVE_EVENT_KEY:
-        event.type = SAPOTE_EVENT_KEY;
+        event.type = PHIPIA_EVENT_KEY;
         break;
     case UI_NATIVE_EVENT_POINTER_MOVE:
-        event.type = SAPOTE_EVENT_POINTER_MOVE;
+        event.type = PHIPIA_EVENT_POINTER_MOVE;
         break;
     case UI_NATIVE_EVENT_POINTER_BUTTON:
-        event.type = SAPOTE_EVENT_POINTER_BUTTON;
+        event.type = PHIPIA_EVENT_POINTER_BUTTON;
         break;
     case UI_NATIVE_EVENT_FOCUS:
-        event.type = SAPOTE_EVENT_FOCUS;
+        event.type = PHIPIA_EVENT_FOCUS;
         break;
     case UI_NATIVE_EVENT_CLOSE:
-        event.type = SAPOTE_EVENT_CLOSE;
+        event.type = PHIPIA_EVENT_CLOSE;
         break;
     default:
         return;
     }
-    if (event.type == SAPOTE_EVENT_POINTER_MOVE && window->event_count != 0U &&
+    if (event.type == PHIPIA_EVENT_POINTER_MOVE && window->event_count != 0U &&
         window->events[window->event_count - 1U].type ==
-            SAPOTE_EVENT_POINTER_MOVE) {
+            PHIPIA_EVENT_POINTER_MOVE) {
         window->events[window->event_count - 1U] = event;
         return;
     }
@@ -4038,7 +4038,7 @@ static void native_ui_event(
         size_t remove = 0U;
 
         for (size_t index = 0U; index < window->event_count; ++index) {
-            if (window->events[index].type == SAPOTE_EVENT_POINTER_MOVE) {
+            if (window->events[index].type == PHIPIA_EVENT_POINTER_MOVE) {
                 remove = index;
                 break;
             }
@@ -4059,48 +4059,48 @@ static int64_t syscall_window_create(
     uint64_t response_address
 )
 {
-    struct sapote_window_create_request request;
-    struct sapote_window_create_response response = {
-        sizeof(response), SAPOTE_ABI_VERSION, SAPOTE_HANDLE_INVALID,
-        SAPOTE_HANDLE_INVALID, 0U, 0U, 0U, 0U, SAPOTE_PIXEL_XRGB8888
+    struct phipia_window_create_request request;
+    struct phipia_window_create_response response = {
+        sizeof(response), PHIPIA_ABI_VERSION, PHIPIA_HANDLE_INVALID,
+        PHIPIA_HANDLE_INVALID, 0U, 0U, 0U, 0U, PHIPIA_PIXEL_XRGB8888
     };
     struct native_resource window_resource = {{0U, 0U, 0U, 0U}};
     struct native_resource event_resource = {{0U, 0U, 0U, 0U}};
     struct native_window_state *window = &process->window;
-    char title[SAPOTE_WINDOW_TITLE_MAX + 1U];
+    char title[PHIPIA_WINDOW_TITLE_MAX + 1U];
     uint64_t byte_length;
     size_t page_count;
-    sapote_handle_t window_handle;
-    sapote_handle_t event_handle;
+    phipia_handle_t window_handle;
+    phipia_handle_t event_handle;
 
-    if ((process->manifest.capabilities & SAPOTE_CAP_WINDOW) == 0U) {
-        return -SAPOTE_EACCES;
+    if ((process->manifest.capabilities & PHIPIA_CAP_WINDOW) == 0U) {
+        return -PHIPIA_EACCES;
     }
     if (!copy_from_user(process, &request, request_address,
             sizeof(request)) ||
         !validate_user_range(process, response_address, sizeof(response),
             true)) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
+        request.version != PHIPIA_ABI_VERSION || request.flags != 0U ||
         request.reserved != 0U || request.title_length == 0U ||
-        request.title_length > SAPOTE_WINDOW_TITLE_MAX ||
+        request.title_length > PHIPIA_WINDOW_TITLE_MAX ||
         request.width < 64U || request.width > NATIVE_SURFACE_MAX_WIDTH ||
         request.height < 64U || request.height > NATIVE_SURFACE_MAX_HEIGHT ||
-        request.pixel_format != SAPOTE_PIXEL_XRGB8888 || window->allocated ||
+        request.pixel_format != PHIPIA_PIXEL_XRGB8888 || window->allocated ||
         !copy_from_user(process, title, request.title,
             request.title_length)) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     for (size_t index = 0U; index < request.title_length; ++index) {
         if (title[index] < ' ' || title[index] > '~') {
-            return -SAPOTE_EINVAL;
+            return -PHIPIA_EINVAL;
         }
     }
     title[request.title_length] = '\0';
     if (request.width > UINT32_MAX / SURFACE_BYTES_PER_PIXEL) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     window->stride_bytes = request.width * SURFACE_BYTES_PER_PIXEL;
     byte_length = (uint64_t)window->stride_bytes * request.height;
@@ -4110,7 +4110,7 @@ static int64_t syscall_window_create(
             (size_t)((byte_length + PAGING_PAGE_SIZE - 1U) /
                 PAGING_PAGE_SIZE)) {
         zero_bytes(window, sizeof(*window));
-        return -SAPOTE_ENOMEM;
+        return -PHIPIA_ENOMEM;
     }
     window->allocated = true;
     window->window_object_open = true;
@@ -4126,7 +4126,7 @@ static int64_t syscall_window_create(
     if (heap_allocate(window->surface_bytes,
             (void **)&window->shadow_pixels) != HEAP_STATUS_OK) {
         zero_bytes(window, sizeof(*window));
-        return -SAPOTE_ENOMEM;
+        return -PHIPIA_ENOMEM;
     }
     zero_bytes(window->shadow_pixels, window->surface_bytes);
     page_count = (window->surface_bytes + PAGING_PAGE_SIZE - 1U) /
@@ -4142,24 +4142,24 @@ static int64_t syscall_window_create(
                 PAGING_PROCESS_MAPPING_NATIVE_SURFACE, address,
                 physical_address, PAGING_WRITE) != PAGING_STATUS_OK) {
             (void)window_release_surface(process);
-            return -SAPOTE_ENOMEM;
+            return -PHIPIA_ENOMEM;
         }
         page_at(process, address)->mapped = true;
     }
     window_resource.words[0] = window->ui_slot;
     window_resource.words[1] = window->generation;
-    if (native_handle_install(&process->handles, SAPOTE_HANDLE_WINDOW,
+    if (native_handle_install(&process->handles, PHIPIA_HANDLE_WINDOW,
             &window_resource, &window_handle) != NATIVE_HANDLE_OK) {
         (void)window_release_surface(process);
-        return -SAPOTE_ENOMEM;
+        return -PHIPIA_ENOMEM;
     }
     event_resource.words[0] = window->ui_slot;
     event_resource.words[1] = window->generation;
-    if (native_handle_install(&process->handles, SAPOTE_HANDLE_EVENT_QUEUE,
+    if (native_handle_install(&process->handles, PHIPIA_HANDLE_EVENT_QUEUE,
             &event_resource, &event_handle) != NATIVE_HANDLE_OK) {
         (void)native_handle_close(&process->handles, window_handle,
             close_resource, process);
-        return -SAPOTE_ENOMEM;
+        return -PHIPIA_ENOMEM;
     }
     window->event_object_open = true;
     const enum ui_status ui_status = ui_native_window_open(window->ui_slot,
@@ -4167,14 +4167,14 @@ static int64_t syscall_window_create(
         window->stride_bytes, native_ui_event, process);
 
     if (ui_status != UI_STATUS_OK) {
-        console_write("Sapote: native window open failed: ");
+        console_write("Phipia: native window open failed: ");
         console_write(ui_status_string(ui_status));
         console_write("\n");
         (void)native_handle_close(&process->handles, event_handle,
             close_resource, process);
         (void)native_handle_close(&process->handles, window_handle,
             close_resource, process);
-        return -SAPOTE_EIO;
+        return -PHIPIA_EIO;
     }
     window->visible = true;
     response.window = window_handle;
@@ -4189,7 +4189,7 @@ static int64_t syscall_window_create(
             close_resource, process);
         (void)native_handle_close(&process->handles, window_handle,
             close_resource, process);
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (process->handles.active_handles > process->peak_handles) {
         process->peak_handles = process->handles.active_handles;
@@ -4202,39 +4202,39 @@ static int64_t syscall_surface_present(
     uint64_t request_address
 )
 {
-    struct sapote_present_request request;
-    struct sapote_rect rectangles[SAPOTE_DAMAGE_MAX];
-    struct ui_rect damage[SAPOTE_DAMAGE_MAX];
+    struct phipia_present_request request;
+    struct phipia_rect rectangles[PHIPIA_DAMAGE_MAX];
+    struct ui_rect damage[PHIPIA_DAMAGE_MAX];
     struct native_resource *resource;
     struct native_window_state *window = &process->window;
     uint64_t pixel_count = 0U;
 
     if (!copy_from_user(process, &request, request_address,
             sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
+        request.version != PHIPIA_ABI_VERSION || request.flags != 0U ||
         request.rectangle_count == 0U ||
-        request.rectangle_count > SAPOTE_DAMAGE_MAX ||
+        request.rectangle_count > PHIPIA_DAMAGE_MAX ||
         !copy_from_user(process, rectangles, request.rectangles,
             request.rectangle_count * sizeof(rectangles[0]))) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     if (native_handle_resolve(&process->handles, request.window,
-            SAPOTE_HANDLE_WINDOW, &resource) != NATIVE_HANDLE_OK ||
+            PHIPIA_HANDLE_WINDOW, &resource) != NATIVE_HANDLE_OK ||
         !window->allocated || !window->window_object_open ||
         resource->words[1] != window->generation) {
-        return -SAPOTE_EBADF;
+        return -PHIPIA_EBADF;
     }
     for (size_t index = 0U; index < request.rectangle_count; ++index) {
-        const struct sapote_rect rectangle = rectangles[index];
+        const struct phipia_rect rectangle = rectangles[index];
 
         if (rectangle.width == 0U || rectangle.height == 0U ||
             rectangle.x >= window->width || rectangle.y >= window->height ||
             rectangle.width > window->width - rectangle.x ||
             rectangle.height > window->height - rectangle.y) {
-            return -SAPOTE_EINVAL;
+            return -PHIPIA_EINVAL;
         }
         for (uint32_t row = 0U; row < rectangle.height; ++row) {
             const uint64_t address = window->surface_address +
@@ -4244,7 +4244,7 @@ static int64_t syscall_surface_present(
             if (!validate_user_range(process, address,
                     (size_t)rectangle.width * SURFACE_BYTES_PER_PIXEL,
                     false)) {
-                return -SAPOTE_EFAULT;
+                return -PHIPIA_EFAULT;
             }
         }
         damage[index] = (struct ui_rect){ rectangle.x, rectangle.y,
@@ -4252,7 +4252,7 @@ static int64_t syscall_surface_present(
         pixel_count += (uint64_t)rectangle.width * rectangle.height;
     }
     for (size_t index = 0U; index < request.rectangle_count; ++index) {
-        const struct sapote_rect rectangle = rectangles[index];
+        const struct phipia_rect rectangle = rectangles[index];
 
         for (uint32_t row = 0U; row < rectangle.height; ++row) {
             uint32_t completed = 0U;
@@ -4271,7 +4271,7 @@ static int64_t syscall_surface_present(
                 }
                 if (!copy_from_user(process, process->transfer, address,
                         (size_t)pixels * SURFACE_BYTES_PER_PIXEL)) {
-                    return -SAPOTE_EFAULT;
+                    return -PHIPIA_EFAULT;
                 }
                 for (uint32_t pixel = 0U; pixel < pixels; ++pixel) {
                     const size_t offset = (size_t)pixel * 4U;
@@ -4293,7 +4293,7 @@ static int64_t syscall_surface_present(
     }
     if (ui_native_window_damage(window->ui_slot, damage,
             request.rectangle_count) != UI_STATUS_OK) {
-        return -SAPOTE_EIO;
+        return -PHIPIA_EIO;
     }
     ++window->present_calls;
     window->presented_pixels += pixel_count;
@@ -4302,37 +4302,37 @@ static int64_t syscall_surface_present(
 
 static int64_t syscall_event_read(
     struct native_process *process,
-    sapote_handle_t handle,
+    phipia_handle_t handle,
     uint64_t output_address
 )
 {
     struct native_resource *resource;
-    struct sapote_event event;
+    struct phipia_event event;
     struct native_window_state *window = &process->window;
     enum native_handle_status status;
 
     if (!validate_user_range(process, output_address, sizeof(event), true)) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     status = native_handle_resolve(&process->handles, handle,
-        SAPOTE_HANDLE_EVENT_QUEUE, &resource);
+        PHIPIA_HANDLE_EVENT_QUEUE, &resource);
     if (status != NATIVE_HANDLE_OK) {
         return handle_error(status);
     }
     if (!window->allocated || !window->event_object_open ||
         resource->words[1] != window->generation) {
-        return -SAPOTE_ESTALE;
+        return -PHIPIA_ESTALE;
     }
     if (window->overflow_pending) {
         zero_bytes(&event, sizeof(event));
         event.size = sizeof(event);
-        event.version = SAPOTE_ABI_VERSION;
-        event.type = SAPOTE_EVENT_QUEUE_OVERFLOW;
+        event.version = PHIPIA_ABI_VERSION;
+        event.type = PHIPIA_EVENT_QUEUE_OVERFLOW;
         event.monotonic_ns = clock_monotonic_ns();
         window->overflow_pending = false;
     } else {
         if (window->event_count == 0U) {
-            return -SAPOTE_EAGAIN;
+            return -PHIPIA_EAGAIN;
         }
         event = window->events[0];
         for (size_t index = 1U; index < window->event_count; ++index) {
@@ -4341,31 +4341,31 @@ static int64_t syscall_event_read(
         --window->event_count;
     }
     return copy_to_user(process, output_address, &event, sizeof(event)) ?
-        1 : -SAPOTE_EFAULT;
+        1 : -PHIPIA_EFAULT;
 }
 
 static int64_t syscall_pointer_capture(
     struct native_process *process,
-    sapote_handle_t handle,
+    phipia_handle_t handle,
     uint64_t capture
 )
 {
     struct native_resource *resource;
     enum native_handle_status status;
 
-    if ((process->manifest.capabilities & SAPOTE_CAP_INPUT) == 0U) {
-        return -SAPOTE_EACCES;
+    if ((process->manifest.capabilities & PHIPIA_CAP_INPUT) == 0U) {
+        return -PHIPIA_EACCES;
     }
     if (capture > 1U) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     status = native_handle_resolve(&process->handles, handle,
-        SAPOTE_HANDLE_WINDOW, &resource);
+        PHIPIA_HANDLE_WINDOW, &resource);
     if (status != NATIVE_HANDLE_OK) {
         return handle_error(status);
     }
     return ui_native_pointer_capture((uint32_t)resource->words[0],
-        capture != 0U) == UI_STATUS_OK ? 0 : -SAPOTE_EBUSY;
+        capture != 0U) == UI_STATUS_OK ? 0 : -PHIPIA_EBUSY;
 }
 
 static int64_t syscall_dns_resolve(
@@ -4380,18 +4380,18 @@ static int64_t syscall_dns_resolve(
     uint32_t address;
     enum network_status status;
 
-    if ((process->manifest.capabilities & SAPOTE_CAP_NETWORK) == 0U) {
-        return -SAPOTE_EACCES;
+    if ((process->manifest.capabilities & PHIPIA_CAP_NETWORK) == 0U) {
+        return -PHIPIA_EACCES;
     }
     if (hostname_length == 0U || hostname_length > NETWORK_MAX_HOSTNAME ||
         !copy_from_user(process, hostname, hostname_address,
             hostname_length)) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     for (size_t index = 0U; index < hostname_length; ++index) {
         if (hostname[index] == '\0' ||
             (uint8_t)hostname[index] > UINT8_C(0x7F)) {
-            return -SAPOTE_EINVAL;
+            return -PHIPIA_EINVAL;
         }
     }
     hostname[hostname_length] = '\0';
@@ -4412,12 +4412,12 @@ static int64_t syscall_network_open(
 {
     network_handle network = 0U;
     struct native_resource resource = {{0U, 0U, 0U, 0U}};
-    sapote_handle_t handle;
+    phipia_handle_t handle;
     enum network_status status;
     enum native_handle_status handle_status;
 
-    if ((process->manifest.capabilities & SAPOTE_CAP_NETWORK) == 0U) {
-        return -SAPOTE_EACCES;
+    if ((process->manifest.capabilities & PHIPIA_CAP_NETWORK) == 0U) {
+        return -PHIPIA_EACCES;
     }
     cpu_interrupt_enable();
     status = datagram ? network_udp_open(process->generation, &network) :
@@ -4428,7 +4428,7 @@ static int64_t syscall_network_open(
     }
     resource.words[0] = network;
     handle_status = native_handle_install(&process->handles,
-        datagram ? SAPOTE_HANDLE_DATAGRAM : SAPOTE_HANDLE_STREAM,
+        datagram ? PHIPIA_HANDLE_DATAGRAM : PHIPIA_HANDLE_STREAM,
         &resource, &handle);
     if (handle_status != NATIVE_HANDLE_OK) {
         cpu_interrupt_enable();
@@ -4444,12 +4444,12 @@ static int64_t syscall_network_open(
 
 static int64_t syscall_stream_connect(
     struct native_process *process,
-    sapote_handle_t handle,
+    phipia_handle_t handle,
     uint64_t endpoint_address,
     uint64_t deadline
 )
 {
-    struct sapote_ipv4_endpoint endpoint;
+    struct phipia_ipv4_endpoint endpoint;
     struct native_resource *resource;
     uint64_t timeout;
     enum native_handle_status handle_status;
@@ -4457,14 +4457,14 @@ static int64_t syscall_stream_connect(
 
     if (!copy_from_user(process, &endpoint, endpoint_address,
             sizeof(endpoint))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (endpoint.reserved != 0U || endpoint.address == 0U ||
         endpoint.port == 0U) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     handle_status = native_handle_resolve(&process->handles, handle,
-        SAPOTE_HANDLE_STREAM, &resource);
+        PHIPIA_HANDLE_STREAM, &resource);
     if (handle_status != NATIVE_HANDLE_OK) {
         return handle_error(handle_status);
     }
@@ -4485,7 +4485,7 @@ static int64_t syscall_network_io(
     bool write
 )
 {
-    struct sapote_network_io request;
+    struct phipia_network_io request;
     struct native_resource *resource;
     uint64_t timeout;
     size_t transferred = 0U;
@@ -4496,26 +4496,26 @@ static int64_t syscall_network_io(
 
     if (!copy_from_user(process, &request, request_address,
             sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
+        request.version != PHIPIA_ABI_VERSION || request.flags != 0U ||
         request.endpoint.reserved != 0U || request.length == 0U ||
         request.length > (datagram ? NETWORK_MAX_UDP_DATAGRAM :
             sizeof(process->transfer)) ||
         !validate_user_range(process, request.buffer, request.length, !write) ||
         (!write && datagram && !validate_user_range(process, request_address,
             sizeof(request), true))) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     handle_status = native_handle_resolve(&process->handles, request.handle,
-        datagram ? SAPOTE_HANDLE_DATAGRAM : SAPOTE_HANDLE_STREAM, &resource);
+        datagram ? PHIPIA_HANDLE_DATAGRAM : PHIPIA_HANDLE_STREAM, &resource);
     if (handle_status != NATIVE_HANDLE_OK) {
         return handle_error(handle_status);
     }
     if (write && !copy_from_user(process, process->transfer, request.buffer,
             request.length)) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     cpu_interrupt_enable();
     status = prepare_native_network(request.deadline_ns, &timeout);
@@ -4542,7 +4542,7 @@ static int64_t syscall_network_io(
     if (!write && transferred != 0U &&
         !copy_to_user(process, request.buffer, process->transfer,
             transferred)) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (!write && datagram) {
         request.endpoint.address = source;
@@ -4550,7 +4550,7 @@ static int64_t syscall_network_io(
         request.length = (uint32_t)transferred;
         if (!copy_to_user(process, request_address, &request,
                 sizeof(request))) {
-            return -SAPOTE_EFAULT;
+            return -PHIPIA_EFAULT;
         }
     }
     return (int64_t)transferred;
@@ -4558,13 +4558,13 @@ static int64_t syscall_network_io(
 
 static int64_t syscall_datagram_bind(
     struct native_process *process,
-    sapote_handle_t handle,
+    phipia_handle_t handle,
     uint16_t port
 )
 {
     struct native_resource *resource;
     enum native_handle_status handle_status = native_handle_resolve(
-        &process->handles, handle, SAPOTE_HANDLE_DATAGRAM, &resource);
+        &process->handles, handle, PHIPIA_HANDLE_DATAGRAM, &resource);
 
     if (handle_status != NATIVE_HANDLE_OK) {
         return handle_error(handle_status);
@@ -4578,7 +4578,7 @@ static int64_t syscall_datagram_bind(
 
 static int64_t syscall_stream_shutdown(
     struct native_process *process,
-    sapote_handle_t handle,
+    phipia_handle_t handle,
     uint32_t flags,
     uint64_t deadline
 )
@@ -4587,13 +4587,13 @@ static int64_t syscall_stream_shutdown(
     uint64_t timeout;
     enum native_handle_status handle_status;
 
-    if ((flags & ~(SAPOTE_SHUTDOWN_READ | SAPOTE_SHUTDOWN_WRITE)) != 0U ||
-        (flags & SAPOTE_SHUTDOWN_WRITE) == 0U ||
+    if ((flags & ~(PHIPIA_SHUTDOWN_READ | PHIPIA_SHUTDOWN_WRITE)) != 0U ||
+        (flags & PHIPIA_SHUTDOWN_WRITE) == 0U ||
         !deadline_timeout(deadline, &timeout)) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     handle_status = native_handle_resolve(&process->handles, handle,
-        SAPOTE_HANDLE_STREAM, &resource);
+        PHIPIA_HANDLE_STREAM, &resource);
     if (handle_status != NATIVE_HANDLE_OK) {
         return handle_error(handle_status);
     }
@@ -4606,20 +4606,20 @@ static int64_t syscall_stream_shutdown(
 
 static int64_t syscall_network_address(
     struct native_process *process,
-    sapote_handle_t handle,
+    phipia_handle_t handle,
     bool peer,
     uint64_t output_address
 )
 {
     struct native_resource *resource;
-    struct sapote_ipv4_endpoint endpoint = {0U, 0U, 0U};
+    struct phipia_ipv4_endpoint endpoint = {0U, 0U, 0U};
     uint32_t address = 0U;
     uint16_t port = 0U;
     enum native_handle_status handle_status;
     enum network_status status;
 
     if (!validate_user_range(process, output_address, sizeof(endpoint), true)) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     handle_status = native_handle_resolve(&process->handles, handle, 0U,
         &resource);
@@ -4628,8 +4628,8 @@ static int64_t syscall_network_address(
     }
     const uint8_t type = (uint8_t)((handle >> 16U) & UINT64_C(0xFF));
 
-    if (type != SAPOTE_HANDLE_STREAM && type != SAPOTE_HANDLE_DATAGRAM) {
-        return -SAPOTE_EBADF;
+    if (type != PHIPIA_HANDLE_STREAM && type != PHIPIA_HANDLE_DATAGRAM) {
+        return -PHIPIA_EBADF;
     }
     cpu_interrupt_enable();
     status = network_address(process->generation, resource->words[0], peer,
@@ -4641,18 +4641,18 @@ static int64_t syscall_network_address(
     endpoint.address = address;
     endpoint.port = port;
     return copy_to_user(process, output_address, &endpoint, sizeof(endpoint)) ?
-        0 : -SAPOTE_EFAULT;
+        0 : -PHIPIA_EFAULT;
 }
 
 static int64_t syscall_audio_open(struct native_process *process)
 {
     struct native_resource resource = {{0U, 0U, 0U, 0U}};
-    sapote_handle_t handle;
+    phipia_handle_t handle;
     enum audio_native_status audio_status;
     enum native_handle_status handle_status;
 
-    if ((process->manifest.capabilities & SAPOTE_CAP_AUDIO) == 0U) {
-        return -SAPOTE_EACCES;
+    if ((process->manifest.capabilities & PHIPIA_CAP_AUDIO) == 0U) {
+        return -PHIPIA_EACCES;
     }
     audio_status = audio_native_open(process->generation,
         &resource.words[0]);
@@ -4660,7 +4660,7 @@ static int64_t syscall_audio_open(struct native_process *process)
         return audio_error(audio_status);
     }
     handle_status = native_handle_install(&process->handles,
-        SAPOTE_HANDLE_AUDIO_OUTPUT, &resource, &handle);
+        PHIPIA_HANDLE_AUDIO_OUTPUT, &resource, &handle);
     if (handle_status != NATIVE_HANDLE_OK) {
         (void)audio_native_close(process->generation, resource.words[0]);
         return handle_error(handle_status);
@@ -4676,28 +4676,28 @@ static int64_t syscall_audio_submit(
     uint64_t request_address
 )
 {
-    struct sapote_audio_submit_request request;
+    struct phipia_audio_submit_request request;
     struct native_resource *resource;
     enum native_handle_status handle_status;
     enum audio_native_status audio_status;
 
     if (!copy_from_user(process, &request, request_address,
             sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
-        request.length != SAPOTE_AUDIO_CHUNK_BYTES) {
-        return -SAPOTE_EINVAL;
+        request.version != PHIPIA_ABI_VERSION || request.flags != 0U ||
+        request.length != PHIPIA_AUDIO_CHUNK_BYTES) {
+        return -PHIPIA_EINVAL;
     }
     handle_status = native_handle_resolve(&process->handles, request.handle,
-        SAPOTE_HANDLE_AUDIO_OUTPUT, &resource);
+        PHIPIA_HANDLE_AUDIO_OUTPUT, &resource);
     if (handle_status != NATIVE_HANDLE_OK) {
         return handle_error(handle_status);
     }
     if (!copy_from_user(process, process->transfer, request.buffer,
             request.length)) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     audio_status = audio_native_submit(process->generation,
         resource->words[0], (const int16_t *)(const void *)process->transfer,
@@ -4711,23 +4711,23 @@ static int64_t syscall_audio_volume(
     uint64_t request_address
 )
 {
-    struct sapote_audio_volume_request request;
+    struct phipia_audio_volume_request request;
     struct native_resource *resource;
     enum native_handle_status handle_status;
 
     if (!copy_from_user(process, &request, request_address,
             sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
+        request.version != PHIPIA_ABI_VERSION || request.flags != 0U ||
         request.reserved != 0U ||
-        request.left_q15 > SAPOTE_AUDIO_VOLUME_MAX ||
-        request.right_q15 > SAPOTE_AUDIO_VOLUME_MAX) {
-        return -SAPOTE_EINVAL;
+        request.left_q15 > PHIPIA_AUDIO_VOLUME_MAX ||
+        request.right_q15 > PHIPIA_AUDIO_VOLUME_MAX) {
+        return -PHIPIA_EINVAL;
     }
     handle_status = native_handle_resolve(&process->handles, request.handle,
-        SAPOTE_HANDLE_AUDIO_OUTPUT, &resource);
+        PHIPIA_HANDLE_AUDIO_OUTPUT, &resource);
     if (handle_status != NATIVE_HANDLE_OK) {
         return handle_error(handle_status);
     }
@@ -4737,37 +4737,37 @@ static int64_t syscall_audio_volume(
 
 static int64_t syscall_audio_drain(
     struct native_process *process,
-    sapote_handle_t handle,
+    phipia_handle_t handle,
     uint64_t deadline_ns
 )
 {
     struct native_resource *resource;
     struct native_thread *thread = running_thread(process);
     const enum native_handle_status handle_status = native_handle_resolve(
-        &process->handles, handle, SAPOTE_HANDLE_AUDIO_OUTPUT, &resource);
+        &process->handles, handle, PHIPIA_HANDLE_AUDIO_OUTPUT, &resource);
     enum audio_native_drain_state state;
 
     if (handle_status != NATIVE_HANDLE_OK) {
         return handle_error(handle_status);
     }
     if (thread == NULL) {
-        return -SAPOTE_EIO;
+        return -PHIPIA_EIO;
     }
     state = audio_native_drain(process->generation, resource->words[0]);
     if (state == AUDIO_NATIVE_DRAIN_COMPLETE) {
         return 0;
     }
     if (state == AUDIO_NATIVE_DRAIN_CANCELED) {
-        return -SAPOTE_ECANCELED;
+        return -PHIPIA_ECANCELED;
     }
     if (state == AUDIO_NATIVE_DRAIN_ERROR) {
-        return -SAPOTE_EIO;
+        return -PHIPIA_EIO;
     }
     if (state == AUDIO_NATIVE_DRAIN_STALE) {
-        return -SAPOTE_ESTALE;
+        return -PHIPIA_ESTALE;
     }
     if (deadline_ns != 0U && deadline_ns <= clock_monotonic_ns()) {
-        return -SAPOTE_ETIMEDOUT;
+        return -PHIPIA_ETIMEDOUT;
     }
     thread->audio_token = resource->words[0];
     thread->deadline_ns = deadline_ns;
@@ -4779,14 +4779,14 @@ static int64_t syscall_package_upload_open(struct native_process *process)
 {
     struct package_upload_report report;
     struct native_resource resource = {{0U, 0U, 0U, 0U}};
-    sapote_handle_t handle;
+    phipia_handle_t handle;
 
-    if ((process->manifest.capabilities & SAPOTE_CAP_PACKAGES) == 0U) {
-        return -SAPOTE_EACCES;
+    if ((process->manifest.capabilities & PHIPIA_CAP_PACKAGES) == 0U) {
+        return -PHIPIA_EACCES;
     }
     if (process->handles.active_handles >= process->handles.limit ||
         process->handles.active_objects >= process->handles.limit) {
-        return -SAPOTE_ENOMEM;
+        return -PHIPIA_ENOMEM;
     }
     cpu_interrupt_enable();
     enum package_upload_status upload_status = package_upload_open(
@@ -4801,7 +4801,7 @@ static int64_t syscall_package_upload_open(struct native_process *process)
     }
     resource.words[0] = report.token;
     enum native_handle_status handle_status = native_handle_install(
-        &process->handles, SAPOTE_HANDLE_PACKAGE_UPLOAD, &resource, &handle);
+        &process->handles, PHIPIA_HANDLE_PACKAGE_UPLOAD, &resource, &handle);
 
     if (handle_status != NATIVE_HANDLE_OK) {
         cpu_interrupt_enable();
@@ -4820,29 +4820,29 @@ static int64_t syscall_package_upload_write(
     uint64_t request_address
 )
 {
-    struct sapote_package_upload_write_request request;
+    struct phipia_package_upload_write_request request;
     struct package_upload_report report;
     struct native_resource *resource;
     size_t written = 0U;
 
-    if ((process->manifest.capabilities & SAPOTE_CAP_PACKAGES) == 0U) {
-        return -SAPOTE_EACCES;
+    if ((process->manifest.capabilities & PHIPIA_CAP_PACKAGES) == 0U) {
+        return -PHIPIA_EACCES;
     }
     if (!copy_from_user(process, &request, request_address,
             sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
-        request.length > SAPOTE_PACKAGE_UPLOAD_WRITE_MAX) {
-        return -SAPOTE_EINVAL;
+        request.version != PHIPIA_ABI_VERSION || request.flags != 0U ||
+        request.length > PHIPIA_PACKAGE_UPLOAD_WRITE_MAX) {
+        return -PHIPIA_EINVAL;
     }
     if (request.length != 0U && !copy_from_user(process, process->transfer,
             request.buffer, request.length)) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     enum native_handle_status handle_status = native_handle_resolve(
-        &process->handles, request.handle, SAPOTE_HANDLE_PACKAGE_UPLOAD,
+        &process->handles, request.handle, PHIPIA_HANDLE_PACKAGE_UPLOAD,
         &resource);
 
     if (handle_status != NATIVE_HANDLE_OK) {
@@ -4862,31 +4862,31 @@ static int64_t syscall_package_upload_seal(
     uint64_t request_address
 )
 {
-    struct sapote_package_upload_seal_request request;
+    struct phipia_package_upload_seal_request request;
     struct package_upload_report report;
     struct native_resource *resource;
 
-    if ((process->manifest.capabilities & SAPOTE_CAP_PACKAGES) == 0U) {
-        return -SAPOTE_EACCES;
+    if ((process->manifest.capabilities & PHIPIA_CAP_PACKAGES) == 0U) {
+        return -PHIPIA_EACCES;
     }
     if (!validate_user_range(process, request_address, sizeof(request), true) ||
         !copy_from_user(process, &request, request_address, sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.expected_bytes == 0U ||
-        request.expected_bytes > SAPOTE_PACKAGE_UPLOAD_MAX_BYTES ||
+        request.version != PHIPIA_ABI_VERSION || request.expected_bytes == 0U ||
+        request.expected_bytes > PHIPIA_PACKAGE_UPLOAD_MAX_BYTES ||
         request.actual_bytes != 0U || request.result_flags != 0U ||
         request.reserved != 0U) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     for (size_t index = 0U; index < sizeof(request.actual_sha256); ++index) {
         if (request.actual_sha256[index] != 0U) {
-            return -SAPOTE_EINVAL;
+            return -PHIPIA_EINVAL;
         }
     }
     enum native_handle_status handle_status = native_handle_resolve(
-        &process->handles, request.handle, SAPOTE_HANDLE_PACKAGE_UPLOAD,
+        &process->handles, request.handle, PHIPIA_HANDLE_PACKAGE_UPLOAD,
         &resource);
 
     if (handle_status != NATIVE_HANDLE_OK) {
@@ -4902,13 +4902,13 @@ static int64_t syscall_package_upload_seal(
         request.actual_sha256[index] = report.sha256[index];
     }
     if (report.sealed) {
-        request.result_flags |= SAPOTE_PACKAGE_UPLOAD_SEALED;
+        request.result_flags |= PHIPIA_PACKAGE_UPLOAD_SEALED;
     }
     if (report.durable) {
-        request.result_flags |= SAPOTE_PACKAGE_UPLOAD_DURABLE;
+        request.result_flags |= PHIPIA_PACKAGE_UPLOAD_DURABLE;
     }
     if (!copy_to_user(process, request_address, &request, sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     return package_upload_error(upload_status, report.filesystem_status);
 }
@@ -4918,41 +4918,41 @@ static int64_t syscall_package_control_open_install(
     uint64_t request_address
 )
 {
-    struct sapote_package_control_open_request request;
+    struct phipia_package_control_open_request request;
     struct package_control_report report;
     struct native_resource *upload;
     struct native_resource resource = {{0U, 0U, 0U, 0U}};
-    sapote_handle_t handle;
+    phipia_handle_t handle;
 
-    if ((process->manifest.capabilities & SAPOTE_CAP_PACKAGES) == 0U) {
-        return -SAPOTE_EACCES;
+    if ((process->manifest.capabilities & PHIPIA_CAP_PACKAGES) == 0U) {
+        return -PHIPIA_EACCES;
     }
     if (!validate_user_range(process, request_address, sizeof(request), true) ||
         !copy_from_user(process, &request, request_address, sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
+        request.version != PHIPIA_ABI_VERSION || request.flags != 0U ||
         request.identifier_bytes == 0U ||
-        request.identifier_bytes >= SAPOTE_PACKAGE_CONTROL_TEXT_BYTES ||
+        request.identifier_bytes >= PHIPIA_PACKAGE_CONTROL_TEXT_BYTES ||
         request.repository_version != 0U || request.generation != 0U ||
         request.plan_count != 0U || request.result_flags != 0U) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     if (!copy_from_user(process, process->transfer, request.identifier,
             request.identifier_bytes)) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     enum native_handle_status handle_status = native_handle_resolve(
         &process->handles, request.repository_upload,
-        SAPOTE_HANDLE_PACKAGE_UPLOAD, &upload);
+        PHIPIA_HANDLE_PACKAGE_UPLOAD, &upload);
 
     if (handle_status != NATIVE_HANDLE_OK) {
         return handle_error(handle_status);
     }
     if (process->handles.active_handles >= process->handles.limit ||
         process->handles.active_objects >= process->handles.limit) {
-        return -SAPOTE_ENOMEM;
+        return -PHIPIA_ENOMEM;
     }
     cpu_interrupt_enable();
     enum package_control_status control_status = package_control_open_install(
@@ -4964,7 +4964,7 @@ static int64_t syscall_package_control_open_install(
     }
     resource.words[0] = report.token;
     handle_status = native_handle_install(&process->handles,
-        SAPOTE_HANDLE_PACKAGE_CONTROL, &resource, &handle);
+        PHIPIA_HANDLE_PACKAGE_CONTROL, &resource, &handle);
     if (handle_status != NATIVE_HANDLE_OK) {
         cpu_interrupt_enable();
         (void)package_control_close(process->generation, report.token, &report);
@@ -4980,7 +4980,7 @@ static int64_t syscall_package_control_open_install(
         (void)native_handle_close(&process->handles, handle, close_resource,
             process);
         cpu_interrupt_disable();
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (process->handles.active_handles > process->peak_handles) {
         process->peak_handles = process->handles.active_handles;
@@ -4993,21 +4993,21 @@ static int64_t syscall_package_control_item(
     uint64_t request_address
 )
 {
-    struct sapote_package_control_item_request request;
+    struct phipia_package_control_item_request request;
     struct package_control_item item;
     struct package_control_report report;
     struct native_resource *control;
 
-    if ((process->manifest.capabilities & SAPOTE_CAP_PACKAGES) == 0U) {
-        return -SAPOTE_EACCES;
+    if ((process->manifest.capabilities & PHIPIA_CAP_PACKAGES) == 0U) {
+        return -PHIPIA_EACCES;
     }
     if (!validate_user_range(process, request_address, sizeof(request), true) ||
         !copy_from_user(process, &request, request_address, sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
-        request.index >= SAPOTE_PACKAGE_CONTROL_PLAN_MAX ||
+        request.version != PHIPIA_ABI_VERSION || request.flags != 0U ||
+        request.index >= PHIPIA_PACKAGE_CONTROL_PLAN_MAX ||
         request.package_bytes != 0U || request.identifier_bytes != 0U ||
         request.version_bytes != 0U || request.path_bytes != 0U ||
         request.reserved != 0U ||
@@ -5018,10 +5018,10 @@ static int64_t syscall_package_control_item(
             sizeof(request.package_version)) ||
         !bytes_are_zero(request.download_path,
             sizeof(request.download_path))) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     enum native_handle_status handle_status = native_handle_resolve(
-        &process->handles, request.control, SAPOTE_HANDLE_PACKAGE_CONTROL,
+        &process->handles, request.control, PHIPIA_HANDLE_PACKAGE_CONTROL,
         &control);
 
     if (handle_status != NATIVE_HANDLE_OK) {
@@ -5046,7 +5046,7 @@ static int64_t syscall_package_control_item(
     copy_bytes(request.download_path, item.download_path,
         sizeof(request.download_path));
     return copy_to_user(process, request_address, &request, sizeof(request)) ?
-        0 : -SAPOTE_EFAULT;
+        0 : -PHIPIA_EFAULT;
 }
 
 static int64_t syscall_package_control_attach(
@@ -5054,31 +5054,31 @@ static int64_t syscall_package_control_attach(
     uint64_t request_address
 )
 {
-    struct sapote_package_control_attach_request request;
+    struct phipia_package_control_attach_request request;
     struct package_control_report report;
     struct native_resource *control;
     struct native_resource *upload;
 
-    if ((process->manifest.capabilities & SAPOTE_CAP_PACKAGES) == 0U) {
-        return -SAPOTE_EACCES;
+    if ((process->manifest.capabilities & PHIPIA_CAP_PACKAGES) == 0U) {
+        return -PHIPIA_EACCES;
     }
     if (!validate_user_range(process, request_address, sizeof(request), true) ||
         !copy_from_user(process, &request, request_address, sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
-        request.index >= SAPOTE_PACKAGE_CONTROL_PLAN_MAX ||
+        request.version != PHIPIA_ABI_VERSION || request.flags != 0U ||
+        request.index >= PHIPIA_PACKAGE_CONTROL_PLAN_MAX ||
         request.attached_count != 0U || request.result_flags != 0U) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     enum native_handle_status handle_status = native_handle_resolve(
-        &process->handles, request.control, SAPOTE_HANDLE_PACKAGE_CONTROL,
+        &process->handles, request.control, PHIPIA_HANDLE_PACKAGE_CONTROL,
         &control);
 
     if (handle_status == NATIVE_HANDLE_OK) {
         handle_status = native_handle_resolve(&process->handles,
-            request.package_upload, SAPOTE_HANDLE_PACKAGE_UPLOAD, &upload);
+            request.package_upload, PHIPIA_HANDLE_PACKAGE_UPLOAD, &upload);
     }
     if (handle_status != NATIVE_HANDLE_OK) {
         return handle_error(handle_status);
@@ -5091,7 +5091,7 @@ static int64_t syscall_package_control_attach(
     request.attached_count = report.attached_count;
     request.result_flags = package_control_result_flags(&report);
     if (!copy_to_user(process, request_address, &request, sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     return package_control_error(control_status, &report);
 }
@@ -5101,26 +5101,26 @@ static int64_t syscall_package_control_commit(
     uint64_t request_address
 )
 {
-    struct sapote_package_control_commit_request request;
+    struct phipia_package_control_commit_request request;
     struct package_control_report report;
     struct native_resource *control;
 
-    if ((process->manifest.capabilities & SAPOTE_CAP_PACKAGES) == 0U) {
-        return -SAPOTE_EACCES;
+    if ((process->manifest.capabilities & PHIPIA_CAP_PACKAGES) == 0U) {
+        return -PHIPIA_EACCES;
     }
     if (!validate_user_range(process, request_address, sizeof(request), true) ||
         !copy_from_user(process, &request, request_address, sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
+        request.version != PHIPIA_ABI_VERSION || request.flags != 0U ||
         request.reserved != 0U || request.generation != 0U ||
         request.plan_count != 0U || request.attached_count != 0U ||
         request.result_flags != 0U || request.result_reserved != 0U) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     enum native_handle_status handle_status = native_handle_resolve(
-        &process->handles, request.control, SAPOTE_HANDLE_PACKAGE_CONTROL,
+        &process->handles, request.control, PHIPIA_HANDLE_PACKAGE_CONTROL,
         &control);
 
     if (handle_status != NATIVE_HANDLE_OK) {
@@ -5135,14 +5135,14 @@ static int64_t syscall_package_control_commit(
     request.attached_count = report.attached_count;
     request.result_flags = package_control_result_flags(&report);
     if (!copy_to_user(process, request_address, &request, sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     return package_control_error(control_status, &report);
 }
 
 static int64_t syscall_cancel(
     struct native_process *process,
-    sapote_handle_t handle
+    phipia_handle_t handle
 )
 {
     struct native_resource *resource;
@@ -5153,16 +5153,16 @@ static int64_t syscall_cancel(
     if (handle_status != NATIVE_HANDLE_OK) {
         return handle_error(handle_status);
     }
-    if (type == SAPOTE_HANDLE_TIMER) {
+    if (type == PHIPIA_HANDLE_TIMER) {
         resource->words[0] = 0U;
         return 0;
     }
-    if (type == SAPOTE_HANDLE_AUDIO_OUTPUT) {
+    if (type == PHIPIA_HANDLE_AUDIO_OUTPUT) {
         return audio_error(audio_native_cancel(process->generation,
             resource->words[0]));
     }
-    if (type != SAPOTE_HANDLE_STREAM && type != SAPOTE_HANDLE_DATAGRAM) {
-        return -SAPOTE_ENOTSUP;
+    if (type != PHIPIA_HANDLE_STREAM && type != PHIPIA_HANDLE_DATAGRAM) {
+        return -PHIPIA_ENOTSUP;
     }
     cpu_interrupt_enable();
     const enum network_status status = network_cancel(process->generation,
@@ -5208,24 +5208,24 @@ static int64_t syscall_thread_create(
     uint64_t request_address
 )
 {
-    struct sapote_thread_create_request request;
+    struct phipia_thread_create_request request;
     struct native_thread *thread;
     struct native_resource resource = {{0U, 0U, 0U, 0U}};
-    sapote_handle_t handle;
+    phipia_handle_t handle;
     size_t index;
     size_t stack_pages;
     uint64_t guard;
     uint64_t stack_base;
 
-    if ((process->manifest.capabilities & SAPOTE_CAP_THREADS) == 0U) {
-        return -SAPOTE_EACCES;
+    if ((process->manifest.capabilities & PHIPIA_CAP_THREADS) == 0U) {
+        return -PHIPIA_EACCES;
     }
     if (!copy_from_user(process, &request, request_address,
             sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
+        request.version != PHIPIA_ABI_VERSION || request.flags != 0U ||
         request.entry < process->image.mapping_start ||
         request.entry >= process->image.mapping_end ||
         page_at(process, request.entry) == NULL ||
@@ -5234,11 +5234,11 @@ static int64_t syscall_thread_create(
         request.stack_bytes > NATIVE_STACK_PAGES * PAGING_PAGE_SIZE ||
         (request.tls_base != 0U &&
             !validate_user_range(process, request.tls_base, 1U, false))) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     if (process->thread_count >= process->manifest.max_threads ||
         process->thread_count >= NATIVE_THREAD_LIMIT) {
-        return -SAPOTE_ENOMEM;
+        return -PHIPIA_ENOMEM;
     }
     index = process->thread_count;
     stack_pages = (request.stack_bytes + PAGING_PAGE_SIZE - 1U) /
@@ -5247,7 +5247,7 @@ static int64_t syscall_thread_create(
         index * (NATIVE_STACK_PAGES + 1U) * PAGING_PAGE_SIZE;
     stack_base = guard + PAGING_PAGE_SIZE;
     if (stack_base + stack_pages * PAGING_PAGE_SIZE > PAGING_NATIVE_STACK_END) {
-        return -SAPOTE_ENOMEM;
+        return -PHIPIA_ENOMEM;
     }
     for (size_t page = 0U; page < stack_pages; ++page) {
         uintptr_t physical_address;
@@ -5278,7 +5278,7 @@ static int64_t syscall_thread_create(
                     (void)release_page_frame(&removed);
                 }
             }
-            return -SAPOTE_ENOMEM;
+            return -PHIPIA_ENOMEM;
         }
         page_at(process, address)->mapped = true;
     }
@@ -5287,7 +5287,7 @@ static int64_t syscall_thread_create(
     if (!native_fpu_state_initialize(&thread->fpu)) {
         (void)release_runtime_pages(process, stack_base, stack_pages,
             PAGING_PROCESS_MAPPING_NATIVE_STACK);
-        return -SAPOTE_EIO;
+        return -PHIPIA_EIO;
     }
     thread->generation = next_thread_generation++;
     if (next_thread_generation == 0U) {
@@ -5306,7 +5306,7 @@ static int64_t syscall_thread_create(
     resource.words[1] = thread->generation;
     {
         const enum native_handle_status status = native_handle_install(
-            &process->handles, SAPOTE_HANDLE_THREAD, &resource, &handle);
+            &process->handles, PHIPIA_HANDLE_THREAD, &resource, &handle);
 
         if (status != NATIVE_HANDLE_OK) {
             const int64_t error = handle_error(status);
@@ -5315,9 +5315,9 @@ static int64_t syscall_thread_create(
             if (!release_runtime_pages(process, stack_base, stack_pages,
                     PAGING_PROCESS_MAPPING_NATIVE_STACK)) {
                 process->faulted = true;
-                process->exit_status = -SAPOTE_EIO;
+                process->exit_status = -PHIPIA_EIO;
                 process->exiting = true;
-                return -SAPOTE_EIO;
+                return -PHIPIA_EIO;
             }
             return error;
         }
@@ -5331,24 +5331,24 @@ static int64_t syscall_thread_create(
 
 static int64_t syscall_thread_join(
     struct native_process *process,
-    sapote_handle_t handle
+    phipia_handle_t handle
 )
 {
     struct native_resource *resource;
     struct native_thread *current = running_thread(process);
     struct native_thread *target;
     enum native_handle_status status = native_handle_resolve(
-        &process->handles, handle, SAPOTE_HANDLE_THREAD, &resource);
+        &process->handles, handle, PHIPIA_HANDLE_THREAD, &resource);
 
     if (status != NATIVE_HANDLE_OK) {
         return handle_error(status);
     }
     if (resource->words[0] >= process->thread_count || current == NULL) {
-        return -SAPOTE_EBADF;
+        return -PHIPIA_EBADF;
     }
     target = &process->threads[resource->words[0]];
     if (target == current || target->generation != resource->words[1]) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     if (target->state == NATIVE_THREAD_EXITED ||
         target->state == NATIVE_THREAD_FAULTED) {
@@ -5368,7 +5368,7 @@ static int64_t syscall_tls_set(
 
     if (thread == NULL || (tls_base != 0U &&
             !validate_user_range(process, tls_base, 1U, false))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     thread->fs_base = tls_base;
     return 0;
@@ -5379,23 +5379,23 @@ static int64_t syscall_futex_wait(
     uint64_t request_address
 )
 {
-    struct sapote_futex_request request;
+    struct phipia_futex_request request;
     struct native_thread *thread = running_thread(process);
     uint32_t observed;
 
     if (thread == NULL || !copy_from_user(process, &request, request_address,
             sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.count != 0U ||
+        request.version != PHIPIA_ABI_VERSION || request.count != 0U ||
         !validate_futex_word(process, request.address) ||
         !copy_from_user(process, &observed, request.address,
             sizeof(observed))) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     if (observed != request.expected) {
-        return -SAPOTE_EAGAIN;
+        return -PHIPIA_EAGAIN;
     }
     thread->futex_address = request.address;
     thread->deadline_ns = request.deadline_ns;
@@ -5408,18 +5408,18 @@ static int64_t syscall_futex_wake(
     uint64_t request_address
 )
 {
-    struct sapote_futex_request request;
+    struct phipia_futex_request request;
     size_t woken = 0U;
 
     if (!copy_from_user(process, &request, request_address,
             sizeof(request))) {
-        return -SAPOTE_EFAULT;
+        return -PHIPIA_EFAULT;
     }
     if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.expected != 0U ||
+        request.version != PHIPIA_ABI_VERSION || request.expected != 0U ||
         request.deadline_ns != 0U || request.count == 0U ||
         !validate_futex_word(process, request.address)) {
-        return -SAPOTE_EINVAL;
+        return -PHIPIA_EINVAL;
     }
     for (size_t index = 0U; index < process->thread_count &&
          woken < request.count; ++index) {
@@ -5536,7 +5536,7 @@ static bool begin_dynamic_finalizers(
 
 static int64_t syscall_handle_close(
     struct native_process *process,
-    sapote_handle_t handle
+    phipia_handle_t handle
 )
 {
     enum native_handle_status status;
@@ -5550,10 +5550,10 @@ static int64_t syscall_handle_close(
 
 static int64_t syscall_handle_duplicate(
     struct native_process *process,
-    sapote_handle_t handle
+    phipia_handle_t handle
 )
 {
-    sapote_handle_t duplicate;
+    phipia_handle_t duplicate;
     const enum native_handle_status status = native_handle_duplicate(
         &process->handles, handle, &duplicate);
 
@@ -5573,152 +5573,152 @@ static int64_t dispatch_syscall(
 )
 {
     switch (frame->rax) {
-    case SAPOTE_SYS_ABI_VERSION:
-        return SAPOTE_ABI_VERSION;
-    case SAPOTE_SYS_EXIT:
+    case PHIPIA_SYS_ABI_VERSION:
+        return PHIPIA_ABI_VERSION;
+    case PHIPIA_SYS_EXIT:
         if (!begin_dynamic_finalizers(process, thread,
                 (int32_t)frame->rdi)) {
             terminate_process(process, (int32_t)frame->rdi);
         }
         return 0;
-    case SAPOTE_SYS_CONSOLE_WRITE:
+    case PHIPIA_SYS_CONSOLE_WRITE:
         return syscall_console_write(process, frame->rdi, (size_t)frame->rsi);
-    case SAPOTE_SYS_CONSOLE_READ:
+    case PHIPIA_SYS_CONSOLE_READ:
         return syscall_console_read(process, frame->rdi, (size_t)frame->rsi);
-    case SAPOTE_SYS_HANDLE_CLOSE:
+    case PHIPIA_SYS_HANDLE_CLOSE:
         return syscall_handle_close(process, frame->rdi);
-    case SAPOTE_SYS_HANDLE_DUPLICATE:
+    case PHIPIA_SYS_HANDLE_DUPLICATE:
         return syscall_handle_duplicate(process, frame->rdi);
-    case SAPOTE_SYS_MEMORY_MAP:
+    case PHIPIA_SYS_MEMORY_MAP:
         return syscall_memory_map(process, frame->rdi, frame->rsi);
-    case SAPOTE_SYS_MEMORY_UNMAP:
+    case PHIPIA_SYS_MEMORY_UNMAP:
         return syscall_memory_unmap(process, frame->rdi, frame->rsi);
-    case SAPOTE_SYS_FILE_OPEN:
+    case PHIPIA_SYS_FILE_OPEN:
         return syscall_file_open(process, frame->rdi);
-    case SAPOTE_SYS_FILE_READ:
+    case PHIPIA_SYS_FILE_READ:
         return syscall_file_io(process, frame->rdi, false);
-    case SAPOTE_SYS_FILE_WRITE:
+    case PHIPIA_SYS_FILE_WRITE:
         return syscall_file_io(process, frame->rdi, true);
-    case SAPOTE_SYS_FILE_SEEK:
+    case PHIPIA_SYS_FILE_SEEK:
         return syscall_file_seek(process, frame->rdi);
-    case SAPOTE_SYS_PATH_STAT:
+    case PHIPIA_SYS_PATH_STAT:
         return syscall_path_stat(process, frame->rdi, frame->rsi);
-    case SAPOTE_SYS_DIRECTORY_OPEN:
+    case PHIPIA_SYS_DIRECTORY_OPEN:
         return syscall_directory_open(process, frame->rdi);
-    case SAPOTE_SYS_DIRECTORY_READ:
+    case PHIPIA_SYS_DIRECTORY_READ:
         return syscall_directory_read(process, frame->rdi, frame->rsi);
-    case SAPOTE_SYS_PATH_MKDIR:
-    case SAPOTE_SYS_PATH_UNLINK:
-    case SAPOTE_SYS_PATH_TRUNCATE:
+    case PHIPIA_SYS_PATH_MKDIR:
+    case PHIPIA_SYS_PATH_UNLINK:
+    case PHIPIA_SYS_PATH_TRUNCATE:
         return syscall_single_path_mutation(process, frame->rdi, frame->rsi,
             frame->rax);
-    case SAPOTE_SYS_PATH_RENAME:
+    case PHIPIA_SYS_PATH_RENAME:
         return syscall_rename(process, frame->rdi, false);
-    case SAPOTE_SYS_PATH_REPLACE:
+    case PHIPIA_SYS_PATH_REPLACE:
         return syscall_rename(process, frame->rdi, true);
-    case SAPOTE_SYS_VOLUME_SYNC:
+    case PHIPIA_SYS_VOLUME_SYNC:
         return syscall_volume_sync(process, frame->rdi);
-    case SAPOTE_SYS_VOLUME_SPACE:
+    case PHIPIA_SYS_VOLUME_SPACE:
         return syscall_volume_space(process, frame->rdi, frame->rsi);
-    case SAPOTE_SYS_TIME_MONOTONIC:
-        return (process->manifest.capabilities & SAPOTE_CAP_TIME) != 0U ?
-            (int64_t)clock_monotonic_ns() : -SAPOTE_EACCES;
-    case SAPOTE_SYS_TIME_REALTIME:
+    case PHIPIA_SYS_TIME_MONOTONIC:
+        return (process->manifest.capabilities & PHIPIA_CAP_TIME) != 0U ?
+            (int64_t)clock_monotonic_ns() : -PHIPIA_EACCES;
+    case PHIPIA_SYS_TIME_REALTIME:
         return syscall_time_realtime(process);
-    case SAPOTE_SYS_SLEEP_UNTIL:
+    case PHIPIA_SYS_SLEEP_UNTIL:
         return syscall_sleep_until(process, frame->rdi);
-    case SAPOTE_SYS_WAIT:
+    case PHIPIA_SYS_WAIT:
         return syscall_wait(process, frame->rdi);
-    case SAPOTE_SYS_RANDOM:
+    case PHIPIA_SYS_RANDOM:
         return syscall_random(process, frame->rdi, (size_t)frame->rsi, false);
-    case SAPOTE_SYS_RANDOM_STRONG:
+    case PHIPIA_SYS_RANDOM_STRONG:
         return syscall_random(process, frame->rdi, (size_t)frame->rsi, true);
-    case SAPOTE_SYS_TIMER_CREATE:
-        return (process->manifest.capabilities & SAPOTE_CAP_TIME) != 0U ?
-            syscall_timer_create(process) : -SAPOTE_EACCES;
-    case SAPOTE_SYS_TIMER_SET:
-        return (process->manifest.capabilities & SAPOTE_CAP_TIME) != 0U ?
-            syscall_timer_set(process, frame->rdi) : -SAPOTE_EACCES;
-    case SAPOTE_SYS_CANCEL:
+    case PHIPIA_SYS_TIMER_CREATE:
+        return (process->manifest.capabilities & PHIPIA_CAP_TIME) != 0U ?
+            syscall_timer_create(process) : -PHIPIA_EACCES;
+    case PHIPIA_SYS_TIMER_SET:
+        return (process->manifest.capabilities & PHIPIA_CAP_TIME) != 0U ?
+            syscall_timer_set(process, frame->rdi) : -PHIPIA_EACCES;
+    case PHIPIA_SYS_CANCEL:
         return syscall_cancel(process, frame->rdi);
-    case SAPOTE_SYS_WINDOW_CREATE:
+    case PHIPIA_SYS_WINDOW_CREATE:
         return syscall_window_create(process, frame->rdi, frame->rsi);
-    case SAPOTE_SYS_SURFACE_PRESENT:
+    case PHIPIA_SYS_SURFACE_PRESENT:
         return syscall_surface_present(process, frame->rdi);
-    case SAPOTE_SYS_EVENT_READ:
+    case PHIPIA_SYS_EVENT_READ:
         return syscall_event_read(process, frame->rdi, frame->rsi);
-    case SAPOTE_SYS_POINTER_CAPTURE:
+    case PHIPIA_SYS_POINTER_CAPTURE:
         return syscall_pointer_capture(process, frame->rdi, frame->rsi);
-    case SAPOTE_SYS_DNS_RESOLVE:
+    case PHIPIA_SYS_DNS_RESOLVE:
         return syscall_dns_resolve(process, frame->rdi, (size_t)frame->rsi,
             frame->rdx);
-    case SAPOTE_SYS_STREAM_OPEN:
+    case PHIPIA_SYS_STREAM_OPEN:
         return syscall_network_open(process, false);
-    case SAPOTE_SYS_STREAM_CONNECT:
+    case PHIPIA_SYS_STREAM_CONNECT:
         return syscall_stream_connect(process, frame->rdi, frame->rsi,
             frame->rdx);
-    case SAPOTE_SYS_STREAM_READ:
+    case PHIPIA_SYS_STREAM_READ:
         return syscall_network_io(process, frame->rdi, false, false);
-    case SAPOTE_SYS_STREAM_WRITE:
+    case PHIPIA_SYS_STREAM_WRITE:
         return syscall_network_io(process, frame->rdi, false, true);
-    case SAPOTE_SYS_STREAM_SHUTDOWN:
+    case PHIPIA_SYS_STREAM_SHUTDOWN:
         return syscall_stream_shutdown(process, frame->rdi,
             (uint32_t)frame->rsi, frame->rdx);
-    case SAPOTE_SYS_DATAGRAM_OPEN:
+    case PHIPIA_SYS_DATAGRAM_OPEN:
         return syscall_network_open(process, true);
-    case SAPOTE_SYS_DATAGRAM_BIND:
+    case PHIPIA_SYS_DATAGRAM_BIND:
         return syscall_datagram_bind(process, frame->rdi,
             (uint16_t)frame->rsi);
-    case SAPOTE_SYS_DATAGRAM_SEND:
+    case PHIPIA_SYS_DATAGRAM_SEND:
         return syscall_network_io(process, frame->rdi, true, true);
-    case SAPOTE_SYS_DATAGRAM_RECEIVE:
+    case PHIPIA_SYS_DATAGRAM_RECEIVE:
         return syscall_network_io(process, frame->rdi, true, false);
-    case SAPOTE_SYS_NETWORK_ADDRESS:
+    case PHIPIA_SYS_NETWORK_ADDRESS:
         if (frame->rsi > 1U) {
-            return -SAPOTE_EINVAL;
+            return -PHIPIA_EINVAL;
         }
         return syscall_network_address(process, frame->rdi,
             frame->rsi != 0U, frame->rdx);
-    case SAPOTE_SYS_THREAD_CREATE:
+    case PHIPIA_SYS_THREAD_CREATE:
         return syscall_thread_create(process, frame->rdi);
-    case SAPOTE_SYS_THREAD_EXIT:
+    case PHIPIA_SYS_THREAD_EXIT:
         thread->exit_status = (int32_t)frame->rdi;
         thread->state = NATIVE_THREAD_EXITED;
         return 0;
-    case SAPOTE_SYS_THREAD_JOIN:
+    case PHIPIA_SYS_THREAD_JOIN:
         return syscall_thread_join(process, frame->rdi);
-    case SAPOTE_SYS_TLS_SET:
+    case PHIPIA_SYS_TLS_SET:
         return syscall_tls_set(process, frame->rdi);
-    case SAPOTE_SYS_TLS_GET:
+    case PHIPIA_SYS_TLS_GET:
         return (int64_t)thread->fs_base;
-    case SAPOTE_SYS_FUTEX_WAIT:
+    case PHIPIA_SYS_FUTEX_WAIT:
         return syscall_futex_wait(process, frame->rdi);
-    case SAPOTE_SYS_FUTEX_WAKE:
+    case PHIPIA_SYS_FUTEX_WAKE:
         return syscall_futex_wake(process, frame->rdi);
-    case SAPOTE_SYS_AUDIO_OPEN:
+    case PHIPIA_SYS_AUDIO_OPEN:
         return syscall_audio_open(process);
-    case SAPOTE_SYS_AUDIO_SUBMIT:
+    case PHIPIA_SYS_AUDIO_SUBMIT:
         return syscall_audio_submit(process, frame->rdi);
-    case SAPOTE_SYS_AUDIO_VOLUME:
+    case PHIPIA_SYS_AUDIO_VOLUME:
         return syscall_audio_volume(process, frame->rdi);
-    case SAPOTE_SYS_AUDIO_DRAIN:
+    case PHIPIA_SYS_AUDIO_DRAIN:
         return syscall_audio_drain(process, frame->rdi, frame->rsi);
-    case SAPOTE_SYS_PACKAGE_UPLOAD_OPEN:
+    case PHIPIA_SYS_PACKAGE_UPLOAD_OPEN:
         return syscall_package_upload_open(process);
-    case SAPOTE_SYS_PACKAGE_UPLOAD_WRITE:
+    case PHIPIA_SYS_PACKAGE_UPLOAD_WRITE:
         return syscall_package_upload_write(process, frame->rdi);
-    case SAPOTE_SYS_PACKAGE_UPLOAD_SEAL:
+    case PHIPIA_SYS_PACKAGE_UPLOAD_SEAL:
         return syscall_package_upload_seal(process, frame->rdi);
-    case SAPOTE_SYS_PACKAGE_CONTROL_OPEN_INSTALL:
+    case PHIPIA_SYS_PACKAGE_CONTROL_OPEN_INSTALL:
         return syscall_package_control_open_install(process, frame->rdi);
-    case SAPOTE_SYS_PACKAGE_CONTROL_ITEM:
+    case PHIPIA_SYS_PACKAGE_CONTROL_ITEM:
         return syscall_package_control_item(process, frame->rdi);
-    case SAPOTE_SYS_PACKAGE_CONTROL_ATTACH:
+    case PHIPIA_SYS_PACKAGE_CONTROL_ATTACH:
         return syscall_package_control_attach(process, frame->rdi);
-    case SAPOTE_SYS_PACKAGE_CONTROL_COMMIT:
+    case PHIPIA_SYS_PACKAGE_CONTROL_COMMIT:
         return syscall_package_control_commit(process, frame->rdi);
     default:
-        return -SAPOTE_ENOSYS;
+        return -PHIPIA_ENOSYS;
     }
 }
 
@@ -5795,7 +5795,7 @@ static void report_user_backtrace(
             !copy_from_user(process, words, frame_pointer, sizeof(words))) {
             break;
         }
-        console_write("Sapote: native backtrace ");
+        console_write("Phipia: native backtrace ");
         console_write_u64(depth);
         console_write(" frame ");
         console_write_hex(frame_pointer);
@@ -5840,7 +5840,7 @@ void native_process_on_interrupt(struct interrupt_frame *frame, void *context)
             record_context_transition(process, without_cycles, fpu_cycles);
         }
         if (frame->vector < INTERRUPT_EXCEPTION_COUNT) {
-            console_write("Sapote: native thread fault vector ");
+            console_write("Phipia: native thread fault vector ");
             console_write_u64(frame->vector);
             console_write(" error ");
             console_write_hex(frame->error_code);
@@ -5863,14 +5863,14 @@ void native_process_on_interrupt(struct interrupt_frame *frame, void *context)
             console_write("\n");
             report_user_backtrace(process, frame->rbp);
             thread->state = NATIVE_THREAD_FAULTED;
-            thread->exit_status = -SAPOTE_EFAULT;
+            thread->exit_status = -PHIPIA_EFAULT;
             process->faulted = true;
-            terminate_process(process, -SAPOTE_EFAULT);
+            terminate_process(process, -PHIPIA_EFAULT);
         }
     }
     if (!valid && process != NULL) {
         process->faulted = true;
-        terminate_process(process, -SAPOTE_EIO);
+        terminate_process(process, -PHIPIA_EIO);
     }
     if (resume_stack == 0U ||
         interrupt_request_kernel_resume(frame, resume_stack) !=
@@ -5918,7 +5918,7 @@ static void update_waiting_threads(
             thread->deadline_ns != 0U && now >= thread->deadline_ns) {
             thread->deadline_ns = 0U;
             thread->futex_address = 0U;
-            thread->context.rax = (uint64_t)-(int64_t)SAPOTE_ETIMEDOUT;
+            thread->context.rax = (uint64_t)-(int64_t)PHIPIA_ETIMEDOUT;
             thread->state = NATIVE_THREAD_RUNNABLE;
         } else if (thread->state == NATIVE_THREAD_JOIN_WAIT) {
             for (size_t target = 0U; target < process->thread_count; ++target) {
@@ -5945,9 +5945,9 @@ static void update_waiting_threads(
                         thread->wait_items_address, thread->wait_items,
                         thread->wait_item_count *
                             sizeof(thread->wait_items[0]))) {
-                    ready = -SAPOTE_EFAULT;
+                    ready = -PHIPIA_EFAULT;
                 } else if (ready == 0) {
-                    ready = -SAPOTE_ETIMEDOUT;
+                    ready = -PHIPIA_ETIMEDOUT;
                 }
                 thread->wait_items_address = 0U;
                 thread->wait_item_count = 0U;
@@ -5966,13 +5966,13 @@ static void update_waiting_threads(
             if (state == AUDIO_NATIVE_DRAIN_PENDING && !timed_out) {
                 complete = false;
             } else if (timed_out) {
-                result = -SAPOTE_ETIMEDOUT;
+                result = -PHIPIA_ETIMEDOUT;
             } else if (state == AUDIO_NATIVE_DRAIN_CANCELED) {
-                result = -SAPOTE_ECANCELED;
+                result = -PHIPIA_ECANCELED;
             } else if (state == AUDIO_NATIVE_DRAIN_ERROR) {
-                result = -SAPOTE_EIO;
+                result = -PHIPIA_EIO;
             } else if (state == AUDIO_NATIVE_DRAIN_STALE) {
-                result = -SAPOTE_ESTALE;
+                result = -PHIPIA_ESTALE;
             }
             if (complete) {
                 thread->audio_token = 0U;
@@ -5990,7 +5990,7 @@ static void update_waiting_threads(
                 console_input_consume(process, copied);
                 thread->context.rax = (uint64_t)copied;
             } else {
-                thread->context.rax = (uint64_t)-(int64_t)SAPOTE_EFAULT;
+                thread->context.rax = (uint64_t)-(int64_t)PHIPIA_EFAULT;
             }
             thread->console_address = 0U;
             thread->console_length = 0U;
@@ -5998,7 +5998,7 @@ static void update_waiting_threads(
         }
     }
     if (!process->exiting && !process_has_live_thread(process)) {
-        terminate_process(process, process->faulted ? -SAPOTE_EFAULT :
+        terminate_process(process, process->faulted ? -PHIPIA_EFAULT :
             process->exit_status);
     }
 }
@@ -6106,7 +6106,7 @@ static struct native_process *console_input_target(void)
 
         if (process->active && !process->exiting &&
             !process->window.allocated &&
-            (process->manifest.capabilities & SAPOTE_CAP_CONSOLE) != 0U &&
+            (process->manifest.capabilities & PHIPIA_CAP_CONSOLE) != 0U &&
             (selected == NULL ||
                 process->generation > selected->generation)) {
             selected = process;
@@ -6174,7 +6174,7 @@ static bool any_handle_waiter(void)
 
 static void report_scheduler_stall(void)
 {
-    console_write("Sapote: native scheduler stalled\n");
+    console_write("Phipia: native scheduler stalled\n");
     for (size_t process_index = 0U; process_index < NATIVE_PROCESS_LIMIT;
          ++process_index) {
         const struct native_process *process = &processes[process_index];
@@ -6182,7 +6182,7 @@ static void report_scheduler_stall(void)
         if (!process->active || process->exiting) {
             continue;
         }
-        console_write("Sapote: stalled process ");
+        console_write("Phipia: stalled process ");
         console_write_u64(process_index);
         console_write(" generation ");
         console_write_u64(process->generation);
@@ -6194,7 +6194,7 @@ static void report_scheduler_stall(void)
             const struct native_thread *thread =
                 &process->threads[thread_index];
 
-            console_write("Sapote: stalled thread ");
+            console_write("Phipia: stalled thread ");
             console_write_u64(thread_index);
             console_write(" generation ");
             console_write_u64(thread->generation);
@@ -6317,12 +6317,12 @@ enum native_process_status native_process_run(struct native_process_result *resu
             if (interrupt_process_gate_validate(&native_gate) !=
                     INTERRUPT_STATUS_OK) {
                 cleanup_ok = false;
-                terminate_process(process, -SAPOTE_EIO);
+                terminate_process(process, -PHIPIA_EIO);
             } else if (native_gate.state == INTERRUPT_PROCESS_GATE_RETURNED &&
                 interrupt_process_gate_rearm(&native_gate) !=
                     INTERRUPT_STATUS_OK) {
                 cleanup_ok = false;
-                terminate_process(process, -SAPOTE_EIO);
+                terminate_process(process, -PHIPIA_EIO);
             } else {
                 without_started = tsc_read();
                 activation = paging_process_activate(&process->address_space);
@@ -6331,7 +6331,7 @@ enum native_process_status native_process_run(struct native_process_result *resu
                 if (activation != PAGING_STATUS_OK ||
                     !native_fpu_restore(&thread->fpu)) {
                     cleanup_ok = false;
-                    terminate_process(process, -SAPOTE_EIO);
+                    terminate_process(process, -PHIPIA_EIO);
                 } else {
                     fpu_cycles = tsc_read() - fpu_started;
                     without_started = tsc_read();
@@ -6375,7 +6375,7 @@ enum native_process_status native_process_run(struct native_process_result *resu
                     if (processes[index].active &&
                         !processes[index].exiting) {
                         processes[index].faulted = true;
-                        terminate_process(&processes[index], -SAPOTE_EBUSY);
+                        terminate_process(&processes[index], -PHIPIA_EBUSY);
                     }
                 }
             }
@@ -6461,8 +6461,8 @@ bool native_process_self_test(size_t *completed_tests)
     size_t handle_tests;
     size_t fpu_tests;
     size_t audio_tests;
-    const uint32_t image_tests = sapote_native_image_self_test();
-    const uint32_t dynamic_tests = sapote_elf64_dynamic_self_test();
+    const uint32_t image_tests = phipia_native_image_self_test();
+    const uint32_t dynamic_tests = phipia_elf64_dynamic_self_test();
 
     if (completed_tests == NULL) {
         return false;
@@ -6492,7 +6492,7 @@ bool native_process_self_test(size_t *completed_tests)
     *completed_tests += audio_tests;
     if (!process_user_context_layout_self_test() ||
         sizeof(struct native_syscall_frame) != 144U ||
-        sizeof(struct sapote_event) != 56U) {
+        sizeof(struct phipia_event) != 56U) {
         return false;
     }
     *completed_tests += 3U;

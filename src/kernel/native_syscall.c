@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* CPU admission for the Sapote-owned native ABI, separate from Linux profiles. */
+/* CPU admission for the Phipia-owned native ABI, separate from Linux profiles. */
 
-#include <sapote/native_syscall.h>
+#include <phipia/native_syscall.h>
 
-#include <sapote/cpu.h>
-#include <sapote/native_process.h>
-#include <sapote/process.h>
+#include <phipia/cpu.h>
+#include <phipia/native_process.h>
+#include <phipia/process.h>
 
 #define CPUID_EXTENDED_ROOT UINT32_C(0x80000000)
 #define CPUID_EXTENDED_FEATURES UINT32_C(0x80000001)

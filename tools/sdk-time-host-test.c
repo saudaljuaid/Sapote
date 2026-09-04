@@ -3,30 +3,30 @@
 #include <stdint.h>
 #include <time.h>
 
-#include <sapote/runtime.h>
+#include <phipia/runtime.h>
 
 _Thread_local int errno;
 
 static long realtime_value = INT64_C(1709251198);
 static uint64_t monotonic_value = UINT64_C(1234567890123);
 
-long sapote_realtime_seconds(void)
+long phipia_realtime_seconds(void)
 {
     return realtime_value;
 }
 
-uint64_t sapote_monotonic_ns(void)
+uint64_t phipia_monotonic_ns(void)
 {
     return monotonic_value;
 }
 
-long sapote_sleep_until(uint64_t deadline_ns)
+long phipia_sleep_until(uint64_t deadline_ns)
 {
     monotonic_value = deadline_ns;
     return 0;
 }
 
-int sapote_result(long result)
+int phipia_result(long result)
 {
     if (result < 0) {
         errno = (int)-result;
@@ -82,7 +82,7 @@ int main(void)
     if (gmtime_r(&epoch, &broken) != NULL || errno != ERANGE) {
         return 8;
     }
-    realtime_value = -SAPOTE_EIO;
+    realtime_value = -PHIPIA_EIO;
     errno = 0;
     return time(NULL) == (time_t)-1 && errno == EIO ? 0 : 9;
 }

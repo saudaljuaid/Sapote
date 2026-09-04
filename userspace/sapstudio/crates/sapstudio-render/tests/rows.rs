@@ -8,7 +8,7 @@
 //! the same picture computed differently.
 //!
 //! Why it exists: a 1920×1080 eight-bit RGBA frame is 8,294,400 bytes and a
-//! Sapote program is mapped 76 KiB, so `evaluate` allocates a hundred and six
+//! Phipia program is mapped 76 KiB, so `evaluate` allocates a hundred and six
 //! times the program's whole address space *per node*. One row of it is 7,680
 //! bytes.
 
@@ -450,7 +450,7 @@ fn a_turn_is_scanned_in_strips_and_is_the_render_of_it() {
     //
     // What that buys is not speed: a turn re-reads its source, because
     // neighbouring strips have overlapping bands. What it buys is a bound on
-    // memory, which on Sapote is the difference between running and not.
+    // memory, which on Phipia is the difference between running and not.
     let description = described(PixelFormat::Rgba8);
     let media = Digest::of(b"a shot");
     for bilinear in [false, true] {
@@ -818,7 +818,7 @@ fn every_generator_agrees_row_for_row() {
     let card = graph
         .add(Node::Type {
             description: lettered,
-            lines: std::vec!["SAPSTUDIO".into(), "take two".into()],
+            lines: std::vec!["MEDIAEDTO".into(), "take two".into()],
             size: Rational::new(1, 4).expect("a size"),
             across: Rational::new(1, 2).expect("a place"),
             down: Rational::new(1, 2).expect("a place"),

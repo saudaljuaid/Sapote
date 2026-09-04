@@ -324,7 +324,7 @@ pub fn sound_bounds(frames: usize, timebase: Timebase, rate: SampleRate) -> Resu
 /// Sixteen thousand, against sixty-four in a project's own media table — and
 /// the difference between those two numbers is the whole reason this section
 /// exists. A project file is read in one piece, so sixty-four captions of an
-/// asset is already 45% of what a Sapote program is mapped. A reel is read a
+/// asset is already 45% of what a Phipia program is mapped. A reel is read a
 /// window at a time, so the count is bounded by what a take could plausibly
 /// hold rather than by what fits in memory: sixteen thousand captions is about
 /// twenty hours of speech, and a reel is bounded at sixteen minutes.
@@ -345,7 +345,7 @@ pub const MAX_CAPTION_BYTES: usize = 8_732_672;
 /// A pair rather than the captions themselves, because a [`Winder`] declares
 /// this in the header before it writes a word and then takes the captions one
 /// at a time. Sixteen thousand captions is 8.7 megabytes against the
-/// seventy-six kilobytes a Sapote program is mapped — **114 times** what there
+/// seventy-six kilobytes a Phipia program is mapped — **114 times** what there
 /// is — so a writer that held the transcript to write it would be the thing
 /// this whole file exists to avoid, in a third place.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1031,7 +1031,7 @@ fn read_siting(tag: u8) -> Result<Option<ChromaSiting>> {
 ///
 /// [`decode`] builds every frame at once. A reel this build writes is bounded
 /// at [`MAX_REEL_BYTES`] — five hundred and twelve mebibytes — against the
-/// seventy-six kilobytes a Sapote program is mapped, which is **6,899 times**
+/// seventy-six kilobytes a Phipia program is mapped, which is **6,899 times**
 /// what there is. It is not a tight fit or a thing to make smaller; it is a
 /// function that cannot be called on the machine this program is for.
 ///
@@ -1045,14 +1045,14 @@ fn read_siting(tag: u8) -> Result<Option<ChromaSiting>> {
 ///
 /// Streaming takes the *reel* out of the arithmetic and leaves the *frame*.
 /// [`Spool::frame`] allocates one, and one frame of 1920×1080 eight-bit RGB is
-/// 6,220,800 bytes — eighty times what a Sapote program is mapped. So this is
+/// 6,220,800 bytes — eighty times what a Phipia program is mapped. So this is
 /// not the end of the story, and saying otherwise would be the kind of claim
 /// the platform contract exists to prevent. What it changes is which number
 /// bounds the cost: the picture's size rather than the material's length.
 ///
 /// [`Spool::plane_row`] is the end of the story, for a reader that needs one:
 /// a row of a 1920-wide RGB picture is 5,760 bytes, which is seven per cent of
-/// a Sapote program's whole address space rather than eighty times it. It is what Sapote's own
+/// a Phipia program's whole address space rather than eighty times it. It is what Phipia's own
 /// bitmap reader does — "random row reads through the normal filesystem and
 /// NVMe paths" — arrived at from the other side.
 ///
@@ -1301,7 +1301,7 @@ impl Spool {
     ///
     /// The sound counterpart of [`Spool::plane_row`], and it exists for the
     /// same reason: ten seconds of 48 kHz stereo is 3,840,000 bytes against
-    /// the seventy-six kilobytes a Sapote program is mapped, so a reader that
+    /// the seventy-six kilobytes a Phipia program is mapped, so a reader that
     /// took the whole sound section is a reader that cannot run. One frame's
     /// worth is 1602 samples of two channels — 12,816 bytes.
     ///
@@ -1624,7 +1624,7 @@ fn read_header(
 ///
 /// [`encode`] builds the whole file in memory and hands it back. At the
 /// format's limit that is five hundred and twelve mebibytes against the
-/// seventy-six kilobytes a Sapote program is mapped — **6,899 times** what
+/// seventy-six kilobytes a Phipia program is mapped — **6,899 times** what
 /// there is — which is the same sentence [`Spool`] opens with, because this is
 /// the same problem from the other side. [`Spool`] is how a reel is read
 /// without being held; this is how one is written without being built.

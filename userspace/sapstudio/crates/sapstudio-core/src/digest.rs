@@ -3,7 +3,7 @@
 //!
 //! SapStudio names media, cache entries, and saved files by what they contain
 //! rather than by where they are (R-9.5, R-8.5). SHA-256 is the function,
-//! because it is the one Sapote already speaks: every pinned artefact in that
+//! because it is the one Phipia already speaks: every pinned artefact in that
 //! project is a SHA-256, and an editor that reports a different digest for the
 //! same bytes would be answering a different question.
 //!
@@ -51,7 +51,7 @@ impl Digest {
 
 impl fmt::Display for Digest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Upper case, unseparated: the form Sapote's build and release records
+        // Upper case, unseparated: the form Phipia's build and release records
         // already use, so a digest can be compared by eye across the two
         // projects without transcription.
         for byte in &self.0 {

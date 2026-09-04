@@ -11,16 +11,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/clock.h>
-#include <sapote/cpu.h>
-#include <sapote/dma.h>
-#include <sapote/fat16.h>
-#include <sapote/interrupt_vector.h>
-#include <sapote/memory.h>
-#include <sapote/msix.h>
-#include <sapote/nvme.h>
-#include <sapote/pci.h>
-#include <sapote/pci_resource.h>
+#include <phipia/clock.h>
+#include <phipia/cpu.h>
+#include <phipia/dma.h>
+#include <phipia/fat16.h>
+#include <phipia/interrupt_vector.h>
+#include <phipia/memory.h>
+#include <phipia/msix.h>
+#include <phipia/nvme.h>
+#include <phipia/pci.h>
+#include <phipia/pci_resource.h>
 
 #define NVME_REG_CAP UINT64_C(0x00)
 #define NVME_REG_VS UINT64_C(0x08)
@@ -141,8 +141,8 @@ _Static_assert(sizeof(struct nvme_submission_entry) ==
     NVME_SUBMISSION_ENTRY_BYTES, "NVMe SQE must be 64 bytes");
 _Static_assert(sizeof(struct nvme_completion_entry) ==
     NVME_COMPLETION_ENTRY_BYTES, "NVMe CQE must be 16 bytes");
-_Static_assert(SAPOTE_PAGE_SIZE == NVME_BLOCK_BYTES,
-    "the bounded fixture uses Sapote's one 4 KiB DMA page");
+_Static_assert(PHIPIA_PAGE_SIZE == NVME_BLOCK_BYTES,
+    "the bounded fixture uses Phipia's one 4 KiB DMA page");
 
 static struct nvme_read_proof installed_proof;
 static uint64_t controller_generation;
@@ -590,7 +590,7 @@ static enum nvme_status validate_queue_geometry(
     uint64_t required;
     uint64_t end;
 
-    if ((base & (SAPOTE_PAGE_SIZE - 1U)) != 0U || depth < 2U ||
+    if ((base & (PHIPIA_PAGE_SIZE - 1U)) != 0U || depth < 2U ||
         !multiply_checked((uint64_t)depth, entry_bytes, &required) ||
         required > allocation_length || !add_checked(base, required, &end) ||
         end <= base) {
@@ -642,7 +642,7 @@ static enum nvme_status allocate_dma(
 {
     const struct dma_request request = {
         .page_count = page_count,
-        .alignment = SAPOTE_PAGE_SIZE,
+        .alignment = PHIPIA_PAGE_SIZE,
         .maximum_physical_address = UINT64_MAX
     };
 
@@ -677,7 +677,7 @@ static enum nvme_status prepare_dma(struct nvme_runtime *controller)
     fill_bytes(controller->read.dma.cpu_address,
         controller->read.dma.byte_length, NVME_SENTINEL);
     controller->read.data_offset =
-        (uint64_t)NVME_READ_DATA_PAGE * SAPOTE_PAGE_SIZE;
+        (uint64_t)NVME_READ_DATA_PAGE * PHIPIA_PAGE_SIZE;
     controller->read.data_length = NVME_BLOCK_BYTES;
     controller->read.state = NVME_DMA_CPU_OWNED;
     controller->admin.submission_state = NVME_DMA_CPU_OWNED;
@@ -787,10 +787,10 @@ static enum nvme_status validate_prp(
     if (allocation == NULL || !allocation->active || length == 0U ||
         !add_checked(offset, length, &end) || end > allocation->byte_length ||
         !add_checked(physical_of(allocation), offset, &address) ||
-        (address & (SAPOTE_PAGE_SIZE - 1U)) != 0U ||
-        length > SAPOTE_PAGE_SIZE ||
-        (address & ~(SAPOTE_PAGE_SIZE - 1U)) !=
-            ((address + length - 1U) & ~(SAPOTE_PAGE_SIZE - 1U))) {
+        (address & (PHIPIA_PAGE_SIZE - 1U)) != 0U ||
+        length > PHIPIA_PAGE_SIZE ||
+        (address & ~(PHIPIA_PAGE_SIZE - 1U)) !=
+            ((address + length - 1U) & ~(PHIPIA_PAGE_SIZE - 1U))) {
         return NVME_STATUS_PRP_INVALID;
     }
     return NVME_STATUS_OK;
@@ -2329,11 +2329,11 @@ bool nvme_foundation_self_test(size_t *completed_tests)
     }
     /* 5: malformed, misaligned and overflowing Admin queues reject. */
     if (!test_record(validate_queue_geometry(UINT64_C(0x1001),
-            SAPOTE_PAGE_SIZE, NVME_SUBMISSION_ENTRY_BYTES,
+            PHIPIA_PAGE_SIZE, NVME_SUBMISSION_ENTRY_BYTES,
             NVME_QUEUE_DEPTH, NVME_STATUS_ADMIN_QUEUE_INVALID) ==
                 NVME_STATUS_ADMIN_QUEUE_INVALID &&
         validate_queue_geometry(UINT64_MAX - 4095U,
-            SAPOTE_PAGE_SIZE * 2U, NVME_SUBMISSION_ENTRY_BYTES, 128U,
+            PHIPIA_PAGE_SIZE * 2U, NVME_SUBMISSION_ENTRY_BYTES, 128U,
             NVME_STATUS_ADMIN_QUEUE_INVALID) ==
                 NVME_STATUS_ADMIN_QUEUE_INVALID, &completed)) {
         return false;
@@ -2342,7 +2342,7 @@ bool nvme_foundation_self_test(size_t *completed_tests)
     if (!test_record(validate_queue_geometry(UINT64_C(0x2000), 16U,
             NVME_COMPLETION_ENTRY_BYTES, NVME_QUEUE_DEPTH,
             NVME_STATUS_IO_QUEUE_INVALID) == NVME_STATUS_IO_QUEUE_INVALID &&
-        validate_queue_geometry(UINT64_C(0x2000), SAPOTE_PAGE_SIZE,
+        validate_queue_geometry(UINT64_C(0x2000), PHIPIA_PAGE_SIZE,
             NVME_COMPLETION_ENTRY_BYTES, SIZE_MAX,
             NVME_STATUS_IO_QUEUE_INVALID) == NVME_STATUS_IO_QUEUE_INVALID,
             &completed)) {
@@ -2436,16 +2436,16 @@ bool nvme_foundation_self_test(size_t *completed_tests)
     struct dma_allocation synthetic_dma = {
         .frames = {.physical_base = UINT64_C(0x1000), .active = true},
         .cpu_address = identify_namespace_data,
-        .byte_length = SAPOTE_PAGE_SIZE * 2U,
+        .byte_length = PHIPIA_PAGE_SIZE * 2U,
         .owner = DMA_OWNER_CPU,
         .active = true
     };
-    if (!test_record(validate_prp(&synthetic_dma, SAPOTE_PAGE_SIZE,
-            SAPOTE_PAGE_SIZE) == NVME_STATUS_OK &&
-        validate_prp(&synthetic_dma, SAPOTE_PAGE_SIZE - 4U, 8U) ==
+    if (!test_record(validate_prp(&synthetic_dma, PHIPIA_PAGE_SIZE,
+            PHIPIA_PAGE_SIZE) == NVME_STATUS_OK &&
+        validate_prp(&synthetic_dma, PHIPIA_PAGE_SIZE - 4U, 8U) ==
             NVME_STATUS_PRP_INVALID &&
-        validate_prp(&synthetic_dma, SAPOTE_PAGE_SIZE * 2U,
-            SAPOTE_PAGE_SIZE) == NVME_STATUS_PRP_INVALID, &completed)) {
+        validate_prp(&synthetic_dma, PHIPIA_PAGE_SIZE * 2U,
+            PHIPIA_PAGE_SIZE) == NVME_STATUS_PRP_INVALID, &completed)) {
         return false;
     }
     /* 14: phase, CID, SQID and status mismatches never report success. */
@@ -3332,7 +3332,7 @@ const char *nvme_status_string(enum nvme_status status)
     case NVME_STATUS_UNSUPPORTED_COMMAND_SET:
         return "NVMe controller lacks the NVM command set";
     case NVME_STATUS_UNSUPPORTED_PAGE_SIZE:
-        return "NVMe controller cannot use Sapote's page size";
+        return "NVMe controller cannot use Phipia's page size";
     case NVME_STATUS_UNSUPPORTED_VERSION:
         return "NVMe controller version is unsupported";
     case NVME_STATUS_DISABLE_TIMEOUT:

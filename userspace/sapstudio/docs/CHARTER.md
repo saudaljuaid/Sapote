@@ -2,8 +2,8 @@
 
 # SapStudio charter
 
-SapStudio is a professional non-linear video editor written for Sapote and for
-nothing else. Sapote is a freestanding x86_64 operating system built from first
+SapStudio is a professional non-linear video editor written for Phipia and for
+nothing else. Phipia is a freestanding x86_64 operating system built from first
 principles; SapStudio is the application that gives it a reason to exist beyond
 its own boot proofs.
 
@@ -16,14 +16,14 @@ beginning is.
 
 ## Where the beginning is
 
-This paragraph used to open *"Sapote v1.1.0 cannot run SapStudio"*. It was
+This paragraph used to open *"Phipia v1.1.0 cannot run SapStudio"*. It was
 true when it was written and it is not true now, and leaving it standing while
-Sapote grew eleven releases underneath it is the exact failure the verification
+Phipia grew eleven releases underneath it is the exact failure the verification
 document keeps recording about numbers. So it is corrected here rather than
 deleted, because where the beginning was is part of the road.
 
-**Sapote 2.1.0 runs a SapStudio workspace**, in its First Environment shell,
-opening and saving projects on a read-write FAT32 volume. What Sapote cannot
+**Phipia 2.1.0 runs a SapStudio workspace**, in its First Environment shell,
+opening and saving projects on a read-write FAT32 volume. What Phipia cannot
 yet run is *this* program: the freestanding Rust image has no Ring 3 path of
 its own, because an image is admitted at a fixed page layout named per profile
 and the widest of those is 76 KiB.
@@ -41,7 +41,7 @@ So SapStudio's first work is not a timeline. It is:
 
 1. a complete and honest map of what the application will be built out of;
 2. a set of engineering rules strict enough that the map stays true;
-3. a numbered list of capabilities Sapote must grow, each stated in Sapote's
+3. a numbered list of capabilities Phipia must grow, each stated in Phipia's
    own vocabulary of measured profiles, ledger stages, and negative controls.
 
 Those three are the contents of this repository today. Nothing here claims to
@@ -49,18 +49,18 @@ run, because nothing here runs yet. See
 [`PLATFORM_CONTRACT.md`](PLATFORM_CONTRACT.md) for the capability ladder and
 [`ROADMAP.md`](ROADMAP.md) for the order the work is done in.
 
-## Native to Sapote, and only Sapote
+## Native to Phipia, and only Phipia
 
-SapStudio is not portable software that happens to have a Sapote build. It is a
-Sapote application.
+SapStudio is not portable software that happens to have a Phipia build. It is a
+Phipia application.
 
 - There is no portability layer, no `#ifdef` for another operating system, no
   POSIX assumption, and no abstraction whose second implementation would be
   Linux. Host builds exist only to test pure logic; they are evidence, never a
   shipping target.
-- Where Sapote lacks a capability, the answer is to specify and measure that
-  capability in Sapote, not to emulate it inside SapStudio.
-- Where Sapote's contract is narrower than a library expects, the library is
+- Where Phipia lacks a capability, the answer is to specify and measure that
+  capability in Phipia, not to emulate it inside SapStudio.
+- Where Phipia's contract is narrower than a library expects, the library is
   adapted or refused. The contract is not widened to suit a dependency.
 
 This is a constraint chosen on purpose. An editor that owns its operating
@@ -73,7 +73,7 @@ mode that is a named refusal rather than a stall.
 | Concern | Language | Why |
 | --- | --- | --- |
 | Project model, timeline, media library, undo/redo, pipeline coordination, UI state | Rust | The whole application is untrusted-input-shaped and lifetime-shaped. This is the default and the majority. |
-| The single C ABI boundary to Sapote, and later to external codec libraries | C ABI | A boundary exists because Sapote's application ABI is C-shaped, not because a second language is desirable. |
+| The single C ABI boundary to Phipia, and later to external codec libraries | C ABI | A boundary exists because Phipia's application ABI is C-shaped, not because a second language is desirable. |
 | Tiny freestanding shims where the boundary is instruction- or register-shaped | C | A shim is small enough to read in one sitting and holds no state of its own. |
 | Sealed inner loops that a measurement proves need it | C++ | Only after a correct Rust implementation exists to be measured against, and bit-exact with it. |
 
@@ -82,7 +82,7 @@ table and of everything else. The table is a summary; the rules govern.
 
 ## Inherited law
 
-Three habits are taken from Sapote unchanged, because they are why Sapote is
+Three habits are taken from Phipia unchanged, because they are why Phipia is
 worth building an application on.
 
 **Bounded contracts.** A feature is a stated shape with stated maxima. Widening
@@ -111,7 +111,7 @@ under a licence incompatible with GPL-3.0-only.
 | [`ENGINEERING_RULES.md`](ENGINEERING_RULES.md) | The normative rules. Every other document defers to it. |
 | [`DEPENDENCIES.md`](DEPENDENCIES.md) | The open-source map: every component considered, its licence, and its verdict. |
 | [`DEPENDENCY_POLICY.md`](DEPENDENCY_POLICY.md) | How a dependency enters the tree, and how it leaves. |
-| [`PLATFORM_CONTRACT.md`](PLATFORM_CONTRACT.md) | What SapStudio needs from Sapote, and what is proven to work today. |
+| [`PLATFORM_CONTRACT.md`](PLATFORM_CONTRACT.md) | What SapStudio needs from Phipia, and what is proven to work today. |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | The planned crate map and the shape of the data model. |
 | [`ROADMAP.md`](ROADMAP.md) | Milestones, smallest first. |
 | [`VERIFICATION.md`](VERIFICATION.md) | What counts as evidence. |
@@ -119,4 +119,4 @@ under a licence incompatible with GPL-3.0-only.
 | [`GLOSSARY.md`](GLOSSARY.md) | Editing vocabulary, defined exactly enough to implement. |
 
 SapStudio is licensed under [GPL-3.0-only](../LICENSE), the same licence as
-Sapote.
+Phipia.

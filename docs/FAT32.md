@@ -2,23 +2,23 @@
 
 # Persistent FAT32
 
-Sapote v2.0.0 has one bounded FAT32 implementation for two ordinary emulated
+Phipia v2.0.0 has one bounded FAT32 implementation for two ordinary emulated
 NVMe namespaces. It is a kernel-owned filesystem interface, not a POSIX layer,
 general Unix VFS, or stable application ABI.
 
 ## Volumes and identity
 
-The immutable system image is `sapote-system-fat32.raw`. It has volume ID
-`0x20000001`, label `SAPOTESYS`, and contains `BUSYBOX`, `UNAMEBOX`, and
-`CATBOX`. The mount is read-only below Sapote Redwood. Each program still has an
+The immutable system image is `phipia-system-fat32.raw`. It has volume ID
+`0x20000001`, label `PHIPIASYS`, and contains `BUSYBOX`, `UNAMEBOX`, and
+`CATBOX`. The mount is read-only below Phipia Phipia. Each program still has an
 independent filename, size, SHA-256, ELF64, and syscall contract. Historical
 FAT16 images and their release evidence remain unchanged.
 
-The writable data image is `sapote-data-fat32.raw`. It has volume ID
-`0x20000002`, label `SAPOTEDATA`, and is Sapote Redwood's user-data filesystem.
+The writable data image is `phipia-data-fat32.raw`. It has volume ID
+`0x20000002`, label `PHIPIADATA`, and is Phipia Phipia's user-data filesystem.
 The two mounts have separate controller indices, generations, handles, cache
 ownership, identity checks, and access policy. A missing or rejected data image
-does not prevent the system image, kernel, or Sapote Redwood from working.
+does not prevent the system image, kernel, or Phipia Phipia from working.
 
 ## Deterministic geometry
 
@@ -39,17 +39,17 @@ Release images are 64 MiB superfloppies with the following exact geometry:
 Mount validates the primary and backup boot records, BPB and extended record,
 checked sector/cluster arithmetic, FAT32 cluster count and capacity, volume
 identity, both FSInfo sectors, and every sector of both FAT copies. FSInfo free
-and next-free values are hints only; Sapote scans the FAT and replaces them
+and next-free values are hints only; Phipia scans the FAT and replaces them
 with measured values.
 
-Before publishing a mount, Sapote walks the complete live tree. The walk checks
+Before publishing a mount, Phipia walks the complete live tree. The walk checks
 root and subdirectory chains, `.` and `..`, duplicate names, cycles,
 cross-links, leaked clusters, bad/reserved/out-of-range values, exact file
 size-to-chain length, and directory depth/count bounds. Irreconcilable media is
 refused without exposing a partial mount.
 
 The root directory contains no `.` or `..` entries. Every subdirectory created
-by Sapote contains both, and this bounded subset records explicit cluster
+by Phipia contains both, and this bounded subset records explicit cluster
 numbers of at least 2 for each—including `..` when the parent is the root.
 Images using FAT's optional zero-cluster encoding for a root parent are refused
 rather than interpreted ambiguously.
@@ -77,7 +77,7 @@ cannot be unlinked, renamed, or truncated. Files are bounded to 16 MiB.
 
 ## Kernel interface
 
-`include/sapote/fat32_fs.h` exposes mount, unmount, sync, open, close, read,
+`include/phipia/fat32_fs.h` exposes mount, unmount, sync, open, close, read,
 write, seek, stat, list, create, truncate, mkdir, rename, unlink, and rmdir.
 Reads at EOF succeed with a short or zero byte count. Writes report only bytes
 successfully submitted; capacity, file-size, directory, and volume exhaustion
@@ -123,14 +123,14 @@ positive and adversarial host contracts.
 
 ```sh
 make fat32-images
-python3 tools/fat32_image.py inspect build/userspace/sapote-data-fat32.raw
-python3 tools/fat32_image.py verify data build/userspace/sapote-data-fat32.raw
+python3 tools/fat32_image.py inspect build/userspace/phipia-data-fat32.raw
+python3 tools/fat32_image.py verify data build/userspace/phipia-data-fat32.raw
 make verify
 make qemu-tests
 ```
 
 All production evidence uses the normal NVMe submission/completion path and
-Sapote Redwood commands. Host inspection is verification tooling, not a substitute
+Phipia Phipia commands. Host inspection is verification tooling, not a substitute
 for guest filesystem execution.
 
 ## Supported scope

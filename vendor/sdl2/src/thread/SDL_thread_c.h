@@ -28,8 +28,8 @@
 /* Need the definitions of SYS_ThreadHandle */
 #ifdef SDL_THREADS_DISABLED
 #include "generic/SDL_systhread_c.h"
-#elif defined(SDL_THREAD_SAPOTE)
-#include "sapote/SDL_systhread_c.h"
+#elif defined(SDL_THREAD_PHIPIA)
+#include "phipia/SDL_systhread_c.h"
 #elif defined(SDL_THREAD_PTHREAD)
 #include "pthread/SDL_systhread_c.h"
 #elif defined(SDL_THREAD_WINDOWS)

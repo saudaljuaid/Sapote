@@ -101,7 +101,7 @@ SDL_NORETURN void SDL_ExitProcess(int exitcode)
     exit(exitcode);
 #elif defined(__HAIKU__)  /* Haiku has _Exit, but it's not marked noreturn. */
     _exit(exitcode);
-#elif defined(__SAPOTE__)
+#elif defined(__PHIPIA__)
     exit(exitcode);
 #elif defined(HAVE__EXIT) /* Upper case _Exit() */
     _Exit(exitcode);
@@ -618,8 +618,8 @@ const char *SDL_GetPlatform(void)
     return "QNX Neutrino";
 #elif defined(__RISCOS__)
     return "RISC OS";
-#elif defined(__SAPOTE__)
-    return "Sapote";
+#elif defined(__PHIPIA__)
+    return "Phipia";
 #elif defined(__SOLARIS__)
     return "Solaris";
 #elif defined(__WIN32__)

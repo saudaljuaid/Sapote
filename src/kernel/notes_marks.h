@@ -18,8 +18,8 @@
  * Inter is under the SIL Open Font License 1.1; see
  * assets/fonts/Inter-LICENSE.txt.
  */
-#ifndef SAPOTE_NOTES_MARKS_H
-#define SAPOTE_NOTES_MARKS_H
+#ifndef PHIPIA_NOTES_MARKS_H
+#define PHIPIA_NOTES_MARKS_H
 
 #include <stddef.h>
 #include <stdint.h>

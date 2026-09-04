@@ -4,10 +4,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/console.h>
-#include <sapote/cpu.h>
-#include <sapote/ext4_fs.h>
-#include <sapote/nvme.h>
+#include <phipia/console.h>
+#include <phipia/cpu.h>
+#include <phipia/ext4_fs.h>
+#include <phipia/nvme.h>
 
 #define EXT4_MAX_HANDLES SAPFS_MAX_HANDLES
 #define EXT4_CONTROLLER_SYSTEM 0U
@@ -19,7 +19,7 @@
 
 struct ext4_mount_state {
     struct nvme_volume_session session;
-    struct sapote_ext4_identity identity;
+    struct phipia_ext4_identity identity;
     uintptr_t rust_mount;
     uint64_t generation;
     uint64_t media_bytes;
@@ -46,7 +46,7 @@ struct ext4_handle_state {
 static struct ext4_mount_state ext4_mounts[SAPFS_VOLUME_COUNT];
 static struct ext4_handle_state ext4_handles[EXT4_MAX_HANDLES];
 static enum sapfs_status ext4_last_mount_status[SAPFS_VOLUME_COUNT];
-static struct sapote_ext4_mount_diagnostic
+static struct phipia_ext4_mount_diagnostic
     ext4_mount_diagnostics[SAPFS_VOLUME_COUNT];
 static uint64_t next_mount_generation = UINT64_C(1);
 static uint64_t next_handle_generation = UINT64_C(1);
@@ -57,54 +57,54 @@ static bool ext4_test_storage_failure_armed;
 static bool ext4_test_storage_failure_seen;
 static uint32_t ext4_test_storage_failure_target;
 static uint32_t ext4_test_storage_operation;
-static enum sapote_ext4_test_storage_kind ext4_test_storage_failure_kind =
-    SAPOTE_EXT4_TEST_STORAGE_KIND_COUNT;
+static enum phipia_ext4_test_storage_kind ext4_test_storage_failure_kind =
+    PHIPIA_EXT4_TEST_STORAGE_KIND_COUNT;
 
-extern int32_t sapote_ext4_mount(uintptr_t context, uint64_t media_bytes,
-    struct sapote_ext4_identity *identity, uintptr_t *mounted_out);
-extern int32_t sapote_ext4_prepare_unmount(uintptr_t mounted);
-extern int32_t sapote_ext4_sync(uintptr_t mounted);
-extern int32_t sapote_ext4_unmount(uintptr_t mounted);
-extern int32_t sapote_ext4_stat(uintptr_t mounted, const uint8_t *path,
-    size_t path_length, struct sapote_ext4_metadata *metadata);
-extern int32_t sapote_ext4_pread(uintptr_t mounted, const uint8_t *path,
+extern int32_t phipia_ext4_mount(uintptr_t context, uint64_t media_bytes,
+    struct phipia_ext4_identity *identity, uintptr_t *mounted_out);
+extern int32_t phipia_ext4_prepare_unmount(uintptr_t mounted);
+extern int32_t phipia_ext4_sync(uintptr_t mounted);
+extern int32_t phipia_ext4_unmount(uintptr_t mounted);
+extern int32_t phipia_ext4_stat(uintptr_t mounted, const uint8_t *path,
+    size_t path_length, struct phipia_ext4_metadata *metadata);
+extern int32_t phipia_ext4_pread(uintptr_t mounted, const uint8_t *path,
     size_t path_length, uint64_t offset, uint8_t *destination,
     size_t capacity, size_t *read_out);
-extern int32_t sapote_ext4_transaction_probe(uintptr_t mounted,
+extern int32_t phipia_ext4_transaction_probe(uintptr_t mounted,
     const uint8_t *path, size_t path_length, uint64_t offset,
     const uint8_t *source, size_t source_length, size_t *written_out);
-extern int32_t sapote_ext4_truncate_probe(uintptr_t mounted,
+extern int32_t phipia_ext4_truncate_probe(uintptr_t mounted,
     const uint8_t *path, size_t path_length, uint64_t size);
-extern int32_t sapote_ext4_create_file_probe(uintptr_t mounted,
+extern int32_t phipia_ext4_create_file_probe(uintptr_t mounted,
     const uint8_t *path, size_t path_length);
-extern int32_t sapote_ext4_unlink_file_probe(uintptr_t mounted,
+extern int32_t phipia_ext4_unlink_file_probe(uintptr_t mounted,
     const uint8_t *path, size_t path_length);
-extern int32_t sapote_ext4_link_file_probe(uintptr_t mounted,
+extern int32_t phipia_ext4_link_file_probe(uintptr_t mounted,
     const uint8_t *source, size_t source_length, const uint8_t *destination,
     size_t destination_length);
-extern int32_t sapote_ext4_create_directory_probe(uintptr_t mounted,
+extern int32_t phipia_ext4_create_directory_probe(uintptr_t mounted,
     const uint8_t *path, size_t path_length);
-extern int32_t sapote_ext4_remove_directory_probe(uintptr_t mounted,
+extern int32_t phipia_ext4_remove_directory_probe(uintptr_t mounted,
     const uint8_t *path, size_t path_length);
-extern int32_t sapote_ext4_rename_probe(uintptr_t mounted,
+extern int32_t phipia_ext4_rename_probe(uintptr_t mounted,
     const uint8_t *source, size_t source_length, const uint8_t *destination,
     size_t destination_length);
-extern int32_t sapote_ext4_directory_entry(uintptr_t mounted,
+extern int32_t phipia_ext4_directory_entry(uintptr_t mounted,
     const uint8_t *path, size_t path_length, uint64_t index,
-    struct sapote_ext4_directory_entry *entry, bool *present);
+    struct phipia_ext4_directory_entry *entry, bool *present);
 
-_Static_assert(sizeof(struct sapote_ext4_metadata) == 40U,
+_Static_assert(sizeof(struct phipia_ext4_metadata) == 40U,
     "ext4 metadata C/Rust ABI drift");
-_Static_assert(offsetof(struct sapote_ext4_metadata, file_type) == 28U,
+_Static_assert(offsetof(struct phipia_ext4_metadata, file_type) == 28U,
     "ext4 metadata C/Rust ABI offset drift");
-_Static_assert(sizeof(struct sapote_ext4_directory_entry) == 304U,
+_Static_assert(sizeof(struct phipia_ext4_directory_entry) == 304U,
     "ext4 directory C/Rust ABI drift");
-_Static_assert(sizeof(struct sapote_ext4_identity) == 48U,
+_Static_assert(sizeof(struct phipia_ext4_identity) == 48U,
     "ext4 identity C/Rust ABI drift");
-_Static_assert(offsetof(struct sapote_ext4_identity, recovered_transactions) ==
+_Static_assert(offsetof(struct phipia_ext4_identity, recovered_transactions) ==
         32U,
     "ext4 identity C/Rust ABI offset drift");
-_Static_assert(offsetof(struct sapote_ext4_identity, recovery_performed) == 44U,
+_Static_assert(offsetof(struct phipia_ext4_identity, recovery_performed) == 44U,
     "ext4 recovery C/Rust ABI offset drift");
 
 static void zero_bytes(void *pointer, size_t length)
@@ -156,7 +156,7 @@ static bool token_has_prefix(const char *token, size_t token_length,
 bool ext4_backend_test_configure_power_cut(const char *command_line,
     size_t command_line_length)
 {
-    static const char prefix[] = "sapote.ext4-cut=";
+    static const char prefix[] = "phipia.ext4-cut=";
     uint32_t selected = 0U;
     size_t offset = 0U;
     bool found = false;
@@ -220,24 +220,24 @@ bool ext4_backend_test_fail_storage_once(uint32_t operation_ordinal)
     ext4_test_storage_failure_seen = false;
     ext4_test_storage_failure_target = operation_ordinal;
     ext4_test_storage_operation = 0U;
-    ext4_test_storage_failure_kind = SAPOTE_EXT4_TEST_STORAGE_KIND_COUNT;
+    ext4_test_storage_failure_kind = PHIPIA_EXT4_TEST_STORAGE_KIND_COUNT;
     return true;
 }
 
 bool ext4_backend_test_storage_failure_observed(
-    enum sapote_ext4_test_storage_kind expected_kind)
+    enum phipia_ext4_test_storage_kind expected_kind)
 {
     const bool observed = ext4_test_storage_failure_seen &&
         !ext4_test_storage_failure_armed &&
         ext4_test_storage_failure_kind == expected_kind;
 
     ext4_test_storage_failure_seen = false;
-    ext4_test_storage_failure_kind = SAPOTE_EXT4_TEST_STORAGE_KIND_COUNT;
+    ext4_test_storage_failure_kind = PHIPIA_EXT4_TEST_STORAGE_KIND_COUNT;
     return observed;
 }
 
 static bool fail_test_storage_operation(
-    enum sapote_ext4_test_storage_kind kind)
+    enum phipia_ext4_test_storage_kind kind)
 {
     if (!ext4_test_storage_failure_armed) {
         return false;
@@ -258,12 +258,12 @@ static bool fail_test_storage_operation(
 static const char *flush_boundary_name(uint32_t boundary)
 {
     switch (boundary) {
-    case SAPOTE_EXT4_FLUSH_FILESYSTEM_STATE: return "filesystem-state";
-    case SAPOTE_EXT4_FLUSH_ORDERED_DATA: return "ordered-data";
-    case SAPOTE_EXT4_FLUSH_JOURNAL_PAYLOAD: return "journal-payload";
-    case SAPOTE_EXT4_FLUSH_COMMIT: return "commit";
-    case SAPOTE_EXT4_FLUSH_CHECKPOINT: return "checkpoint";
-    case SAPOTE_EXT4_FLUSH_JOURNAL_STATE: return "journal-state";
+    case PHIPIA_EXT4_FLUSH_FILESYSTEM_STATE: return "filesystem-state";
+    case PHIPIA_EXT4_FLUSH_ORDERED_DATA: return "ordered-data";
+    case PHIPIA_EXT4_FLUSH_JOURNAL_PAYLOAD: return "journal-payload";
+    case PHIPIA_EXT4_FLUSH_COMMIT: return "commit";
+    case PHIPIA_EXT4_FLUSH_CHECKPOINT: return "checkpoint";
+    case PHIPIA_EXT4_FLUSH_JOURNAL_STATE: return "journal-state";
     default: return NULL;
     }
 }
@@ -313,29 +313,29 @@ static uint64_t generation(uint64_t *next)
 static enum sapfs_status map_status(int32_t status)
 {
     switch (status) {
-    case SAPOTE_EXT4_STATUS_OK:
+    case PHIPIA_EXT4_STATUS_OK:
         return SAPFS_STATUS_OK;
-    case SAPOTE_EXT4_STATUS_NULL_ARGUMENT:
+    case PHIPIA_EXT4_STATUS_NULL_ARGUMENT:
         return SAPFS_STATUS_INVALID_ARGUMENT;
-    case SAPOTE_EXT4_STATUS_VOLUME:
+    case PHIPIA_EXT4_STATUS_VOLUME:
         return SAPFS_STATUS_NOT_MOUNTED;
-    case SAPOTE_EXT4_STATUS_IO:
+    case PHIPIA_EXT4_STATUS_IO:
         return SAPFS_STATUS_IO;
-    case SAPOTE_EXT4_STATUS_INVALID:
+    case PHIPIA_EXT4_STATUS_INVALID:
         return SAPFS_STATUS_CORRUPT;
-    case SAPOTE_EXT4_STATUS_NOT_FOUND:
+    case PHIPIA_EXT4_STATUS_NOT_FOUND:
         return SAPFS_STATUS_NOT_FOUND;
-    case SAPOTE_EXT4_STATUS_NOT_DIRECTORY:
+    case PHIPIA_EXT4_STATUS_NOT_DIRECTORY:
         return SAPFS_STATUS_NOT_DIRECTORY;
-    case SAPOTE_EXT4_STATUS_IS_DIRECTORY:
+    case PHIPIA_EXT4_STATUS_IS_DIRECTORY:
         return SAPFS_STATUS_IS_DIRECTORY;
-    case SAPOTE_EXT4_STATUS_RANGE:
+    case PHIPIA_EXT4_STATUS_RANGE:
         return SAPFS_STATUS_RANGE;
-    case SAPOTE_EXT4_STATUS_SPECIAL:
+    case PHIPIA_EXT4_STATUS_SPECIAL:
         return SAPFS_STATUS_ACCESS;
-    case SAPOTE_EXT4_STATUS_EXISTS:
+    case PHIPIA_EXT4_STATUS_EXISTS:
         return SAPFS_STATUS_EXISTS;
-    case SAPOTE_EXT4_STATUS_NOT_EMPTY:
+    case PHIPIA_EXT4_STATUS_NOT_EMPTY:
         return SAPFS_STATUS_NOT_EMPTY;
     default:
         return SAPFS_STATUS_CORRUPT;
@@ -385,7 +385,7 @@ static enum sapfs_status begin_operation(
 
 static enum sapfs_status end_operation(
     struct ext4_mount_state *mount,
-    struct sapote_ext4_mount_diagnostic *diagnostic
+    struct phipia_ext4_mount_diagnostic *diagnostic
 )
 {
     enum nvme_status status;
@@ -412,7 +412,7 @@ static enum sapfs_status end_operation(
 }
 
 /* Rust may access storage only through the lease installed by begin_operation(). */
-int32_t sapote_ext4_block_read(
+int32_t phipia_ext4_block_read(
     uintptr_t context,
     uint64_t start_byte,
     uint8_t *destination,
@@ -456,7 +456,7 @@ int32_t sapote_ext4_block_read(
 }
 
 /* Write one checked byte range during an explicitly writable operation. */
-int32_t sapote_ext4_block_write(
+int32_t phipia_ext4_block_write(
     uintptr_t context,
     uint64_t start_byte,
     const uint8_t *source,
@@ -480,7 +480,7 @@ int32_t sapote_ext4_block_write(
         length > mount->media_bytes - start_byte) {
         return -1;
     }
-    if (fail_test_storage_operation(SAPOTE_EXT4_TEST_STORAGE_WRITE)) {
+    if (fail_test_storage_operation(PHIPIA_EXT4_TEST_STORAGE_WRITE)) {
         return -1;
     }
     while (remaining != 0U) {
@@ -515,7 +515,7 @@ int32_t sapote_ext4_block_write(
 }
 
 /* Establish one real NVMe durability boundary for the Rust journal executor. */
-int32_t sapote_ext4_block_flush(uintptr_t context, uint32_t boundary)
+int32_t phipia_ext4_block_flush(uintptr_t context, uint32_t boundary)
 {
     struct ext4_mount_state *mount = (struct ext4_mount_state *)context;
     struct nvme_volume_session *session;
@@ -529,7 +529,7 @@ int32_t sapote_ext4_block_flush(uintptr_t context, uint32_t boundary)
     if (!session->active || !session->writable) {
         return -1;
     }
-    if (fail_test_storage_operation(SAPOTE_EXT4_TEST_STORAGE_FLUSH)) {
+    if (fail_test_storage_operation(PHIPIA_EXT4_TEST_STORAGE_FLUSH)) {
         return -1;
     }
     status = nvme_volume_flush(session);
@@ -543,7 +543,7 @@ int32_t sapote_ext4_block_flush(uintptr_t context, uint32_t boundary)
 static enum sapfs_status checked_stat(
     struct ext4_mount_state *mount,
     const char *path,
-    struct sapote_ext4_metadata *metadata
+    struct phipia_ext4_metadata *metadata
 )
 {
     const size_t length = path_length(path);
@@ -558,14 +558,14 @@ static enum sapfs_status checked_stat(
     if (status != SAPFS_STATUS_OK) {
         return status;
     }
-    status = map_status(sapote_ext4_stat(mount->rust_mount,
+    status = map_status(phipia_ext4_stat(mount->rust_mount,
         (const uint8_t *)path, length, metadata));
     close_status = end_operation(mount, NULL);
     return status != SAPFS_STATUS_OK ? status : close_status;
 }
 
 static void fill_stat(
-    const struct sapote_ext4_metadata *source,
+    const struct phipia_ext4_metadata *source,
     struct sapfs_stat *destination
 )
 {
@@ -576,7 +576,7 @@ static void fill_stat(
     destination->gid = source->gid;
     destination->mode = source->mode;
     destination->links = source->links;
-    destination->directory = source->file_type == SAPOTE_EXT4_FILE_DIRECTORY;
+    destination->directory = source->file_type == PHIPIA_EXT4_FILE_DIRECTORY;
     destination->read_only = true;
 }
 
@@ -645,12 +645,12 @@ void ext4_backend_initialize(void)
     ext4_test_storage_failure_seen = false;
     ext4_test_storage_failure_target = 0U;
     ext4_test_storage_operation = 0U;
-    ext4_test_storage_failure_kind = SAPOTE_EXT4_TEST_STORAGE_KIND_COUNT;
+    ext4_test_storage_failure_kind = PHIPIA_EXT4_TEST_STORAGE_KIND_COUNT;
     for (enum sapfs_volume volume = SAPFS_VOLUME_SYSTEM;
          volume < SAPFS_VOLUME_COUNT; ++volume) {
         ext4_last_mount_status[volume] = SAPFS_STATUS_NOT_MOUNTED;
         ext4_mount_diagnostics[volume].begin_status = SAPFS_STATUS_NOT_MOUNTED;
-        ext4_mount_diagnostics[volume].rust_status = SAPOTE_EXT4_STATUS_COUNT;
+        ext4_mount_diagnostics[volume].rust_status = PHIPIA_EXT4_STATUS_COUNT;
         ext4_mount_diagnostics[volume].close_status = SAPFS_STATUS_NOT_MOUNTED;
         ext4_mount_diagnostics[volume].nvme_close_status = NVME_STATUS_COUNT;
         ext4_mount_diagnostics[volume].nvme_teardown_status =
@@ -680,7 +680,7 @@ enum sapfs_status ext4_backend_mount(enum sapfs_volume volume)
     mount->mounting = true;
     mount->healthy = true;
     ext4_mount_diagnostics[volume].begin_status = SAPFS_STATUS_NOT_MOUNTED;
-    ext4_mount_diagnostics[volume].rust_status = SAPOTE_EXT4_STATUS_COUNT;
+    ext4_mount_diagnostics[volume].rust_status = PHIPIA_EXT4_STATUS_COUNT;
     ext4_mount_diagnostics[volume].close_status = SAPFS_STATUS_NOT_MOUNTED;
     ext4_mount_diagnostics[volume].nvme_close_status = NVME_STATUS_COUNT;
     ext4_mount_diagnostics[volume].nvme_teardown_status = NVME_STATUS_COUNT;
@@ -692,7 +692,7 @@ enum sapfs_status ext4_backend_mount(enum sapfs_volume volume)
         ext4_last_mount_status[volume] = status;
         return status;
     }
-    rust_status = sapote_ext4_mount((uintptr_t)mount, mount->media_bytes,
+    rust_status = phipia_ext4_mount((uintptr_t)mount, mount->media_bytes,
         &mount->identity, &mount->rust_mount);
     ext4_mount_diagnostics[volume].rust_status = rust_status;
     close_status = end_operation(mount, &ext4_mount_diagnostics[volume]);
@@ -703,7 +703,7 @@ enum sapfs_status ext4_backend_mount(enum sapfs_volume volume)
             status : close_status;
 
         if (mount->rust_mount != 0U) {
-            (void)sapote_ext4_unmount(mount->rust_mount);
+            (void)phipia_ext4_unmount(mount->rust_mount);
         }
         zero_bytes(mount, sizeof(*mount));
         ext4_last_mount_status[volume] = result;
@@ -724,7 +724,7 @@ enum sapfs_status ext4_backend_last_mount_status(enum sapfs_volume volume)
 }
 
 bool ext4_backend_mount_diagnostic(enum sapfs_volume volume,
-    struct sapote_ext4_mount_diagnostic *diagnostic)
+    struct phipia_ext4_mount_diagnostic *diagnostic)
 {
     if (!valid_volume(volume) || diagnostic == NULL) {
         return false;
@@ -757,13 +757,13 @@ enum sapfs_status ext4_backend_unmount(enum sapfs_volume volume)
     if (status != SAPFS_STATUS_OK) {
         return status;
     }
-    rust_status = sapote_ext4_prepare_unmount(mount->rust_mount);
+    rust_status = phipia_ext4_prepare_unmount(mount->rust_mount);
     close_status = end_operation(mount, NULL);
     status = map_status(rust_status);
     if (status != SAPFS_STATUS_OK || close_status != SAPFS_STATUS_OK) {
         return status != SAPFS_STATUS_OK ? status : close_status;
     }
-    if (sapote_ext4_unmount(mount->rust_mount) != SAPOTE_EXT4_STATUS_OK) {
+    if (phipia_ext4_unmount(mount->rust_mount) != PHIPIA_EXT4_STATUS_OK) {
         return SAPFS_STATUS_CORRUPT;
     }
     zero_bytes(mount, sizeof(*mount));
@@ -787,7 +787,7 @@ enum sapfs_status ext4_backend_sync(enum sapfs_volume volume)
     if (status != SAPFS_STATUS_OK) {
         return status;
     }
-    status = map_status(sapote_ext4_sync(mount->rust_mount));
+    status = map_status(phipia_ext4_sync(mount->rust_mount));
     close_status = end_operation(mount, NULL);
     return status != SAPFS_STATUS_OK ? status : close_status;
 }
@@ -820,7 +820,7 @@ uint64_t ext4_backend_completion_count(enum sapfs_volume volume)
 }
 
 bool ext4_backend_recovery_report(enum sapfs_volume volume,
-    struct sapote_ext4_recovery_report *report)
+    struct phipia_ext4_recovery_report *report)
 {
     const struct ext4_mount_state *mount;
 
@@ -839,7 +839,7 @@ bool ext4_backend_recovery_report(enum sapfs_volume volume,
 enum sapfs_status ext4_backend_open(enum sapfs_volume volume,
     const char *path, enum sapfs_access access, sapfs_handle *handle)
 {
-    struct sapote_ext4_metadata metadata;
+    struct phipia_ext4_metadata metadata;
     enum sapfs_status status;
 
     if (handle == NULL || !valid_volume(volume)) {
@@ -853,7 +853,7 @@ enum sapfs_status ext4_backend_open(enum sapfs_volume volume,
     if (status != SAPFS_STATUS_OK) {
         return status;
     }
-    if (metadata.file_type == SAPOTE_EXT4_FILE_DIRECTORY) {
+    if (metadata.file_type == PHIPIA_EXT4_FILE_DIRECTORY) {
         return SAPFS_STATUS_IS_DIRECTORY;
     }
     return allocate_handle(volume, path, metadata.size, false, handle);
@@ -898,7 +898,7 @@ enum sapfs_status ext4_backend_pread(sapfs_handle handle,
     if (status != SAPFS_STATUS_OK) {
         return status;
     }
-    status = map_status(sapote_ext4_pread(mount->rust_mount,
+    status = map_status(phipia_ext4_pread(mount->rust_mount,
         (const uint8_t *)state->path, path_length(state->path), offset,
         destination, capacity, read_bytes));
     close_status = end_operation(mount, NULL);
@@ -946,7 +946,7 @@ enum sapfs_status ext4_backend_transaction_probe(enum sapfs_volume volume,
     if (status != SAPFS_STATUS_OK) {
         return status;
     }
-    status = map_status(sapote_ext4_transaction_probe(mount->rust_mount,
+    status = map_status(phipia_ext4_transaction_probe(mount->rust_mount,
         (const uint8_t *)path, length, offset, source, source_bytes,
         written_bytes));
     close_status = end_operation(mount, NULL);
@@ -969,7 +969,7 @@ enum sapfs_status ext4_backend_truncate_probe(enum sapfs_volume volume,
     if (status != SAPFS_STATUS_OK) {
         return status;
     }
-    status = map_status(sapote_ext4_truncate_probe(mount->rust_mount,
+    status = map_status(phipia_ext4_truncate_probe(mount->rust_mount,
         (const uint8_t *)path, length, size));
     close_status = end_operation(mount, NULL);
     return status != SAPFS_STATUS_OK ? status : close_status;
@@ -991,7 +991,7 @@ enum sapfs_status ext4_backend_create_file_probe(enum sapfs_volume volume,
     if (status != SAPFS_STATUS_OK) {
         return status;
     }
-    status = map_status(sapote_ext4_create_file_probe(mount->rust_mount,
+    status = map_status(phipia_ext4_create_file_probe(mount->rust_mount,
         (const uint8_t *)path, length));
     close_status = end_operation(mount, NULL);
     return status != SAPFS_STATUS_OK ? status : close_status;
@@ -1013,7 +1013,7 @@ enum sapfs_status ext4_backend_unlink_file_probe(enum sapfs_volume volume,
     if (status != SAPFS_STATUS_OK) {
         return status;
     }
-    status = map_status(sapote_ext4_unlink_file_probe(mount->rust_mount,
+    status = map_status(phipia_ext4_unlink_file_probe(mount->rust_mount,
         (const uint8_t *)path, length));
     close_status = end_operation(mount, NULL);
     return status != SAPFS_STATUS_OK ? status : close_status;
@@ -1038,7 +1038,7 @@ enum sapfs_status ext4_backend_link_file_probe(enum sapfs_volume volume,
     if (status != SAPFS_STATUS_OK) {
         return status;
     }
-    status = map_status(sapote_ext4_link_file_probe(mount->rust_mount,
+    status = map_status(phipia_ext4_link_file_probe(mount->rust_mount,
         (const uint8_t *)source, source_length,
         (const uint8_t *)destination, destination_length));
     close_status = end_operation(mount, NULL);
@@ -1061,7 +1061,7 @@ enum sapfs_status ext4_backend_create_directory_probe(
     if (status != SAPFS_STATUS_OK) {
         return status;
     }
-    status = map_status(sapote_ext4_create_directory_probe(mount->rust_mount,
+    status = map_status(phipia_ext4_create_directory_probe(mount->rust_mount,
         (const uint8_t *)path, length));
     close_status = end_operation(mount, NULL);
     return status != SAPFS_STATUS_OK ? status : close_status;
@@ -1083,7 +1083,7 @@ enum sapfs_status ext4_backend_remove_directory_probe(
     if (status != SAPFS_STATUS_OK) {
         return status;
     }
-    status = map_status(sapote_ext4_remove_directory_probe(mount->rust_mount,
+    status = map_status(phipia_ext4_remove_directory_probe(mount->rust_mount,
         (const uint8_t *)path, length));
     close_status = end_operation(mount, NULL);
     return status != SAPFS_STATUS_OK ? status : close_status;
@@ -1108,7 +1108,7 @@ enum sapfs_status ext4_backend_rename_probe(enum sapfs_volume volume,
     if (status != SAPFS_STATUS_OK) {
         return status;
     }
-    status = map_status(sapote_ext4_rename_probe(mount->rust_mount,
+    status = map_status(phipia_ext4_rename_probe(mount->rust_mount,
         (const uint8_t *)source, source_length,
         (const uint8_t *)destination, destination_length));
     close_status = end_operation(mount, NULL);
@@ -1169,7 +1169,7 @@ enum sapfs_status ext4_backend_seek(sapfs_handle handle, int64_t offset,
 enum sapfs_status ext4_backend_stat_path(enum sapfs_volume volume,
     const char *path, struct sapfs_stat *stat)
 {
-    struct sapote_ext4_metadata metadata;
+    struct phipia_ext4_metadata metadata;
     enum sapfs_status status;
 
     if (stat == NULL || !valid_volume(volume)) {
@@ -1183,7 +1183,7 @@ enum sapfs_status ext4_backend_stat_path(enum sapfs_volume volume,
     return status;
 }
 
-static void fill_entry(const struct sapote_ext4_directory_entry *source,
+static void fill_entry(const struct phipia_ext4_directory_entry *source,
     struct sapfs_list_entry *destination)
 {
     zero_bytes(destination, sizeof(*destination));
@@ -1193,13 +1193,13 @@ static void fill_entry(const struct sapote_ext4_directory_entry *source,
     destination->object_id = source->metadata.inode;
     destination->mode = source->metadata.mode;
     destination->directory =
-        source->metadata.file_type == SAPOTE_EXT4_FILE_DIRECTORY;
+        source->metadata.file_type == PHIPIA_EXT4_FILE_DIRECTORY;
 }
 
 static enum sapfs_status indexed_entry(struct ext4_handle_state *state,
     uint64_t index, struct sapfs_list_entry *entry, bool *present)
 {
-    struct sapote_ext4_directory_entry raw;
+    struct phipia_ext4_directory_entry raw;
     struct ext4_mount_state *mount = &ext4_mounts[state->volume];
     enum sapfs_status status = begin_operation(mount, false);
     enum sapfs_status close_status;
@@ -1208,7 +1208,7 @@ static enum sapfs_status indexed_entry(struct ext4_handle_state *state,
         return status;
     }
     zero_bytes(&raw, sizeof(raw));
-    status = map_status(sapote_ext4_directory_entry(mount->rust_mount,
+    status = map_status(phipia_ext4_directory_entry(mount->rust_mount,
         (const uint8_t *)state->path, path_length(state->path), index, &raw,
         present));
     close_status = end_operation(mount, NULL);
@@ -1226,7 +1226,7 @@ static enum sapfs_status indexed_entry(struct ext4_handle_state *state,
 enum sapfs_status ext4_backend_directory_open(enum sapfs_volume volume,
     const char *path, sapfs_handle *handle)
 {
-    struct sapote_ext4_metadata metadata;
+    struct phipia_ext4_metadata metadata;
     enum sapfs_status status;
 
     if (!valid_volume(volume) || handle == NULL) {
@@ -1237,7 +1237,7 @@ enum sapfs_status ext4_backend_directory_open(enum sapfs_volume volume,
     if (status != SAPFS_STATUS_OK) {
         return status;
     }
-    if (metadata.file_type != SAPOTE_EXT4_FILE_DIRECTORY) {
+    if (metadata.file_type != PHIPIA_EXT4_FILE_DIRECTORY) {
         return SAPFS_STATUS_NOT_DIRECTORY;
     }
     return allocate_handle(volume, path, metadata.size, true, handle);

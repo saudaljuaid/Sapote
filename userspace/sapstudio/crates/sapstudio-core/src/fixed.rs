@@ -2,7 +2,7 @@
 //! Fixed-point arithmetic, and the power function built on it.
 //!
 //! A transfer function is a power law and a decibel is a logarithm, so both
-//! the picture side and the sound side need `pow`. Sapote has no libm, and
+//! the picture side and the sound side need `pow`. Phipia has no libm, and
 //! even where one exists R-4.1 would not accept it: `pow`, `exp` and `log` are
 //! not specified bit-for-bit by IEEE 754, so two machines with different
 //! libraries produce different pixels — and different samples — for the same
@@ -16,7 +16,7 @@
 //! trust. `pow(x, y)` is `exp2(y · log2(x))`.
 //!
 //! Every operation is deterministic on every machine, for ever, with no
-//! floating point anywhere — which is also what makes it work on Sapote, where
+//! floating point anywhere — which is also what makes it work on Phipia, where
 //! there is no guarantee a Ring 3 program may execute a single floating-point
 //! instruction. What it costs is speed, and the pipeline pays that once: these
 //! functions build tables, they do not run per sample.

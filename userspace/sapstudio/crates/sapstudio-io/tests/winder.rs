@@ -9,7 +9,7 @@
 //!
 //! Why it exists: `encode` returns a `Vec<u8>`, and a reel this build writes
 //! is bounded at five hundred and twelve mebibytes against the seventy-six
-//! kilobytes a Sapote program is mapped. One row of a 1920-wide RGB picture is
+//! kilobytes a Phipia program is mapped. One row of a 1920-wide RGB picture is
 //! 5,760 bytes.
 
 use sapstudio_abi::seam::{Slot, Storage};

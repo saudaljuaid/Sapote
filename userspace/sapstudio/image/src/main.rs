@@ -8,9 +8,9 @@
 //! `sapstudio_rt::start` does not do in the open, because a program that does
 //! work before its entry point is a program with a hidden runtime (R-1.8).
 
-/// Where Sapote begins.
+/// Where Phipia begins.
 ///
-/// Sapote enters a program at the address in the ELF header with a guarded
+/// Phipia enters a program at the address in the ELF header with a guarded
 /// stack and a private address space, and expects never to see it return —
 /// the program leaves through the boundary's `Exit` call or not at all.
 #[unsafe(no_mangle)]

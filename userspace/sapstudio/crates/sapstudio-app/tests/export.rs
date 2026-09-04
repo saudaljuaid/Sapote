@@ -945,7 +945,7 @@ fn an_exported_reels_sound_is_the_mix_over_the_whole_span() {
 #[test]
 fn exporting_sound_never_holds_more_than_one_frame_of_it() {
     // The measurement for the sound half. Ten seconds of 48 kHz stereo is
-    // 3,840,000 bytes against the 76 KiB a Sapote program is mapped; one frame
+    // 3,840,000 bytes against the 76 KiB a Phipia program is mapped; one frame
     // of it is 1602 samples of two channels, which is 12,816 bytes.
     let rate = Timebase::NTSC_30;
     let (project, sequence, mut library) = with_a_sound_track(rate);

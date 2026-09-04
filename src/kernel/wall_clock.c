@@ -3,8 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/cpu.h>
-#include <sapote/wall_clock.h>
+#include <phipia/cpu.h>
+#include <phipia/wall_clock.h>
 
 #define RTC_INDEX_PORT UINT16_C(0x70)
 #define RTC_DATA_PORT UINT16_C(0x71)

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! `SSV1`: a media store that lives inside one of Sapote's files.
+//! `SSV1`: a media store that lives inside one of Phipia's files.
 //!
 //! ## Why a store rather than a directory
 //!
-//! Three numbers from Sapote's filesystem decide this, and none of them is a
+//! Three numbers from Phipia's filesystem decide this, and none of them is a
 //! criticism — they are what a bounded, provable filesystem costs:
 //!
 //! - a directory holds **sixty-four** live entries, and the mount validator
@@ -22,7 +22,7 @@
 //! So a vault is **one** file, 8.3-named like everything else, whose inside
 //! SapStudio owns: an index and a payload, holding as many pieces of material
 //! as fit, each keyed by what it *is* and carrying the name it arrived with.
-//! Sapote's Files app sees one item; SapStudio sees the library.
+//! Phipia's Files app sees one item; SapStudio sees the library.
 //!
 //! ## The layout
 //!
@@ -60,7 +60,7 @@
 //! Every digest is **recomputed** from the bytes rather than believed, which
 //! is the decision a title and a nest both make and for the same reason: a
 //! file that says a piece of material is something it is not would repoint
-//! every clip that referred to it. Sapote's FAT32 is explicitly not journaled
+//! every clip that referred to it. Phipia's FAT32 is explicitly not journaled
 //! and says an interruption may leave inconsistency; this is what turns that
 //! from a silent wrong answer into a named refusal.
 //!
@@ -74,7 +74,7 @@ use sapstudio_abi::seam::{Slot, Storage};
 use sapstudio_core::{Digest, Sha256};
 
 use crate::bytes::{Reader, Writer};
-use crate::sapote;
+use crate::phipia;
 use crate::status::{IoStatus, Result};
 
 /// What a vault file begins with.
@@ -92,25 +92,25 @@ pub const ENTRY_BYTES: usize = 112;
 /// How many bytes of name one item may carry.
 ///
 /// Sixty-two, which is what is left of an entry once the digest, the span and
-/// the length are in it — and which is five times what Sapote's 8.3 names can
+/// the length are in it — and which is five times what Phipia's 8.3 names can
 /// express. That ratio is the point of the whole module.
 pub const MAX_NAME_BYTES: usize = 62;
 
 /// How many items one vault may hold.
 ///
-/// Two hundred and fifty-six: four times Sapote's per-directory limit, and
+/// Two hundred and fifty-six: four times Phipia's per-directory limit, and
 /// bounded so the index is a known size. The index at this count is 28,728
-/// bytes, which leaves 16,748,488 of Sapote's sixteen-mebibyte file for
+/// bytes, which leaves 16,748,488 of Phipia's sixteen-mebibyte file for
 /// material — derived rather than chosen, and asserted below.
 pub const MAX_ITEMS: usize = 256;
 
 /// How many bytes of payload fit once a full index is in the file.
 pub const MAX_PAYLOAD_BYTES: usize =
-    sapote::MAX_FILE_BYTES - HEADER_BYTES - ENTRY_BYTES * MAX_ITEMS;
+    phipia::MAX_FILE_BYTES - HEADER_BYTES - ENTRY_BYTES * MAX_ITEMS;
 
 const _: () = assert!(
     MAX_PAYLOAD_BYTES == 16_748_488,
-    "the payload bound is derived from Sapote's file bound and the index"
+    "the payload bound is derived from Phipia's file bound and the index"
 );
 
 /// One piece of material in a vault.
@@ -130,7 +130,7 @@ impl Item {
 
     /// What it was called when it arrived.
     ///
-    /// The one thing a vault carries that Sapote's filesystem cannot. It is a
+    /// The one thing a vault carries that Phipia's filesystem cannot. It is a
     /// hint for a person, never an identity: two items with one name are two
     /// items, and the digest is what says whether they are the same material.
     #[must_use]
@@ -287,7 +287,7 @@ pub fn encode(vault: &Vault) -> Result<Vec<u8>> {
         )
         .and_then(|index| index.checked_add(payload))
         .ok_or(IoStatus::TooMany)?;
-    let mut writer = Writer::new(sapote::MAX_FILE_BYTES);
+    let mut writer = Writer::new(phipia::MAX_FILE_BYTES);
     writer.bytes(&MAGIC)?;
     writer.u16(FORMAT_VERSION)?;
     writer.u16(0)?;
@@ -366,7 +366,7 @@ pub fn decode(file: &[u8]) -> Result<Vault> {
     }
     let stated = Digest::new(reader.digest_bytes()?);
 
-    // The seal, before a single field below it is believed. Sapote's FAT32 is
+    // The seal, before a single field below it is believed. Phipia's FAT32 is
     // explicitly not journaled and says an interruption may leave a file it
     // will refuse at the next mount; this is the same answer one level up.
     if seal(file) != stated {
@@ -561,14 +561,14 @@ impl Entry {
 
 /// A vault read through the seam, an entry at a time.
 ///
-/// **This is the shape the target requires.** One of Sapote's files holds
-/// sixteen mebibytes and a Sapote program is mapped seventy-six kilobytes, so
+/// **This is the shape the target requires.** One of Phipia's files holds
+/// sixteen mebibytes and a Phipia program is mapped seventy-six kilobytes, so
 /// [`decode`] — which builds the whole vault in memory — cannot run against a
 /// full one on the machine this is for, by three orders of magnitude. A
 /// catalogue never holds more than its header and one entry, and asks storage
 /// for material only when somebody wants that material.
 ///
-/// It is also what Sapote does. Its own bitmap importer issues random row
+/// It is also what Phipia does. Its own bitmap importer issues random row
 /// reads through the filesystem rather than holding a picture, which is the
 /// same decision one layer down.
 ///
@@ -914,7 +914,7 @@ pub fn store(vault: &Vault, storage: &mut dyn Storage) -> Result<Digest> {
 
 /// Read the committed vault, whole.
 ///
-/// For a caller with room for it. On Sapote there is not: use
+/// For a caller with room for it. On Phipia there is not: use
 /// [`Catalogue::open`], which reads a header and asks for material only when
 /// somebody wants material.
 ///

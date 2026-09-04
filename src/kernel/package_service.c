@@ -3,10 +3,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/fat32_fs.h>
-#include <sapote/heap.h>
-#include <sapote/package_service.h>
-#include <sapote/package_state.h>
+#include <phipia/fat32_fs.h>
+#include <phipia/heap.h>
+#include <phipia/package_service.h>
+#include <phipia/package_state.h>
 
 #define FILE_PATH_BYTES 128U
 #define FILE_MODE_OFFSET 136U

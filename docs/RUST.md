@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
 
-# Rust in Sapote
+# Rust in Phipia
 
-Rust has two separate roles in Sapote: validating selected byte
+Rust has two separate roles in Phipia: validating selected byte
 streams at the kernel boundary, and supporting freestanding native
 applications through the public ABI. C and x86_64 assembly continue to own
 hardware, page tables, interrupt entry, context switches, and kernel resource
@@ -16,7 +16,7 @@ and encodings dominate the risk. Today it validates:
 | Module | Input |
 | --- | --- |
 | `font.rs`, `ui_font.rs` | packed bitmap-font headers and glyph data |
-| `logo.rs` | the deterministic runtime Sapote S-mark stream |
+| `logo.rs` | the deterministic runtime Phipia S-mark stream |
 | `fat16.rs`, `linux_fat16.rs` | FAT16 geometry, chains, root entries, and payload digests |
 | `fat32.rs` | FAT32 BPB/FSInfo geometry, cluster classes, paths, names, and directory entries |
 | `ext4.rs` | checked ext4 superblock, group-descriptor, namespace, journal-inode map, and JBD2 profile admission through pinned `ext4plus` |
@@ -63,10 +63,10 @@ kernel entry point.
 
 ## Native application crate
 
-`rust/sapote` is a separate `#![no_std]` application crate. It supplies the
+`rust/phipia` is a separate `#![no_std]` application crate. It supplies the
 native entry shim, panic-to-exit behavior, a page-mapping global allocator,
 typed handle cleanup, and wrappers for files, monotonic time, sleeping,
-entropy, event waits, Redwood windows and surfaces, DNS, TCP, threads, futexes,
+entropy, event waits, Phipia windows and surfaces, DNS, TCP, threads, futexes,
 and FS-base TLS control. It uses `alloc` without a `std` runtime.
 
 `apps/native-rust` builds with Cargo's `x86_64-unknown-none` target in locked

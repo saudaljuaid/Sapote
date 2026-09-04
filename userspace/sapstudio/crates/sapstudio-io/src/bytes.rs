@@ -290,8 +290,8 @@ impl Writer {
 /// which is what lets the same reel reader serve both without knowing which it
 /// has.
 ///
-/// It exists because of a number. One of Sapote's files holds sixteen
-/// mebibytes and a Sapote program is mapped seventy-six kilobytes, so every
+/// It exists because of a number. One of Phipia's files holds sixteen
+/// mebibytes and a Phipia program is mapped seventy-six kilobytes, so every
 /// reader in this crate that takes a `&[u8]` is a reader that cannot run on
 /// the target against a real file. A reader that takes one of these can.
 pub trait Extent {
@@ -301,7 +301,7 @@ pub trait Extent {
     /// Copy a run beginning at `offset`, and say how many bytes that was.
     ///
     /// **Short at the end rather than refused**, matching
-    /// [`sapstudio_abi::seam::Storage::read_at`] and, underneath it, Sapote's
+    /// [`sapstudio_abi::seam::Storage::read_at`] and, underneath it, Phipia's
     /// `sapfs_read`: a run beginning at or past the end fills nothing and says
     /// nought, which is not an error.
     ///
@@ -336,7 +336,7 @@ impl Extent for &[u8] {
 ///
 /// It exists because of the same number [`Extent`] exists for, in the other
 /// direction. A reel this build writes is bounded at five hundred and twelve
-/// mebibytes and a Sapote program is mapped seventy-six kilobytes, so every
+/// mebibytes and a Phipia program is mapped seventy-six kilobytes, so every
 /// writer in this crate that returns a `Vec<u8>` is a writer that cannot run
 /// on the target against a real reel. A writer that takes one of these can.
 pub trait Sink {

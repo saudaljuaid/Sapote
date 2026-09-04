@@ -24,7 +24,7 @@ def text_field(value: str, size: int, field: str) -> bytes:
     if not encoded or len(encoded) >= size or any(
             not (character.isalnum() or character in "._-/ ")
             for character in value):
-        raise ValueError(f"{field} does not fit the Sapote text profile")
+        raise ValueError(f"{field} does not fit the Phipia text profile")
     return encoded + bytes(size - len(encoded))
 
 

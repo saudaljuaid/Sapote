@@ -3,41 +3,41 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sapote/boot_ledger.h>
-#include <sapote/camera.h>
-#include <sapote/clock.h>
-#include <sapote/console.h>
-#include <sapote/cursor.h>
-#include <sapote/cpu.h>
-#include <sapote/dialog.h>
-#include <sapote/dock3d.h>
-#include <sapote/editor.h>
-#include <sapote/explorer.h>
-#include <sapote/framebuffer.h>
-#include <sapote/fat32_fs.h>
-#include <sapote/heap.h>
-#include <sapote/logo.h>
-#include <sapote/memory.h>
-#include <sapote/network.h>
-#include <sapote/notes.h>
-#include <sapote/paint.h>
-#include <sapote/pci.h>
-#include <sapote/phipia_camera.h>
-#include <sapote/pointer.h>
-#include <sapote/rtc.h>
-#include <sapote/screen.h>
-#include <sapote/settings.h>
-#include <sapote/studio_icon.h>
-#include <sapote/store.h>
-#include <sapote/taskbar.h>
-#include <sapote/taskmgr.h>
-#include <sapote/terminal.h>
-#include <sapote/thread.h>
-#include <sapote/timer.h>
-#include <sapote/ui.h>
-#include <sapote/ui_anim.h>
-#include <sapote/ui_font.h>
-#include <sapote/wallpaper.h>
+#include <phipia/boot_ledger.h>
+#include <phipia/camera.h>
+#include <phipia/clock.h>
+#include <phipia/console.h>
+#include <phipia/cursor.h>
+#include <phipia/cpu.h>
+#include <phipia/dialog.h>
+#include <phipia/dock3d.h>
+#include <phipia/editor.h>
+#include <phipia/explorer.h>
+#include <phipia/framebuffer.h>
+#include <phipia/fat32_fs.h>
+#include <phipia/heap.h>
+#include <phipia/logo.h>
+#include <phipia/memory.h>
+#include <phipia/network.h>
+#include <phipia/notes.h>
+#include <phipia/paint.h>
+#include <phipia/pci.h>
+#include <phipia/phipia_camera.h>
+#include <phipia/pointer.h>
+#include <phipia/rtc.h>
+#include <phipia/screen.h>
+#include <phipia/settings.h>
+#include <phipia/studio_icon.h>
+#include <phipia/store.h>
+#include <phipia/taskbar.h>
+#include <phipia/taskmgr.h>
+#include <phipia/terminal.h>
+#include <phipia/thread.h>
+#include <phipia/timer.h>
+#include <phipia/ui.h>
+#include <phipia/ui_anim.h>
+#include <phipia/ui_font.h>
+#include <phipia/wallpaper.h>
 
 #define UI_MIN_WIDTH 800U
 #define UI_MIN_HEIGHT 600U
@@ -269,10 +269,10 @@ static enum ui_panel_id panel_drag_panel;
 static struct ui_point panel_drag_anchor;
 static struct ui_rect panel_drag_origin;
 static uint64_t taskmgr_last_refresh_second = UINT64_MAX;
-static const char *self_test_failure = "Sapote Redwood UI self-test not run";
+static const char *self_test_failure = "Phipia UI self-test not run";
 static const char *event_queue_failure = "UI event queue self-test not run";
 static const char *installed_proof_failure =
-    "Sapote Redwood installed proof not run";
+    "Phipia installed proof not run";
 
 struct ui_native_window_record {
     char title[UI_NATIVE_TITLE_BYTES];
@@ -2332,7 +2332,7 @@ static bool entry_path(const char *name, char *path)
 static bool file_is_internal(const char *name)
 {
     static const char *const internal[] = {
-        "SAPSTUDI.SAP", "STUTEMP.SAP", "STUBACK.SAP",
+        "MEDIAEDT.PHI", "STUTEMP.PHI", "STUBACK.PHI",
         "STUOUT.BMP", "OUTBACK.BMP", "PNTTEMP.BMP", "PNTBACK.BMP"
     };
 
@@ -2402,7 +2402,7 @@ static enum explorer_kind explorer_kind_for(
     }
     if (file_suffix(entry->name, ".zip") ||
             file_suffix(entry->name, ".pkg") ||
-            file_suffix(entry->name, ".sap")) {
+            file_suffix(entry->name, ".phi")) {
         return EXPLORER_ARCHIVE;
     }
     if (file_suffix(entry->name, ".c") || file_suffix(entry->name, ".h") ||
@@ -3188,9 +3188,9 @@ static enum sapfs_status studio_regular_presence(
 
 static enum sapfs_status studio_recover_project(void)
 {
-    static const char project[] = "SAPSTUDI.SAP";
-    static const char scratch[] = "STUTEMP.SAP";
-    static const char backup[] = "STUBACK.SAP";
+    static const char project[] = "MEDIAEDT.PHI";
+    static const char scratch[] = "STUTEMP.PHI";
+    static const char backup[] = "STUBACK.PHI";
     bool primary = false;
     bool saved = false;
     bool staged = false;
@@ -3229,7 +3229,7 @@ static enum sapfs_status studio_recover_project(void)
 
 static enum sapfs_status studio_load(void)
 {
-    static const char project[] = "SAPSTUDI.SAP";
+    static const char project[] = "MEDIAEDT.PHI";
     uint8_t bytes[UI_STUDIO_PROJECT_BYTES];
     struct sapfs_stat stat;
     sapfs_handle handle;
@@ -3282,7 +3282,7 @@ static enum sapfs_status studio_load(void)
 
 static enum sapfs_status studio_write_scratch(const uint8_t *bytes)
 {
-    static const char scratch[] = "STUTEMP.SAP";
+    static const char scratch[] = "STUTEMP.PHI";
     sapfs_handle handle;
     size_t written = 0U;
     enum sapfs_status status = sapfs_create(SAPFS_VOLUME_DATA, scratch);
@@ -3313,9 +3313,9 @@ static enum sapfs_status studio_write_scratch(const uint8_t *bytes)
 
 static enum sapfs_status studio_save(void)
 {
-    static const char project[] = "SAPSTUDI.SAP";
-    static const char scratch[] = "STUTEMP.SAP";
-    static const char backup[] = "STUBACK.SAP";
+    static const char project[] = "MEDIAEDT.PHI";
+    static const char scratch[] = "STUTEMP.PHI";
+    static const char backup[] = "STUBACK.PHI";
     uint8_t bytes[UI_STUDIO_PROJECT_BYTES];
     struct sapfs_stat stat;
     bool original_exists = false;
@@ -3984,7 +3984,7 @@ static enum sapfs_status paint_save(void)
  * The imported Media Editor owns the text/effect timeline while the older
  * project service still owns the source BMP and its crash-safe import/export
  * path.  Keep those two concerns in separate, independently recoverable
- * files: existing SAPSTUDI.SAP projects continue to open, and PHIPMED.SAP
+ * files: existing MEDIAEDT.PHI projects continue to open, and PHIPMED.PHI
  * records exactly the state the new editor exposes.
  */
 static void media_editor_clear_items(void)
@@ -4115,9 +4115,9 @@ static bool media_editor_decode(const uint8_t *bytes)
 
 static enum sapfs_status media_editor_recover(void)
 {
-    static const char project[] = "PHIPMED.SAP";
-    static const char scratch[] = "MEDTEMP.SAP";
-    static const char backup[] = "MEDBACK.SAP";
+    static const char project[] = "PHIPMED.PHI";
+    static const char scratch[] = "MEDTEMP.PHI";
+    static const char backup[] = "MEDBACK.PHI";
     bool primary = false;
     bool staged = false;
     bool saved = false;
@@ -4155,7 +4155,7 @@ static enum sapfs_status media_editor_recover(void)
 
 static enum sapfs_status media_editor_load(void)
 {
-    static const char project[] = "PHIPMED.SAP";
+    static const char project[] = "PHIPMED.PHI";
     uint8_t bytes[UI_MEDIA_PROJECT_BYTES];
     struct sapfs_stat stat;
     sapfs_handle handle = 0U;
@@ -4203,7 +4203,7 @@ static enum sapfs_status media_editor_load(void)
 
 static enum sapfs_status media_editor_write_scratch(const uint8_t *bytes)
 {
-    static const char scratch[] = "MEDTEMP.SAP";
+    static const char scratch[] = "MEDTEMP.PHI";
     sapfs_handle handle = 0U;
     enum sapfs_status status = studio_remove_if_present(scratch);
 
@@ -4234,9 +4234,9 @@ static enum sapfs_status media_editor_write_scratch(const uint8_t *bytes)
 
 static enum sapfs_status media_editor_save_timeline(void)
 {
-    static const char project[] = "PHIPMED.SAP";
-    static const char scratch[] = "MEDTEMP.SAP";
-    static const char backup[] = "MEDBACK.SAP";
+    static const char project[] = "PHIPMED.PHI";
+    static const char scratch[] = "MEDTEMP.PHI";
+    static const char backup[] = "MEDBACK.PHI";
     uint8_t bytes[UI_MEDIA_PROJECT_BYTES];
     struct sapfs_stat stat;
     bool original_exists = false;
@@ -4827,7 +4827,7 @@ static enum ui_status draw_settings_wallpaper_choice(
         return UI_STATUS_BAD_ELEMENT;
     }
     if (clipped.width != 0U && clipped.height != 0U) {
-        if (sapote_wallpaper_decode((uint32_t)index,
+        if (phipia_wallpaper_decode((uint32_t)index,
                 settings_wallpaper_thumbnail_pixels, 128U * 72U,
                 preview.width, preview.height, logo_red_shift,
                 logo_green_shift, logo_blue_shift) != WALLPAPER_STATUS_OK) {
@@ -4959,7 +4959,7 @@ static enum ui_status draw_settings_app(struct ui_rect damage)
 static bool select_desktop_wallpaper(uint8_t index)
 {
     if (index >= UI_WALLPAPER_COUNT ||
-        sapote_wallpaper_decode(index, wallpaper_pixels, 1024U * 768U,
+        phipia_wallpaper_decode(index, wallpaper_pixels, 1024U * 768U,
             1024U, 768U, logo_red_shift, logo_green_shift,
             logo_blue_shift) != WALLPAPER_STATUS_OK) {
         return false;
@@ -7740,12 +7740,12 @@ enum ui_status ui_construct(bool pointer_present)
         return status;
     }
     panel_home = state.layout.panel;
-    if (sapote_logo_geometry(&logo_width, &logo_height) != LOGO_STATUS_OK ||
+    if (phipia_logo_geometry(&logo_width, &logo_height) != LOGO_STATUS_OK ||
         logo_width != UI_LOGO_WIDTH || logo_height != UI_LOGO_HEIGHT ||
-        sapote_logo_decode(logo_pixels, UI_LOGO_PIXELS,
+        phipia_logo_decode(logo_pixels, UI_LOGO_PIXELS,
             framebuffer.red_position, framebuffer.green_position,
             framebuffer.blue_position, 0U) != LOGO_STATUS_OK ||
-        sapote_logo_decode_alpha(logo_alpha, UI_LOGO_PIXELS) !=
+        phipia_logo_decode_alpha(logo_alpha, UI_LOGO_PIXELS) !=
             LOGO_STATUS_OK) {
         canvas = NULL;
         return UI_STATUS_LOGO_FAILURE;
@@ -7753,123 +7753,123 @@ enum ui_status ui_construct(bool pointer_present)
     logo_red_shift = framebuffer.red_position;
     logo_green_shift = framebuffer.green_position;
     logo_blue_shift = framebuffer.blue_position;
-    if (sapote_studio_icon_geometry(&studio_icon_width,
+    if (phipia_studio_icon_geometry(&studio_icon_width,
             &studio_icon_height) != LOGO_STATUS_OK ||
         studio_icon_width == 0U || studio_icon_width > 80U ||
         studio_icon_height == 0U || studio_icon_height > 80U ||
-        sapote_studio_icon_decode(studio_icon_pixels,
+        phipia_studio_icon_decode(studio_icon_pixels,
             (size_t)studio_icon_width * studio_icon_height,
             framebuffer.red_position, framebuffer.green_position,
             framebuffer.blue_position, 0U) != LOGO_STATUS_OK ||
-        sapote_studio_icon_decode_alpha(studio_icon_alpha,
+        phipia_studio_icon_decode_alpha(studio_icon_alpha,
             (size_t)studio_icon_width * studio_icon_height) != LOGO_STATUS_OK) {
         canvas = NULL;
         return UI_STATUS_STUDIO_ICON_FAILURE;
     }
-    if (sapote_settings_icon_geometry(&settings_icon_width,
+    if (phipia_settings_icon_geometry(&settings_icon_width,
             &settings_icon_height) != LOGO_STATUS_OK ||
         settings_icon_width == 0U || settings_icon_width > 80U ||
         settings_icon_height == 0U || settings_icon_height > 80U ||
-        sapote_settings_icon_decode(settings_icon_pixels,
+        phipia_settings_icon_decode(settings_icon_pixels,
             (size_t)settings_icon_width * settings_icon_height,
             framebuffer.red_position, framebuffer.green_position,
             framebuffer.blue_position, 0U) != LOGO_STATUS_OK ||
-        sapote_settings_icon_decode_alpha(settings_icon_alpha,
+        phipia_settings_icon_decode_alpha(settings_icon_alpha,
             (size_t)settings_icon_width * settings_icon_height) !=
                 LOGO_STATUS_OK ||
-        sapote_camera_icon_geometry(&camera_icon_width,
+        phipia_camera_icon_geometry(&camera_icon_width,
             &camera_icon_height) != LOGO_STATUS_OK ||
         camera_icon_width == 0U || camera_icon_width > 80U ||
         camera_icon_height == 0U || camera_icon_height > 80U ||
-        sapote_camera_icon_decode(camera_icon_pixels,
+        phipia_camera_icon_decode(camera_icon_pixels,
             (size_t)camera_icon_width * camera_icon_height,
             framebuffer.red_position, framebuffer.green_position,
             framebuffer.blue_position, 0U) != LOGO_STATUS_OK ||
-        sapote_camera_icon_decode_alpha(camera_icon_alpha,
+        phipia_camera_icon_decode_alpha(camera_icon_alpha,
             (size_t)camera_icon_width * camera_icon_height) !=
                 LOGO_STATUS_OK ||
-        sapote_canvas_icon_geometry(&canvas_icon_width,
+        phipia_canvas_icon_geometry(&canvas_icon_width,
             &canvas_icon_height) != LOGO_STATUS_OK ||
         canvas_icon_width == 0U || canvas_icon_width > 80U ||
         canvas_icon_height == 0U || canvas_icon_height > 80U ||
-        sapote_canvas_icon_decode(canvas_icon_pixels,
+        phipia_canvas_icon_decode(canvas_icon_pixels,
             (size_t)canvas_icon_width * canvas_icon_height,
             framebuffer.red_position, framebuffer.green_position,
             framebuffer.blue_position, 0U) != LOGO_STATUS_OK ||
-        sapote_canvas_icon_decode_alpha(canvas_icon_alpha,
+        phipia_canvas_icon_decode_alpha(canvas_icon_alpha,
             (size_t)canvas_icon_width * canvas_icon_height) !=
                 LOGO_STATUS_OK) {
         canvas = NULL;
         return UI_STATUS_APP_ICON_FAILURE;
     }
-    if (sapote_files_icon_geometry(&files_icon_width,
+    if (phipia_files_icon_geometry(&files_icon_width,
             &files_icon_height) != LOGO_STATUS_OK ||
         files_icon_width == 0U || files_icon_width > 80U ||
         files_icon_height == 0U || files_icon_height > 80U ||
-        sapote_files_icon_decode(files_icon_pixels,
+        phipia_files_icon_decode(files_icon_pixels,
             (size_t)files_icon_width * files_icon_height,
             framebuffer.red_position, framebuffer.green_position,
             framebuffer.blue_position, 0U) != LOGO_STATUS_OK ||
-        sapote_files_icon_decode_alpha(files_icon_alpha,
+        phipia_files_icon_decode_alpha(files_icon_alpha,
             (size_t)files_icon_width * files_icon_height) != LOGO_STATUS_OK ||
-        sapote_terminal_icon_geometry(&terminal_icon_width,
+        phipia_terminal_icon_geometry(&terminal_icon_width,
             &terminal_icon_height) != LOGO_STATUS_OK ||
         terminal_icon_width == 0U || terminal_icon_width > 80U ||
         terminal_icon_height == 0U || terminal_icon_height > 80U ||
-        sapote_terminal_icon_decode(terminal_icon_pixels,
+        phipia_terminal_icon_decode(terminal_icon_pixels,
             (size_t)terminal_icon_width * terminal_icon_height,
             framebuffer.red_position, framebuffer.green_position,
             framebuffer.blue_position, 0U) != LOGO_STATUS_OK ||
-        sapote_terminal_icon_decode_alpha(terminal_icon_alpha,
+        phipia_terminal_icon_decode_alpha(terminal_icon_alpha,
             (size_t)terminal_icon_width * terminal_icon_height) !=
                 LOGO_STATUS_OK) {
         canvas = NULL;
         return UI_STATUS_APP_ICON_FAILURE;
     }
-    if (sapote_store_icon_geometry(&store_icon_width,
+    if (phipia_store_icon_geometry(&store_icon_width,
             &store_icon_height) != LOGO_STATUS_OK ||
         store_icon_width == 0U || store_icon_width > 80U ||
         store_icon_height == 0U || store_icon_height > 80U ||
-        sapote_store_icon_decode(store_icon_pixels,
+        phipia_store_icon_decode(store_icon_pixels,
             (size_t)store_icon_width * store_icon_height,
             framebuffer.red_position, framebuffer.green_position,
             framebuffer.blue_position, 0U) != LOGO_STATUS_OK ||
-        sapote_store_icon_decode_alpha(store_icon_alpha,
+        phipia_store_icon_decode_alpha(store_icon_alpha,
             (size_t)store_icon_width * store_icon_height) !=
                 LOGO_STATUS_OK ||
-        sapote_store_ui_icons_geometry(&store_ui_icon_width,
+        phipia_store_ui_icons_geometry(&store_ui_icon_width,
             &store_ui_icon_height) != LOGO_STATUS_OK ||
         store_ui_icon_width != UI_STORE_ICON_SHEET_WIDTH ||
         store_ui_icon_height != UI_STORE_ICON_SHEET_HEIGHT ||
-        sapote_store_ui_icons_decode(store_ui_icon_pixels,
+        phipia_store_ui_icons_decode(store_ui_icon_pixels,
             UI_STORE_ICON_SHEET_WIDTH * UI_STORE_ICON_SHEET_HEIGHT,
             framebuffer.red_position, framebuffer.green_position,
             framebuffer.blue_position, 0U) != LOGO_STATUS_OK ||
-        sapote_store_ui_icons_decode_alpha(store_ui_icon_alpha,
+        phipia_store_ui_icons_decode_alpha(store_ui_icon_alpha,
             UI_STORE_ICON_SHEET_WIDTH * UI_STORE_ICON_SHEET_HEIGHT) !=
                 LOGO_STATUS_OK) {
         canvas = NULL;
         return UI_STATUS_APP_ICON_FAILURE;
     }
-    if (sapote_settings_category_icons_geometry(
+    if (phipia_settings_category_icons_geometry(
             &settings_category_icon_width,
             &settings_category_icon_height) != LOGO_STATUS_OK ||
         settings_category_icon_width != 256U ||
         settings_category_icon_height != 192U ||
-        sapote_settings_category_icons_decode(settings_category_icon_pixels,
+        phipia_settings_category_icons_decode(settings_category_icon_pixels,
             256U * 192U, framebuffer.red_position,
             framebuffer.green_position, framebuffer.blue_position, 0U) !=
                 LOGO_STATUS_OK ||
-        sapote_settings_category_icons_decode_alpha(
+        phipia_settings_category_icons_decode_alpha(
             settings_category_icon_alpha, 256U * 192U) != LOGO_STATUS_OK) {
         canvas = NULL;
         return UI_STATUS_APP_ICON_FAILURE;
     }
-    if (sapote_wallpaper_geometry(&wallpaper_width, &wallpaper_height,
+    if (phipia_wallpaper_geometry(&wallpaper_width, &wallpaper_height,
             &wallpaper_frames) != WALLPAPER_STATUS_OK ||
         wallpaper_width != 1024U || wallpaper_height != 768U ||
         wallpaper_frames != UI_WALLPAPER_COUNT ||
-        sapote_wallpaper_decode(0U, wallpaper_pixels, 1024U * 768U,
+        phipia_wallpaper_decode(0U, wallpaper_pixels, 1024U * 768U,
             1024U, 768U,
             framebuffer.red_position, framebuffer.green_position,
             framebuffer.blue_position) != WALLPAPER_STATUS_OK) {
@@ -10359,7 +10359,7 @@ bool ui_self_test(void)
     enum ui_element_id hit;
     enum ui_status status;
 
-    self_test_failure = "Sapote Redwood UI self-test passed";
+    self_test_failure = "Phipia UI self-test passed";
     if (!ui_font_self_test()) {
         self_test_failure = "UI font suite rejected its valid fixture";
         return false;
@@ -10464,7 +10464,7 @@ bool ui_self_test(void)
     const uint64_t stable = synthetic_render_hash(false);
     if (stable != UINT64_C(0xCD65C2C6A1DC2975) ||
         stable == synthetic_render_hash(true)) {
-        self_test_failure = "synthetic Sapote Redwood render hash is invalid";
+        self_test_failure = "synthetic Phipia render hash is invalid";
         return false;
     }
     return true;
@@ -10498,7 +10498,7 @@ enum ui_status ui_verify_installed(struct ui_proof *proof)
 
     if (proof == NULL) {
         installed_proof_failure =
-            "Sapote Redwood installed proof received no result buffer";
+            "Phipia installed proof received no result buffer";
         return UI_STATUS_NULL_ARGUMENT;
     }
     if (!state.active || canvas == NULL || !ui_font_is_verified() ||
@@ -10506,12 +10506,12 @@ enum ui_status ui_verify_installed(struct ui_proof *proof)
         state.hover >= UI_ELEMENT_COUNT || state.pressed >= UI_ELEMENT_COUNT ||
         state.active_panel >= UI_PANEL_COUNT) {
         installed_proof_failure =
-            "Sapote Redwood installed UI state is invalid";
+            "Phipia installed UI state is invalid";
         return UI_STATUS_INSTALLED_PROOF_FAILURE;
     }
     if (ui_layout_validate(&state.layout) != UI_STATUS_OK) {
         installed_proof_failure =
-            "Sapote Redwood live Dock layout is invalid";
+            "Phipia live Dock layout is invalid";
         return UI_STATUS_INSTALLED_PROOF_FAILURE;
     }
     if (state.pointer_present) {
@@ -10522,7 +10522,7 @@ enum ui_status ui_verify_installed(struct ui_proof *proof)
             state.pointer.y < 0 || (uint32_t)state.pointer.x >= canvas->width ||
             (uint32_t)state.pointer.y >= canvas->height) {
             installed_proof_failure =
-                "Sapote Redwood pointer installation is invalid";
+                "Phipia pointer installation is invalid";
             return UI_STATUS_INSTALLED_PROOF_FAILURE;
         }
     }
@@ -10540,7 +10540,7 @@ enum ui_status ui_verify_installed(struct ui_proof *proof)
         state.theme.shadow != framebuffer_pack(0x05U, 0x0CU, 0x12U) ||
         state.theme.window_face != framebuffer_pack(0xD9U, 0xDFU, 0xE0U)) {
         installed_proof_failure =
-            "Sapote Redwood theme installation is invalid";
+            "Phipia theme installation is invalid";
         return UI_STATUS_INSTALLED_PROOF_FAILURE;
     }
     for (size_t index = 0U; index < UI_DOCK_ITEM_COUNT; ++index) {
@@ -10548,7 +10548,7 @@ enum ui_status ui_verify_installed(struct ui_proof *proof)
             state.layout.dock_items[index].action != actions[index] ||
             state.layout.dock_items[index].panel != panels[index]) {
             installed_proof_failure =
-                "Sapote Redwood Dock action metadata is invalid";
+                "Phipia Dock action metadata is invalid";
             return UI_STATUS_INSTALLED_PROOF_FAILURE;
         }
     }
@@ -10557,14 +10557,14 @@ enum ui_status ui_verify_installed(struct ui_proof *proof)
     snapshot_redraw_tiles();
     if (render_region(state.layout.surface, true) != UI_STATUS_OK) {
         installed_proof_failure =
-            "Sapote Redwood full redraw failed";
+            "Phipia full redraw failed";
         return UI_STATUS_INSTALLED_PROOF_FAILURE;
     }
     const uint64_t second_hash = surface_hash();
     if (first_hash != second_hash) {
         report_redraw_tile_mismatch();
         installed_proof_failure =
-            "Sapote Redwood full redraw is not idempotent";
+            "Phipia full redraw is not idempotent";
         return UI_STATUS_INSTALLED_PROOF_FAILURE;
     }
     state.stable_render_hash = second_hash;
@@ -10587,7 +10587,7 @@ enum ui_status ui_verify_installed(struct ui_proof *proof)
         .ledger_fingerprint = ledger == NULL ? 0U : ledger->fingerprint,
         .render_hash = second_hash
     };
-    installed_proof_failure = "Sapote Redwood installed proof passed";
+    installed_proof_failure = "Phipia installed proof passed";
     return UI_STATUS_OK;
 }
 
@@ -10653,10 +10653,10 @@ const char *ui_status_string(enum ui_status status)
     static const char *const messages[] = {
         "ok",
         "null UI argument",
-        "Sapote Redwood is already initialized",
-        "Sapote Redwood is not initialized",
-        "Sapote Redwood is not active",
-        "unsupported Sapote Redwood framebuffer geometry",
+        "Phipia is already initialized",
+        "Phipia is not initialized",
+        "Phipia is not active",
+        "unsupported Phipia framebuffer geometry",
         "UI rectangle arithmetic overflowed",
         "UI rectangle lies outside its surface",
         "duplicate UI element identifier",
@@ -10677,7 +10677,7 @@ const char *ui_status_string(enum ui_status status)
         "desktop wallpaper rendering failed",
         "application filesystem operation failed",
         "terminal viewport rendering failed",
-        "installed Sapote Redwood proof failed"
+        "installed Phipia proof failed"
     };
 
     _Static_assert(sizeof(messages) / sizeof(messages[0]) ==

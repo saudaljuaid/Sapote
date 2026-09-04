@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#include <sapote/package_fetch.h>
-#include <sapote/runtime.h>
+#include <phipia/package_fetch.h>
+#include <phipia/runtime.h>
 
 #include <stdio.h>
 
@@ -19,7 +19,7 @@ static const uint8_t expected_sha256[32] = {
 
 static uint64_t deadline(void)
 {
-    const uint64_t now = sapote_monotonic_ns();
+    const uint64_t now = phipia_monotonic_ns();
 
     return now > UINT64_MAX - HTTPS_DEADLINE_NS ? UINT64_MAX :
         now + HTTPS_DEADLINE_NS;
@@ -27,24 +27,24 @@ static uint64_t deadline(void)
 
 int main(void)
 {
-    struct sapote_package_fetch_report report;
-    const struct sapote_package_fetch_request request = {
-        "repo.sapote.test", HTTPS_PORT, 0U, "/artifact.bin",
-        sapote_https_test_anchors,
-        sizeof(sapote_https_test_anchors) /
-            sizeof(sapote_https_test_anchors[0]),
+    struct phipia_package_fetch_report report;
+    const struct phipia_package_fetch_request request = {
+        "repo.phipia.test", HTTPS_PORT, 0U, "/artifact.bin",
+        phipia_https_test_anchors,
+        sizeof(phipia_https_test_anchors) /
+            sizeof(phipia_https_test_anchors[0]),
         deadline(), 128U, EXPECTED_BODY_BYTES, expected_sha256,
         "HTTPS.NEW", "HTTPS.TXT"
     };
-    enum sapote_package_fetch_status status;
+    enum phipia_package_fetch_status status;
 
-    puts("SAPOTE HTTPSAPP PHASE start");
-    status = sapote_package_fetch_stage(&request, &report);
-    if (status != SAPOTE_PACKAGE_FETCH_OK) {
-        printf("SAPOTE HTTPSAPP REFUSED %s https=%s tls=%d transport=%ld "
+    puts("PHIPIA HTTPSAPP PHASE start");
+    status = phipia_package_fetch_stage(&request, &report);
+    if (status != PHIPIA_PACKAGE_FETCH_OK) {
+        printf("PHIPIA HTTPSAPP REFUSED %s https=%s tls=%d transport=%ld "
             "storage=%ld cleanup=%ld\n",
-            sapote_package_fetch_status_string(status),
-            sapote_https_status_string(report.https_status),
+            phipia_package_fetch_status_string(status),
+            phipia_https_status_string(report.https_status),
             report.bearssl_error, report.transport_error,
             report.storage_error, report.cleanup_error);
         return 20;
@@ -53,35 +53,35 @@ int main(void)
         !report.published || !report.durable) {
         return 21;
     }
-    puts("SAPOTE HTTPSAPP PHASE authenticated-download PASS");
-    puts("SAPOTE HTTPSAPP PHASE durable-output PASS");
-    const struct sapote_package_fetch_upload_request upload_request = {
-        "repo.sapote.test", HTTPS_PORT, 0U, "/artifact.bin",
-        sapote_https_test_anchors,
-        sizeof(sapote_https_test_anchors) /
-            sizeof(sapote_https_test_anchors[0]),
+    puts("PHIPIA HTTPSAPP PHASE authenticated-download PASS");
+    puts("PHIPIA HTTPSAPP PHASE durable-output PASS");
+    const struct phipia_package_fetch_upload_request upload_request = {
+        "repo.phipia.test", HTTPS_PORT, 0U, "/artifact.bin",
+        phipia_https_test_anchors,
+        sizeof(phipia_https_test_anchors) /
+            sizeof(phipia_https_test_anchors[0]),
         deadline(), EXPECTED_BODY_BYTES, expected_sha256
     };
 
-    status = sapote_package_fetch_upload(&upload_request, &report);
-    if (status != SAPOTE_PACKAGE_FETCH_OK || !report.durable ||
-        report.upload == SAPOTE_HANDLE_INVALID ||
-        report.upload_flags != (SAPOTE_PACKAGE_UPLOAD_SEALED |
-            SAPOTE_PACKAGE_UPLOAD_DURABLE)) {
-        printf("SAPOTE HTTPSAPP UPLOAD REFUSED %s https=%s storage=%ld "
+    status = phipia_package_fetch_upload(&upload_request, &report);
+    if (status != PHIPIA_PACKAGE_FETCH_OK || !report.durable ||
+        report.upload == PHIPIA_HANDLE_INVALID ||
+        report.upload_flags != (PHIPIA_PACKAGE_UPLOAD_SEALED |
+            PHIPIA_PACKAGE_UPLOAD_DURABLE)) {
+        printf("PHIPIA HTTPSAPP UPLOAD REFUSED %s https=%s storage=%ld "
             "cleanup=%ld flags=%u\n",
-            sapote_package_fetch_status_string(status),
-            sapote_https_status_string(report.https_status),
+            phipia_package_fetch_status_string(status),
+            phipia_https_status_string(report.https_status),
             report.storage_error, report.cleanup_error, report.upload_flags);
-        if (report.upload != SAPOTE_HANDLE_INVALID) {
-            (void)sapote_package_upload_close(report.upload);
+        if (report.upload != PHIPIA_HANDLE_INVALID) {
+            (void)phipia_package_upload_close(report.upload);
         }
         return 22;
     }
-    if (sapote_package_upload_close(report.upload) < 0) {
+    if (phipia_package_upload_close(report.upload) < 0) {
         return 23;
     }
-    puts("SAPOTE HTTPSAPP PHASE kernel-upload PASS");
-    puts("SAPOTE HTTPSAPP PASS hostname time trust length close upload");
+    puts("PHIPIA HTTPSAPP PHASE kernel-upload PASS");
+    puts("PHIPIA HTTPSAPP PASS hostname time trust length close upload");
     return 0;
 }

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! The one picture format Sapote and this program already agree on.
+//! The one picture format Phipia and this program already agree on.
 //!
-//! Every refusal here is one Sapote's own importer makes, checked against
+//! Every refusal here is one Phipia's own importer makes, checked against
 //! `studio_load_preview` in `src/kernel/ui.c` at 2.1.0. A bitmap this accepts
-//! is one Sapote accepts; a bitmap it refuses is refused for the same reason.
+//! is one Phipia accepts; a bitmap it refuses is refused for the same reason.
 
 use sapstudio_core::Rational;
 use sapstudio_io::{IoStatus, bmp};
@@ -137,8 +137,8 @@ fn the_shapes_this_build_does_not_read_are_refused_as_such() {
 }
 
 #[test]
-fn a_bitmap_past_sapotes_bounds_is_refused() {
-    // 1920 by 1080 is what Sapote's importer accepts, so one pixel past it in
+fn a_bitmap_past_phipias_bounds_is_refused() {
+    // 1920 by 1080 is what Phipia's importer accepts, so one pixel past it in
     // either direction is refused rather than read.
     let mut file = bmp::encode(&picture(4, 3)).expect("a bitmap");
     file[18..22].copy_from_slice(&1921_i32.to_le_bytes());
@@ -169,7 +169,7 @@ fn a_bitmap_that_ends_inside_its_pixels_is_refused() {
 fn a_height_that_cannot_be_turned_the_right_way_up_is_refused() {
     // The one arithmetic trap in the header: `i32::MIN` has no positive
     // counterpart, so a top-down picture of that height has no height at all.
-    // Sapote refuses it by name and so does this.
+    // Phipia refuses it by name and so does this.
     let mut file = bmp::encode(&picture(4, 3)).expect("a bitmap");
     file[22..26].copy_from_slice(&i32::MIN.to_le_bytes());
     assert_eq!(bmp::decode(&file), Err(IoStatus::NotABitmap));

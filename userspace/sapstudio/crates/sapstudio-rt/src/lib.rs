@@ -3,13 +3,13 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![allow(
     clippy::doc_markdown,
-    reason = "SapStudio and Sapote are product names, not identifiers"
+    reason = "SapStudio and Phipia are product names, not identifiers"
 )]
 //! SapStudio's freestanding runtime.
 //!
 //! The second of the two crates permitted to contain `unsafe` (R-3.1.4). It
 //! owns exactly four things: clearing `.bss`, the heap, the panic path, and
-//! the Sapote implementations of the seams. Nothing else in SapStudio knows
+//! the Phipia implementations of the seams. Nothing else in SapStudio knows
 //! that a machine exists.
 //!
 //! There is no hidden runtime here (R-1.8): no unwinder, no dynamic loader, no
@@ -17,12 +17,12 @@
 //! the order it says, and calls the application.
 
 pub mod heap;
-pub mod sapote;
+pub mod phipia;
 
 use sapstudio_abi::seam::Console;
 
 pub use heap::{BumpHeap, HEAP_BYTES};
-pub use sapote::{SapoteClock, SapoteConsole};
+pub use phipia::{PhipiaClock, PhipiaConsole};
 
 /// The process heap.
 ///
@@ -63,7 +63,7 @@ pub unsafe fn clear_bss() {
 ///
 /// # Safety
 ///
-/// Must be called exactly once, from `_start`, on a Sapote kernel that
+/// Must be called exactly once, from `_start`, on a Phipia kernel that
 /// implements `SAP-01` at [`sapstudio_abi::ABI_VERSION`]. Does not return.
 pub unsafe fn start(application: fn(&mut dyn Console) -> i32) -> ! {
     // SAFETY: `_start` is the entry point, so this is the first code to run
@@ -71,7 +71,7 @@ pub unsafe fn start(application: fn(&mut dyn Console) -> i32) -> ! {
     unsafe {
         clear_bss();
     }
-    let mut console = SapoteConsole::new();
+    let mut console = PhipiaConsole::new();
     let status = application(&mut console);
     // SAFETY: the caller guarantees the boundary exists.
     unsafe { sapstudio_abi::syscall::exit(status) }
@@ -87,7 +87,7 @@ pub unsafe fn start(application: fn(&mut dyn Console) -> i32) -> ! {
 #[cfg(target_os = "none")]
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
-    let mut console = SapoteConsole::new();
+    let mut console = PhipiaConsole::new();
     // A panic is already a failure of the error path, so a failure to report
     // it changes nothing that can still be done about it.
     let _ = console.write(b"sapstudio: panicked at ");
