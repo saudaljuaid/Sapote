@@ -2977,9 +2977,9 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/phipia.iso
 		native-sdl) \
 			test -s '$(TEST_BUILD_DIR)/$*/sdl.png' && \
 			test -s '$(TEST_BUILD_DIR)/$*/sdl.mp4' && \
-			grep -Fxq 'PHIPIA SDL READY run=1 video=phipia audio=phipia pref=Data:SDL/B54465F3/' "$$log" && \
+			grep -Fxq 'PHIPIA SDL READY run=1 video=phipia audio=phipia pref=Data:SDL/D81F0C7A/' "$$log" && \
 			grep -Fxq 'PHIPIA SDL PASS run=1 present=partial input=key-pointer audio=non-silent persistent=yes' "$$log" && \
-			grep -Fxq 'PHIPIA SDL READY run=2 video=phipia audio=phipia pref=Data:SDL/B54465F3/' "$$log" && \
+			grep -Fxq 'PHIPIA SDL READY run=2 video=phipia audio=phipia pref=Data:SDL/D81F0C7A/' "$$log" && \
 			grep -Fxq 'PHIPIA SDL PASS run=2 present=partial input=prior-run audio=non-silent persistent=yes' "$$log" && \
 			grep -Fxq 'Phipia: SDL 2 window, input, partial damage, PCM and persistence passed' "$$log" || diagnostics_ok=false; \
 			if test "$$audio_capture" = true; then \
