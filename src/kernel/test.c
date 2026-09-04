@@ -6179,7 +6179,7 @@ _Noreturn void kernel_test_complete_phipia_proof(void)
     }
 
     /* Exercise the public launcher as a person would: open it from the menu,
-     * select its second bounded page, then filter and launch Canvas. */
+     * select its second bounded page, then filter and launch Paint. */
     phipia_proof_click_point(ui->layout.surface.width - 19U, 12U,
         "Phipia application search did not open");
     {
@@ -6218,7 +6218,7 @@ _Noreturn void kernel_test_complete_phipia_proof(void)
         }
         phipia_proof_click_point(ui->layout.surface.width - 19U, 12U,
             "Phipia application search did not reopen");
-        static const char query[] = "canvas";
+        static const char query[] = "paint";
         for (size_t index = 0U; index < sizeof(query) - 1U; ++index) {
             launcher_key.scancode = 0U;
             launcher_key.character = query[index];
@@ -6236,37 +6236,17 @@ _Noreturn void kernel_test_complete_phipia_proof(void)
         phipia_proof_process_ui(
             "Phipia filtered launch draw failed");
         char manifest[13U];
-        if (!ui_application_launch_dequeue(manifest, sizeof(manifest)) ||
-                manifest[0] != 'C' || manifest[1] != 'A' ||
-                manifest[2] != 'N' || manifest[3] != 'V' ||
-                manifest[4] != 'A' || manifest[5] != 'S' ||
-                manifest[6] != '.' || manifest[7] != 'M' ||
-                manifest[8] != 'A' || manifest[9] != 'N' ||
-                manifest[10] != '\0') {
-            kernel_test_fail("Phipia filtered Canvas launch is wrong");
+        if (ui_get_state()->active_panel != UI_PANEL_PAINT ||
+                ui_application_launch_dequeue(manifest, sizeof(manifest))) {
+            kernel_test_fail("Phipia filtered Paint launch is wrong");
         }
     }
 
     for (size_t index = 0U; index < UI_DOCK_ITEM_COUNT; ++index) {
-        const enum ui_panel_id expected_panel =
-            actions[index] == UI_ACTION_OPEN_CANVAS ?
-                ui->active_panel : panels[index];
+        const enum ui_panel_id expected_panel = panels[index];
 
         phipia_proof_click_dock_item(&ui->layout.dock_items[index],
             expected_panel);
-        if (actions[index] == UI_ACTION_OPEN_CANVAS) {
-            char manifest[13U];
-
-            if (!ui_application_launch_dequeue(manifest,
-                    sizeof(manifest)) || manifest[0] != 'C' ||
-                manifest[1] != 'A' || manifest[2] != 'N' ||
-                manifest[3] != 'V' || manifest[4] != 'A' ||
-                manifest[5] != 'S' || manifest[6] != '.' ||
-                manifest[7] != 'M' || manifest[8] != 'A' ||
-                manifest[9] != 'N' || manifest[10] != '\0') {
-                kernel_test_fail("Phipia Canvas launch request is wrong");
-            }
-        }
         ui = ui_get_state();
     }
     if (trail_probe.x < 0 || trail_probe.y < 0 ||
