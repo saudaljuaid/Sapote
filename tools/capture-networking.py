@@ -287,7 +287,7 @@ def main() -> int:
                     time.sleep(0.08)
                     qmp.hmp("sendkey ret 15")
                     support.wait_serial(
-                        serial, (b"Phipia: Terminal opened",),
+                        serial, (b"Phipia: Phip terminal opened",),
                         timeout=5.0,
                     )
                     support.capture_png(
