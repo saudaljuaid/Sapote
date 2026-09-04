@@ -111,7 +111,7 @@ jobs:
                   cmp build/phipia-userland-first.raw \
                       build/userspace/phipia-userland-fat16.raw
                   test "$(sha256sum build/userspace/phipia-userland-fat16.raw | awk '{print toupper($1)}')" = \
-                      F2115B909842ADACB8460287515E5145E36B34DE7E0B8C658E92D22DDFA7EBDB
+                      C2A2B2FEC703C654E1260EF07A91FF1DD7808F8D83734C0D7AFD3967525B34B9
             - name: Rebuild and trace all measured profiles twice
               shell: bash
               run: |
@@ -264,7 +264,7 @@ jobs:
                       printf 'BUSYBOX: clusters 2-10, 33584 bytes\n'
                       printf 'UNAMEBOX: clusters 11-20, 38368 bytes\n'
                       printf 'CATBOX: clusters 21-30, 38632 bytes\n'
-                      printf 'volume SHA-256: F2115B909842ADACB8460287515E5145E36B34DE7E0B8C658E92D22DDFA7EBDB\n'
+                      printf 'volume SHA-256: C2A2B2FEC703C654E1260EF07A91FF1DD7808F8D83734C0D7AFD3967525B34B9\n'
                   } >"$release/userspace-volume-layout.txt"
                   {
                       printf 'Positive: linux cat completed twice with different lines and Ctrl-D through Phipia keyboard events.\n'

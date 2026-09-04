@@ -203,7 +203,7 @@ jobs:
                           | awk '{print toupper($1)}'
                   )
                   test "$fixture_sha" = \
-                      48C3465E924D1D2B3C8AB659D2783CAC4AF57DFD83504606AD0DF8F64D7316E3
+                      CDB8E920F06AC93F63E73854FC5A6A63CDBCC7DCEDBBFB62325C7EC4B408AD36
                   {
                       printf 'Phipia v0.9.0 deterministic Linux uname fixture\n'
                       printf 'logical sectors / bytes: 4096 / 4096\n'

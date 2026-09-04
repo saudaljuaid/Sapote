@@ -121,7 +121,7 @@ jobs:
                   test "$payload_sha" = \
                       C923A94F08DF64523D3DB701E4F9FC5FF5B51DFC21447E1DC57586D40D42B8A9
                   test "$fixture_sha" = \
-                      5130D78A0FEB51EC410E5CC931A1E6485D96549A726E62BCE95F7D5C18FA2290
+                      F8730A9253C9EBECFABB0108714F4F59EC05D151C5ADB19B0C8E08279CEFE53E
                   read -r expected_scenarios expected_assertions < <(
                       make --no-print-directory -s contract-counts
                   )

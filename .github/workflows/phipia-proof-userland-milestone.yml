@@ -43,7 +43,7 @@ jobs:
                   make verify
                   git diff --check
                   test "$(sha256sum build/userspace/phipia-userland-no-cat-fat16.raw | awk '{print toupper($1)}')" = \
-                      12F7EB4B4EE2F39CA721623AFCC6D337964FB32D2F081893DF182101514211CE
+                      F7DB823EE1CB7FF2A05E7020DB0F4502656B9950EFBBE79E23ED0EA755FC8478
             - name: Rebuild and trace both measured profiles twice
               shell: bash
               run: |
@@ -168,7 +168,7 @@ jobs:
                       printf 'FAT: LBA 1-2; root: LBA 3, 128 entries\n'
                       printf 'BUSYBOX: clusters 2-10, 33584 bytes\n'
                       printf 'UNAMEBOX: clusters 11-20, 38368 bytes\n'
-                      printf 'volume SHA-256: 12F7EB4B4EE2F39CA721623AFCC6D337964FB32D2F081893DF182101514211CE\n'
+                      printf 'volume SHA-256: F7DB823EE1CB7FF2A05E7020DB0F4502656B9950EFBBE79E23ED0EA755FC8478\n'
                   } >"$release/userspace-volume-layout.txt"
                   {
                       printf 'Positive: linux echo and linux uname each completed twice through Phipia.\n'
