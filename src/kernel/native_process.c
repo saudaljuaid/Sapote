@@ -2595,8 +2595,16 @@ static enum native_process_status load_process(
         manifest_read != sizeof(manifest_bytes)) {
         return NATIVE_PROCESS_MANIFEST_READ;
     }
-    /* Parse the manifest alone only after the executable has been read below. */
-    if (manifest_bytes[0] != 'S' || manifest_bytes[1] != 'A') {
+    /*
+     * The executable path is needed before the Rust admission boundary can
+     * authenticate the complete manifest/image pair.  Require the complete
+     * current manifest magic before reading that path so an unrelated 1 KiB
+     * file cannot steer the System-volume lookup.
+     */
+    if (manifest_bytes[0] != 'P' || manifest_bytes[1] != 'H' ||
+            manifest_bytes[2] != 'I' || manifest_bytes[3] != 'P' ||
+            manifest_bytes[4] != 'I' || manifest_bytes[5] != 'A' ||
+            manifest_bytes[6] != 'A' || manifest_bytes[7] != '1') {
         return NATIVE_PROCESS_IMAGE_REFUSED;
     }
     executable_length = bounded_length(manifest_bytes + 112U, 16U);

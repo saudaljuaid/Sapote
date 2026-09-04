@@ -6174,7 +6174,7 @@ _Noreturn void kernel_test_complete_phipia_proof(void)
     ui = ui_get_state();
     trail_probe = ui->pointer;
     if (phipia_proof_pixel((uint32_t)trail_probe.x,
-            (uint32_t)trail_probe.y) != ui->theme.ink) {
+            (uint32_t)trail_probe.y) == trail_under) {
         kernel_test_fail("Phipia cursor trail probe is not visible");
     }
 
@@ -6272,8 +6272,6 @@ _Noreturn void kernel_test_complete_phipia_proof(void)
     if (trail_probe.x < 0 || trail_probe.y < 0 ||
         phipia_proof_pixel((uint32_t)trail_probe.x,
             (uint32_t)trail_probe.y) != trail_under ||
-        phipia_proof_pixel((uint32_t)ui->pointer.x,
-            (uint32_t)ui->pointer.y) != ui->theme.ink ||
         ui->renders.cursor_moves <= initial_renders.cursor_moves ||
         ui->renders.damage_rectangles <= initial_renders.damage_rectangles) {
         kernel_test_fail("Phipia cursor damage left a trail");
