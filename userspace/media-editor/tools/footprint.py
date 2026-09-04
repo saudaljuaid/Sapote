@@ -117,7 +117,7 @@ V0_CRATE = re.compile(r"C(?:s[0-9a-zA-Z]*_)?([1-9][0-9]*)(_?)")
 
 def named(crate: str) -> str:
     """File a crate name under its own name, or under the language's."""
-    return crate if crate.startswith("media-editor") else f"(rust: {crate})"
+    return crate if crate.startswith("media_editor") else f"(rust: {crate})"
 
 
 def crate_of(symbol: str) -> str:
@@ -165,10 +165,10 @@ IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 #: lifted from a real build of this image.
 WITNESSES = (
     # v0, a value at a crate root.
-    ("_RNvCs6BcOe5Imze2_12media_editor_rt4HEAP", "media_editor_rt"),
+    ("_RNvCs6BcOe5Imze2_15media_editor_rt4HEAP", "media_editor_rt"),
     # v0, a method on a type in a module.
     (
-        "_RNvMNtCs6oV4Mx6d6CN_15media_editor_model4editNtB2_4Edit5apply",
+        "_RNvMNtCs6oV4Mx6d6CN_18media_editor_model4editNtB2_4Edit5apply",
         "media_editor_model",
     ),
     # v0, whose crate name begins with an underscore and therefore carries the
@@ -176,7 +176,7 @@ WITNESSES = (
     ("_RNvCs6rREvFdRhLb_7___rustc12___rust_alloc", "(rust: __rustc)"),
     # Legacy, still read because which mangling a build uses is the
     # toolchain's decision and not this tool's.
-    ("_ZN12media_editor_io6format6encode17h0123456789abcdefE", "media_editor_io"),
+    ("_ZN15media_editor_io6format6encode17h0123456789abcdefE", "media_editor_io"),
     # A C name, which carries no crate at all and must say so rather than
     # being filed under a plausible-looking guess.
     ("memcmp", UNKNOWN),
