@@ -80,7 +80,17 @@ long phipia_stream_connect(phipia_handle_t stream,
 static long network_io(uint64_t number, phipia_handle_t handle, void *buffer,
     size_t length, uint64_t deadline, struct phipia_ipv4_endpoint *endpoint)
 {
-    struct phipia_network_io request = {sizeof(request), PHIPIA_ABI_VERSION,
+    struct phipia_network_io request;
+
+    if (length == 0U || length > UINT32_MAX) {
+        return -PHIPIA_EINVAL;
+    }
+    if ((number == PHIPIA_SYS_STREAM_READ ||
+            number == PHIPIA_SYS_STREAM_WRITE) &&
+        length > PHIPIA_NETWORK_IO_MAX_BYTES) {
+        length = PHIPIA_NETWORK_IO_MAX_BYTES;
+    }
+    request = (struct phipia_network_io){sizeof(request), PHIPIA_ABI_VERSION,
         handle, (uint64_t)(uintptr_t)buffer, deadline, {0U, 0U, 0U},
         (uint32_t)length, 0U};
     if (endpoint != NULL) request.endpoint = *endpoint;

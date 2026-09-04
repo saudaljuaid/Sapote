@@ -63,6 +63,8 @@
 #define NATIVE_SHARED_CODE_LIVE UINT8_C(1)
 #define NATIVE_SHARED_CODE_TOMBSTONE UINT8_C(2)
 
+_Static_assert(PHIPIA_NETWORK_IO_MAX_BYTES <= NATIVE_COPY_CHUNK,
+    "native network transfer bound exceeds the syscall copy buffer");
 _Static_assert(
     (NATIVE_SHARED_CODE_CACHE_CAPACITY &
         (NATIVE_SHARED_CODE_CACHE_CAPACITY - 1U)) == 0U,
@@ -4510,7 +4512,7 @@ static int64_t syscall_network_io(
         request.version != PHIPIA_ABI_VERSION || request.flags != 0U ||
         request.endpoint.reserved != 0U || request.length == 0U ||
         request.length > (datagram ? NETWORK_MAX_UDP_DATAGRAM :
-            sizeof(process->transfer)) ||
+            PHIPIA_NETWORK_IO_MAX_BYTES) ||
         !validate_user_range(process, request.buffer, request.length, !write) ||
         (!write && datagram && !validate_user_range(process, request_address,
             sizeof(request), true))) {

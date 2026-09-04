@@ -4,6 +4,8 @@
 
 #include <phipia/abi/base.h>
 
+#define PHIPIA_NETWORK_IO_MAX_BYTES 4096U
+
 struct phipia_ipv4_endpoint {
     uint32_t address;
     uint16_t port;
