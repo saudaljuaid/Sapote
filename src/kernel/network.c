@@ -2996,6 +2996,7 @@ enum network_status network_tcp_read(
     struct tcp_connection *connection = tcp_for(owner, handle, &status);
     uint64_t deadline;
     size_t count;
+    size_t buffered_before;
 
     if (connection == NULL) {
         return status;
@@ -3042,11 +3043,22 @@ enum network_status network_tcp_read(
     }
     count = connection->receive_bytes < capacity ?
         connection->receive_bytes : capacity;
+    buffered_before = connection->receive_bytes;
     copy_bytes(bytes, connection->receive, count);
     for (size_t index = count; index < connection->receive_bytes; ++index) {
         connection->receive[index - count] = connection->receive[index];
     }
     connection->receive_bytes -= count;
+    if (!connection->peer_closed &&
+        buffered_before >= NETWORK_TCP_RX_BYTES / 2U &&
+        connection->receive_bytes < NETWORK_TCP_RX_BYTES / 2U) {
+        const enum network_status ack_status = tcp_ack(connection);
+
+        if (ack_status != NETWORK_STATUS_OK &&
+            connection->error == NETWORK_STATUS_OK) {
+            connection->error = ack_status;
+        }
+    }
     *read_bytes = count;
     timer_release();
     return NETWORK_STATUS_OK;

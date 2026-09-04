@@ -48,6 +48,7 @@ class HttpsPeer:
     client_next: int
     server_next: int
     server_acked: int
+    client_window: int
     incoming: ssl.MemoryBIO
     outgoing: ssl.MemoryBIO
     tls: ssl.SSLObject
@@ -103,14 +104,15 @@ class HttpsFixture(network.Fixture):
             raise ValueError("HTTPS fixture body exceeded its bound")
         return body
 
-    def new_peer(self, client_port: int, sequence: int) -> HttpsPeer:
+    def new_peer(self, client_port: int, sequence: int,
+                 client_window: int) -> HttpsPeer:
         incoming = ssl.MemoryBIO()
         outgoing = ssl.MemoryBIO()
         tls = self.context.wrap_bio(incoming, outgoing, server_side=True)
         server_sequence = (SERVER_ISN + client_port) & 0xFFFFFFFF
         return HttpsPeer(
             client_port, (sequence + 1) & 0xFFFFFFFF,
-            server_sequence, server_sequence,
+            server_sequence, server_sequence, client_window,
             incoming, outgoing, tls,
         )
 
@@ -129,8 +131,9 @@ class HttpsFixture(network.Fixture):
 
     def drain_tls(self, peer: HttpsPeer) -> None:
         in_flight = sequence_distance(peer.server_acked, peer.server_next)
-        while peer.outgoing.pending and in_flight < TCP_SEND_WINDOW:
-            available = TCP_SEND_WINDOW - in_flight
+        send_window = min(TCP_SEND_WINDOW, peer.client_window)
+        while peer.outgoing.pending and in_flight < send_window:
+            available = send_window - in_flight
             block = peer.outgoing.read(min(
                 TCP_CHUNK, available, peer.outgoing.pending
             ))
@@ -219,16 +222,18 @@ class HttpsFixture(network.Fixture):
             struct.unpack_from("!HHII", segment, 0)
         offset = (segment[12] >> 4) * 4
         flags = segment[13]
+        client_window = struct.unpack_from("!H", segment, 14)[0]
         if offset < 20 or offset > len(segment) or destination_port != TLS_PORT:
             return
         peer = self.https_peers.get(source_port)
         if flags & 0x02 and not flags & 0x10:
-            peer = self.new_peer(source_port, sequence)
+            peer = self.new_peer(source_port, sequence, client_window)
             self.https_peers[source_port] = peer
             self.send_https(peer, 0x12)
             return
         if peer is None:
             return
+        peer.client_window = client_window
         if flags & 0x10:
             self.acknowledge_server(peer, acknowledgement)
         payload = segment[offset:]
