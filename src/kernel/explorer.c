@@ -309,8 +309,26 @@ static bool rename_selected;
  */
 static bool rename_created;
 static char rename_original[EXPLORER_NAME_BYTES];
+static struct explorer_action pending_action;
+static bool action_waiting;
 static bool caret_visible = true;
 static uint32_t caret_phase;    /* which half-second the last draw used */
+
+static void copy_field(char *destination, const char *source, size_t bytes);
+
+static void queue_action(enum explorer_action_kind kind,
+    enum explorer_kind item_kind, const char *source, const char *destination)
+{
+    pending_action = (struct explorer_action){
+        .kind = kind,
+        .item_kind = item_kind
+    };
+    copy_field(pending_action.source, source,
+        sizeof(pending_action.source));
+    copy_field(pending_action.destination, destination,
+        sizeof(pending_action.destination));
+    action_waiting = true;
+}
 
 /*
  * The command palette: Ctrl+K.  See explorer_toggle_command_palette() in
@@ -3211,6 +3229,7 @@ static void forget_clipboard_row(size_t index)
 static bool paste_clipboard(void)
 {
     struct explorer_item pasted = clipboard_item;
+    const bool moving = clipboard_cut;
     char stem[EXPLORER_NAME_BYTES];
     char suffix[EXPLORER_FIELD_BYTES];
     char base[EXPLORER_NAME_BYTES];
@@ -3248,6 +3267,8 @@ static bool paste_clipboard(void)
         items[index].selected = false;
     }
     items[slot] = pasted;
+    queue_action(moving ? EXPLORER_ACTION_MOVE : EXPLORER_ACTION_COPY,
+        pasted.kind, clipboard_item.name, pasted.name);
     if (clipboard_cut) {
         /* A cut is spent once it lands; a copy stays on the clipboard, so
          * a second Paste makes a second copy. */
@@ -3324,6 +3345,8 @@ static enum explorer_status run_command(size_t index, struct ui_rect *damage)
             rename_active = false;
             rename_index = (size_t)-1;
         }
+        queue_action(EXPLORER_ACTION_DELETE, items[chosen].kind,
+            items[chosen].name, "");
         forget_clipboard_row(chosen);
         items[chosen] = (struct explorer_item){ 0 };
         break;
@@ -3783,9 +3806,41 @@ enum explorer_status explorer_key_enter(struct ui_rect *damage)
         return EXPLORER_STATUS_OK;
     }
     *damage = item_rect(rename_index);
+    if (rename_created) {
+        queue_action(EXPLORER_ACTION_CREATE, items[rename_index].kind, "",
+            items[rename_index].name);
+    } else {
+        bool changed = false;
+
+        for (size_t index = 0U;
+             rename_original[index] != '\0' ||
+                items[rename_index].name[index] != '\0'; ++index) {
+            if (rename_original[index] != items[rename_index].name[index]) {
+                changed = true;
+                break;
+            }
+        }
+        if (changed) {
+            queue_action(EXPLORER_ACTION_RENAME, items[rename_index].kind,
+                rename_original, items[rename_index].name);
+        }
+    }
     rename_active = false;
     rename_index = (size_t)-1;
     return EXPLORER_STATUS_OK;
+}
+
+bool explorer_take_action(struct explorer_action *action)
+{
+    if (!action_waiting) {
+        return false;
+    }
+    if (action != NULL) {
+        *action = pending_action;
+    }
+    pending_action = (struct explorer_action){ 0 };
+    action_waiting = false;
+    return true;
 }
 
 enum explorer_status explorer_key_escape(struct ui_rect *damage)
@@ -4344,6 +4399,8 @@ enum explorer_status explorer_initialize(struct surface *target,
     rename_index = (size_t)-1;
     rename_selected = false;
     rename_created = false;
+    pending_action = (struct explorer_action){ 0 };
+    action_waiting = false;
     palette_open = false;
     palette_query[0] = '\0';
     palette_query_length = 0U;

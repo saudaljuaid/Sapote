@@ -681,10 +681,22 @@ static struct ui_rect account_rect(void)
 /* How wide the grid is, and where it starts: Windows centres it in the
  * window rather than pinning it left, which is why the whole page recentres
  * when you resize it. */
+static uint32_t grid_columns(void)
+{
+    const struct ui_rect caption = caption_rect();
+    const uint32_t available = caption.width > SETTINGS_PAD * 2U ?
+        caption.width - SETTINGS_PAD * 2U : 0U;
+
+    return available >= SETTINGS_COLUMNS * SETTINGS_TILE_WIDTH +
+        (SETTINGS_COLUMNS - 1U) * SETTINGS_TILE_GAP ? SETTINGS_COLUMNS : 2U;
+}
+
 static uint32_t grid_width(void)
 {
-    return SETTINGS_COLUMNS * SETTINGS_TILE_WIDTH +
-        (SETTINGS_COLUMNS - 1U) * SETTINGS_TILE_GAP;
+    const uint32_t columns = grid_columns();
+
+    return columns * SETTINGS_TILE_WIDTH +
+        (columns - 1U) * SETTINGS_TILE_GAP;
 }
 
 static uint32_t grid_left(void)
@@ -730,8 +742,9 @@ static struct ui_rect tile_rect(size_t index)
     const struct ui_rect head = heading_rect();
     const uint32_t top = head.y + head.height + SETTINGS_SEARCH_BAND;
     const size_t position = tile_position(index);
-    const uint32_t column = (uint32_t)position % SETTINGS_COLUMNS;
-    const uint32_t row = (uint32_t)position / SETTINGS_COLUMNS;
+    const uint32_t columns = grid_columns();
+    const uint32_t column = (uint32_t)position % columns;
+    const uint32_t row = (uint32_t)position / columns;
     const uint32_t y = top + row * (SETTINGS_TILE_HEIGHT + SETTINGS_TILE_GAP);
 
     if (!tiles[index].present ||
@@ -769,10 +782,14 @@ static struct ui_rect content_rect(void)
     const struct ui_rect head = page_head_rect();
     const uint32_t bottom = window_rect.y + window_rect.height -
         SETTINGS_BORDER;
+    const uint32_t available = head.width > SETTINGS_PAD * 2U ?
+        head.width - SETTINGS_PAD * 2U : head.width;
+    const uint32_t width = available < SETTINGS_PAGE_WIDTH ?
+        available : SETTINGS_PAGE_WIDTH;
 
     return (struct ui_rect){
-        centred_x(head.x, head.width, SETTINGS_PAGE_WIDTH),
-        head.y + head.height, SETTINGS_PAGE_WIDTH,
+        centred_x(head.x, head.width, width),
+        head.y + head.height, width,
         bottom > head.y + head.height ? bottom - head.y - head.height : 0U };
 }
 
@@ -2188,10 +2205,8 @@ enum settings_status settings_set_frame(struct ui_rect frame)
         SETTINGS_ACCOUNT + SETTINGS_HEADING + SETTINGS_SEARCH_BAND +
         SETTINGS_TILE_HEIGHT;
 
-    /* The home grid clips its rightmost column on compact framebuffers; the
-     * category pages and their controls remain fully usable.  Do not reject
-     * Sapote's supported 1024x768 desktop merely because the three-column
-     * home layout is wider than its default window. */
+    /* Compact framebuffers use a two-column home grid and a correspondingly
+     * narrower category page. */
     if (frame.width < least_width || frame.height < least_height) {
         return SETTINGS_STATUS_UNSUPPORTED_GEOMETRY;
     }
@@ -2387,10 +2402,10 @@ bool settings_self_test(void)
             }
         }
     }
-    /* A page has to fit beside the grid it opens from, or a row's control
-     * runs off the right-hand edge of the window. */
-    if (SETTINGS_PAGE_WIDTH > grid_width()) {
-        self_test_failure = "a settings page is wider than the grid";
+    /* A page has to fit in the window it opens in, or a row's control runs
+     * off the right-hand edge. */
+    if (content_rect().width + SETTINGS_PAD * 2U > caption_rect().width) {
+        self_test_failure = "a settings page is wider than its window";
         return false;
     }
     /* The matching rule, which every result on the page runs through. */

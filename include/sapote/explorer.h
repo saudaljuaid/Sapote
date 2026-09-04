@@ -139,6 +139,22 @@ struct explorer_place {
     const char *glyph;
 };
 
+enum explorer_action_kind {
+    EXPLORER_ACTION_NONE = 0,
+    EXPLORER_ACTION_CREATE,
+    EXPLORER_ACTION_RENAME,
+    EXPLORER_ACTION_DELETE,
+    EXPLORER_ACTION_COPY,
+    EXPLORER_ACTION_MOVE
+};
+
+struct explorer_action {
+    enum explorer_action_kind kind;
+    enum explorer_kind item_kind;
+    char source[EXPLORER_NAME_BYTES];
+    char destination[EXPLORER_NAME_BYTES];
+};
+
 const char *explorer_status_string(enum explorer_status status);
 
 enum explorer_status explorer_initialize(struct surface *canvas,
@@ -294,6 +310,9 @@ enum explorer_status explorer_pointer_move(struct ui_point point,
     struct ui_rect *damage);
 enum explorer_status explorer_pointer_press(struct ui_point point,
     struct ui_rect *damage);
+/* Consume the filesystem mutation requested by the last completed command.
+ * The shell performs it against its real volume, then reloads the rows. */
+bool explorer_take_action(struct explorer_action *action);
 
 /* Advance the hover cross-fades and the rename caret's blink to the
  * monotonic clock.  Returns true while another frame is still owed. */

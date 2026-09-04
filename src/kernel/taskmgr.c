@@ -168,6 +168,8 @@ static bool focused = true;
 static struct taskmgr_process processes[TASKMGR_MAX_PROCESSES];
 static struct taskmgr_meter meters[TASKMGR_RESOURCE_COUNT];
 static struct taskmgr_startup startup[TASKMGR_MAX_STARTUP];
+static char ended_task[TASKMGR_NAME_BYTES];
+static bool ended_task_waiting;
 static uint16_t cores[TASKMGR_MAX_CORES];
 static size_t core_count;
 static uint32_t uptime_seconds;
@@ -2161,6 +2163,8 @@ enum taskmgr_status taskmgr_initialize(struct surface *canvas_in,
     hover_column = (size_t)-1;
     hover_tile = (size_t)-1;
     hover_end_task = false;
+    ended_task[0] = '\0';
+    ended_task_waiting = false;
     fading_row = (size_t)-1;
     ui_motion_reset(&row_fade, 0);
     order_count = 0U;
@@ -2192,6 +2196,9 @@ enum taskmgr_status taskmgr_set_process(size_t index,
     }
     if (process == NULL) {
         processes[index] = (struct taskmgr_process){ 0 };
+        if (selected == index) {
+            selected = (size_t)-1;
+        }
         rebuild_order();
         return TASKMGR_STATUS_OK;
     }
@@ -2337,9 +2344,12 @@ bool taskmgr_end_task(char *name_out, size_t name_bytes,
         *damage = (struct ui_rect){ 0U, 0U, 0U, 0U };
     }
     if (!initialized || selected == (size_t)-1 ||
-            !processes[selected].present || processes[selected].heading) {
+            !processes[selected].present || processes[selected].heading ||
+            processes[selected].kind == TASKMGR_SYSTEM) {
         return false;
     }
+    copy_field(ended_task, processes[selected].name, sizeof(ended_task));
+    ended_task_waiting = true;
     if (name_out != NULL && name_bytes != 0U) {
         copy_field(name_out, processes[selected].name, name_bytes);
     }
@@ -2350,6 +2360,19 @@ bool taskmgr_end_task(char *name_out, size_t name_bytes,
     if (damage != NULL) {
         *damage = window_rect;
     }
+    return true;
+}
+
+bool taskmgr_take_ended_task(char *name_out, size_t name_bytes)
+{
+    if (!ended_task_waiting) {
+        return false;
+    }
+    if (name_out != NULL && name_bytes != 0U) {
+        copy_field(name_out, ended_task, name_bytes);
+    }
+    ended_task[0] = '\0';
+    ended_task_waiting = false;
     return true;
 }
 

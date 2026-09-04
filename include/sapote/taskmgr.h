@@ -242,6 +242,10 @@ bool taskmgr_sort_descending(void);
  */
 bool taskmgr_end_task(char *name_out, size_t name_bytes,
     struct ui_rect *damage);
+/* Pointer-driven End task presses are queued here for the compositor.  The
+ * row disappears immediately, and the caller consumes its stable name once
+ * to terminate the corresponding real application. */
+bool taskmgr_take_ended_task(char *name_out, size_t name_bytes);
 /* Which row is selected, or SIZE_MAX for none. */
 size_t taskmgr_selection(void);
 

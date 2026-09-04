@@ -229,6 +229,7 @@ static uint64_t camera_seen_generation;
 static char camera_status[64U] = "No camera connected";
 static uint8_t camera_bmp_row[UI_CAMERA_CAPTURE_WIDTH * 3U];
 static uint32_t camera_preview_row[UI_MAX_WIDTH];
+static uint8_t explorer_copy_buffer[4096U];
 static uint32_t settings_wallpaper_thumbnail_pixels[128U * 72U];
 static uint32_t dock_backdrop_pixels[UI_MAX_WIDTH * 48U];
 static uint64_t redraw_tile_hashes[
@@ -256,6 +257,7 @@ static bool panel_drag_active;
 static enum ui_panel_id panel_drag_panel;
 static struct ui_point panel_drag_anchor;
 static struct ui_rect panel_drag_origin;
+static uint64_t taskmgr_last_refresh_second = UINT64_MAX;
 static const char *self_test_failure = "Sapote Redwood UI self-test not run";
 static const char *event_queue_failure = "UI event queue self-test not run";
 static const char *installed_proof_failure =
@@ -374,22 +376,6 @@ static const uint32_t cursor_outer[UI_CURSOR_SOURCE_HEIGHT] = {
     UINT32_C(0x001FF800), UINT32_C(0x000FF000), UINT32_C(0x000FC000),
     UINT32_C(0x00070000)
 };
-static const uint32_t cursor_inner[UI_CURSOR_SOURCE_HEIGHT] = {
-    UINT32_C(0x80000000), UINT32_C(0xC0000000), UINT32_C(0xE0000000),
-    UINT32_C(0xF8000000), UINT32_C(0xFC000000), UINT32_C(0xFE000000),
-    UINT32_C(0xFF000000), UINT32_C(0xFFC00000), UINT32_C(0xFFE00000),
-    UINT32_C(0xFFF00000), UINT32_C(0xFFFC0000), UINT32_C(0xFFFE0000),
-    UINT32_C(0xFFFF0000), UINT32_C(0xFFFFC000), UINT32_C(0xFFFFE000),
-    UINT32_C(0xFFFFF000), UINT32_C(0xFFFFF800), UINT32_C(0xFFFFFE00),
-    UINT32_C(0xFFFFFF00), UINT32_C(0xFFFFFF80), UINT32_C(0xFFF80000),
-    UINT32_C(0xFFFC0000), UINT32_C(0xFFFC0000), UINT32_C(0xFDFE0000),
-    UINT32_C(0xF8FE0000), UINT32_C(0xF0FF0000), UINT32_C(0xE07F0000),
-    UINT32_C(0xC07F8000), UINT32_C(0x803FC000), UINT32_C(0x003FC000),
-    UINT32_C(0x001FE000), UINT32_C(0x000FE000), UINT32_C(0x000FF000),
-    UINT32_C(0x0007E000), UINT32_C(0x00078000), UINT32_C(0x00020000),
-    UINT32_C(0x00000000)
-};
-
 static bool add_u32(uint32_t left, uint32_t right, uint32_t *sum)
 {
     if (sum == NULL || left > UINT32_MAX - right) {
@@ -2351,6 +2337,138 @@ static bool file_is_internal(const char *name)
     return false;
 }
 
+static uint8_t ascii_lower(uint8_t value)
+{
+    return value >= (uint8_t)'A' && value <= (uint8_t)'Z' ?
+        (uint8_t)(value + ((uint8_t)'a' - (uint8_t)'A')) : value;
+}
+
+static bool file_suffix(const char *name, const char *suffix)
+{
+    size_t name_bytes = 0U;
+    size_t suffix_bytes = 0U;
+
+    while (name[name_bytes] != '\0') {
+        ++name_bytes;
+    }
+    while (suffix[suffix_bytes] != '\0') {
+        ++suffix_bytes;
+    }
+    if (suffix_bytes > name_bytes) {
+        return false;
+    }
+    for (size_t index = 0U; index < suffix_bytes; ++index) {
+        if (ascii_lower((uint8_t)name[name_bytes - suffix_bytes + index]) !=
+                ascii_lower((uint8_t)suffix[index])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static enum explorer_kind explorer_kind_for(
+    const struct sapfs_list_entry *entry)
+{
+    if (entry->directory) {
+        return EXPLORER_FOLDER;
+    }
+    if (file_suffix(entry->name, ".txt") || file_suffix(entry->name, ".md")) {
+        return EXPLORER_TEXT;
+    }
+    if (file_suffix(entry->name, ".bmp") ||
+            file_suffix(entry->name, ".png") ||
+            file_suffix(entry->name, ".jpg") ||
+            file_suffix(entry->name, ".jpeg")) {
+        return EXPLORER_IMAGE;
+    }
+    if (file_suffix(entry->name, ".wav") ||
+            file_suffix(entry->name, ".pcm")) {
+        return EXPLORER_AUDIO;
+    }
+    if (file_suffix(entry->name, ".mp4") ||
+            file_suffix(entry->name, ".webm")) {
+        return EXPLORER_VIDEO;
+    }
+    if (file_suffix(entry->name, ".zip") ||
+            file_suffix(entry->name, ".pkg") ||
+            file_suffix(entry->name, ".sap")) {
+        return EXPLORER_ARCHIVE;
+    }
+    if (file_suffix(entry->name, ".c") || file_suffix(entry->name, ".h") ||
+            file_suffix(entry->name, ".rs") ||
+            file_suffix(entry->name, ".py")) {
+        return EXPLORER_CODE;
+    }
+    return EXPLORER_GENERIC;
+}
+
+static void explorer_format_size(char *output, size_t capacity,
+    uint64_t bytes)
+{
+    size_t at;
+
+    if (bytes >= UINT64_C(1024) * 1024U) {
+        at = append_u64(output, capacity, 0U,
+            bytes / (UINT64_C(1024) * 1024U));
+        (void)append_text(output, capacity, at, " MiB");
+    } else if (bytes >= 1024U) {
+        at = append_u64(output, capacity, 0U, bytes / 1024U);
+        (void)append_text(output, capacity, at, " KiB");
+    } else {
+        at = append_u64(output, capacity, 0U, bytes);
+        (void)append_text(output, capacity, at, " bytes");
+    }
+}
+
+static void phipia_sync_explorer(void)
+{
+    static const char *const type_name[EXPLORER_KIND_COUNT] = {
+        "File folder", "Text document", "Image", "Audio", "Video",
+        "Archive", "Source code", "File"
+    };
+    const struct explorer_place data = {
+        .present = true,
+        .current = true,
+        .label = "Data (P:)",
+        .glyph = "drive"
+    };
+
+    if (!phipia_shell_ready) {
+        return;
+    }
+    (void)explorer_set_place(0U, &data);
+    for (size_t index = 1U; index < EXPLORER_MAX_PLACES; ++index) {
+        (void)explorer_set_place(index, NULL);
+    }
+    (void)explorer_set_crumb(0U, "P:");
+    (void)explorer_set_crumb(1U,
+        strings_equal(file_directory, ".") ? "" : file_directory);
+    for (size_t index = 2U; index < EXPLORER_MAX_CRUMBS; ++index) {
+        (void)explorer_set_crumb(index, "");
+    }
+    for (size_t index = 0U; index < file_entry_count &&
+            index < EXPLORER_MAX_ITEMS; ++index) {
+        const enum explorer_kind kind = explorer_kind_for(&file_entries[index]);
+        struct explorer_item item = {
+            .present = true,
+            .kind = kind
+        };
+
+        (void)copy_string(item.name, sizeof(item.name),
+            file_entries[index].name);
+        (void)copy_string(item.type, sizeof(item.type), type_name[kind]);
+        if (!file_entries[index].directory) {
+            explorer_format_size(item.size, sizeof(item.size),
+                file_entries[index].size);
+        }
+        (void)explorer_set_item(index, &item);
+    }
+    for (size_t index = file_entry_count; index < EXPLORER_MAX_ITEMS;
+         ++index) {
+        (void)explorer_set_item(index, NULL);
+    }
+}
+
 static enum sapfs_status files_refresh(void)
 {
     file_entry_count = 0U;
@@ -2371,6 +2489,9 @@ static enum sapfs_status files_refresh(void)
 
     set_app_status(status == SAPFS_STATUS_OK ?
         "data volume / fat32 / synchronized view" : "Files", status);
+    if (status == SAPFS_STATUS_OK) {
+        phipia_sync_explorer();
+    }
     return status;
 }
 
@@ -2437,6 +2558,114 @@ static void files_create(bool directory)
         break;
     }
     set_app_status(directory ? "new folder" : "new file", status);
+}
+
+static enum sapfs_status explorer_copy_file(const char *source,
+    const char *destination)
+{
+    sapfs_handle input = 0U;
+    sapfs_handle output = 0U;
+    enum sapfs_status status = sapfs_create(SAPFS_VOLUME_DATA, destination);
+    bool destination_created = status == SAPFS_STATUS_OK;
+
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_open(SAPFS_VOLUME_DATA, source, SAPFS_ACCESS_READ,
+            &input);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_open(SAPFS_VOLUME_DATA, destination,
+            SAPFS_ACCESS_WRITE, &output);
+    }
+    while (status == SAPFS_STATUS_OK) {
+        size_t read_bytes = 0U;
+        size_t written_bytes = 0U;
+
+        status = sapfs_read(input, explorer_copy_buffer,
+            sizeof(explorer_copy_buffer), &read_bytes);
+        if (status != SAPFS_STATUS_OK || read_bytes == 0U) {
+            break;
+        }
+        status = sapfs_write(output, explorer_copy_buffer, read_bytes,
+            &written_bytes);
+        if (status == SAPFS_STATUS_OK && written_bytes != read_bytes) {
+            status = SAPFS_STATUS_IO;
+        }
+    }
+    if (output != 0U) {
+        const enum sapfs_status close_status = sapfs_close(output);
+
+        if (status == SAPFS_STATUS_OK && close_status != SAPFS_STATUS_OK) {
+            status = close_status;
+        }
+    }
+    if (input != 0U) {
+        const enum sapfs_status close_status = sapfs_close(input);
+
+        if (status == SAPFS_STATUS_OK && close_status != SAPFS_STATUS_OK) {
+            status = close_status;
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_sync(SAPFS_VOLUME_DATA);
+    } else if (destination_created) {
+        (void)sapfs_unlink(SAPFS_VOLUME_DATA, destination);
+        (void)sapfs_sync(SAPFS_VOLUME_DATA);
+    }
+    return status;
+}
+
+static void phipia_apply_explorer_action(void)
+{
+    struct explorer_action action;
+    char source[SAPFS_MAX_PATH + 1U];
+    char destination[SAPFS_MAX_PATH + 1U];
+    enum sapfs_status status = SAPFS_STATUS_INVALID_ARGUMENT;
+
+    if (!explorer_take_action(&action)) {
+        return;
+    }
+    source[0] = '\0';
+    destination[0] = '\0';
+    if (action.source[0] != '\0' && !entry_path(action.source, source)) {
+        set_app_status("file command", SAPFS_STATUS_PATH);
+        (void)files_refresh();
+        return;
+    }
+    if (action.destination[0] != '\0' &&
+            !entry_path(action.destination, destination)) {
+        set_app_status("file command", SAPFS_STATUS_PATH);
+        (void)files_refresh();
+        return;
+    }
+    switch (action.kind) {
+    case EXPLORER_ACTION_CREATE:
+        status = action.item_kind == EXPLORER_FOLDER ?
+            sapfs_mkdir(SAPFS_VOLUME_DATA, destination) :
+            sapfs_create(SAPFS_VOLUME_DATA, destination);
+        break;
+    case EXPLORER_ACTION_RENAME:
+    case EXPLORER_ACTION_MOVE:
+        status = sapfs_rename(SAPFS_VOLUME_DATA, source, destination);
+        break;
+    case EXPLORER_ACTION_DELETE:
+        status = action.item_kind == EXPLORER_FOLDER ?
+            sapfs_rmdir(SAPFS_VOLUME_DATA, source) :
+            sapfs_unlink(SAPFS_VOLUME_DATA, source);
+        break;
+    case EXPLORER_ACTION_COPY:
+        status = action.item_kind == EXPLORER_FOLDER ?
+            SAPFS_STATUS_IS_DIRECTORY :
+            explorer_copy_file(source, destination);
+        break;
+    default:
+        status = SAPFS_STATUS_INVALID_ARGUMENT;
+        break;
+    }
+    if (status == SAPFS_STATUS_OK && action.kind != EXPLORER_ACTION_COPY) {
+        status = sapfs_sync(SAPFS_VOLUME_DATA);
+    }
+    set_app_status("file command", status);
+    (void)files_refresh();
 }
 
 static void phipia_note_from_buffer(void)
@@ -5535,6 +5764,32 @@ static void phipia_set_panel_focus(enum ui_panel_id panel, bool focused)
     }
 }
 
+static enum ui_status phipia_draw_camera_panel(struct ui_rect damage)
+{
+    const bool feed = camera_refresh_frame();
+    const struct ui_rect view = phipia_camera_viewfinder_bounds();
+    const struct ui_rect clipped = rect_intersection(view, damage);
+
+    (void)phipia_camera_set_feed(feed);
+    if (feed) {
+        for (uint32_t y = 0U; y < clipped.height; ++y) {
+            for (uint32_t x = 0U; x < clipped.width; ++x) {
+                camera_preview_row[x] = camera_frame_pixel(
+                    clipped.x - view.x + x, clipped.y - view.y + y,
+                    view.width, view.height);
+            }
+            if (surface_blit(canvas, clipped.x, clipped.y + y,
+                    camera_preview_row, clipped.width, 1U,
+                    clipped.width * SURFACE_BYTES_PER_PIXEL) !=
+                        SURFACE_STATUS_OK) {
+                return UI_STATUS_SURFACE_FAILURE;
+            }
+        }
+    }
+    return phipia_camera_draw(damage) == PHIPIA_CAMERA_STATUS_OK ?
+        UI_STATUS_OK : UI_STATUS_SURFACE_FAILURE;
+}
+
 static enum ui_status phipia_draw_active_panel(
     struct ui_rect damage,
     bool focused
@@ -5565,8 +5820,7 @@ static enum ui_status phipia_draw_active_panel(
         return editor_draw(damage) == EDITOR_STATUS_OK ?
             UI_STATUS_OK : UI_STATUS_SURFACE_FAILURE;
     case UI_PANEL_CAMERA:
-        return phipia_camera_draw(damage) == PHIPIA_CAMERA_STATUS_OK ?
-            UI_STATUS_OK : UI_STATUS_SURFACE_FAILURE;
+        return phipia_draw_camera_panel(damage);
     case UI_PANEL_PAINT:
         return paint_draw(damage) == PAINT_STATUS_OK ?
             UI_STATUS_OK : UI_STATUS_SURFACE_FAILURE;
@@ -5810,6 +6064,174 @@ static bool taskbar_hit_test(struct ui_point point)
             rect_contains_point(taskbar_flyout_bounds(), point));
 }
 
+static void phipia_seed_settings(void)
+{
+    static const struct settings_tile tiles[] = {
+        { true, "System", "Taskbar and desktop behaviour", "monitor", 0U },
+        { true, "Personalization", "Colour, transparency and layout", "brush", 0U },
+        { true, "Network & internet", "Live connection status", "globe", 0U },
+        { true, "Apps", "Store and installed applications", "layout-grid", 0U },
+        { true, "Privacy & security", "Camera and platform security", "shield-check", 0U },
+        { true, "About", "Phipia system information", "circle-user", 0U }
+    };
+    static const struct settings_row system_rows[] = {
+        { true, SETTINGS_ROW_HEADING, "Taskbar", "", 0U, { "" } },
+        { true, SETTINGS_ROW_CHOICE, "Search", "Choose the taskbar search control", 3U,
+            { "Hidden", "Icon", "Icon + label", "Search box" } },
+        { true, SETTINGS_ROW_TOGGLE, "Show desktop button", "Use the strip at the far right", 1U,
+            { "" } }
+    };
+    static const struct settings_row personalization_rows[] = {
+        { true, SETTINGS_ROW_HEADING, "Taskbar appearance", "", 0U, { "" } },
+        { true, SETTINGS_ROW_CHOICE, "Theme", "Choose dark or light taskbar chrome", 0U,
+            { "Dark", "Light", "", "" } },
+        { true, SETTINGS_ROW_CHOICE, "Alignment", "Place apps at the left or centre", 1U,
+            { "Center", "Left", "", "" } },
+        { true, SETTINGS_ROW_TOGGLE, "Transparency", "Let the wallpaper tint the taskbar", 1U,
+            { "" } }
+    };
+    static const struct settings_row network_rows[] = {
+        { true, SETTINGS_ROW_HEADING, "Connection", "", 0U, { "" } },
+        { true, SETTINGS_ROW_ACTION, "Network status", "Read the live adapter and address state", 0U,
+            { "View", "", "", "" } }
+    };
+    static const struct settings_row app_rows[] = {
+        { true, SETTINGS_ROW_HEADING, "Applications", "", 0U, { "" } },
+        { true, SETTINGS_ROW_ACTION, "Phipia Store", "Browse signed applications", 0U,
+            { "Open", "", "", "" } }
+    };
+    static const struct settings_row privacy_rows[] = {
+        { true, SETTINGS_ROW_HEADING, "App permissions", "", 0U, { "" } },
+        { true, SETTINGS_ROW_ACTION, "Camera", "Open the camera permission surface", 0U,
+            { "Open", "", "", "" } }
+    };
+    static const struct settings_row about_rows[] = {
+        { true, SETTINGS_ROW_HEADING, "Phipia", "", 0U, { "" } },
+        { true, SETTINGS_ROW_ACTION, "System information", "Read live kernel resource state", 0U,
+            { "View", "", "", "" } }
+    };
+    static const struct {
+        const struct settings_row *rows;
+        size_t count;
+    } pages[] = {
+        { system_rows, sizeof(system_rows) / sizeof(system_rows[0]) },
+        { personalization_rows, sizeof(personalization_rows) /
+            sizeof(personalization_rows[0]) },
+        { network_rows, sizeof(network_rows) / sizeof(network_rows[0]) },
+        { app_rows, sizeof(app_rows) / sizeof(app_rows[0]) },
+        { privacy_rows, sizeof(privacy_rows) / sizeof(privacy_rows[0]) },
+        { about_rows, sizeof(about_rows) / sizeof(about_rows[0]) }
+    };
+
+    for (size_t page = 0U; page < sizeof(tiles) / sizeof(tiles[0]); ++page) {
+        (void)settings_set_tile(page, &tiles[page]);
+        for (size_t row = 0U; row < pages[page].count; ++row) {
+            (void)settings_set_row(page, row, &pages[page].rows[row]);
+        }
+    }
+}
+
+static void phipia_apply_settings(void)
+{
+    const uint32_t search = settings_row_state(0U, 1U);
+
+    (void)taskbar_set_search_mode((enum taskbar_search_mode)search);
+    (void)taskbar_set_search_visible(search != TASKBAR_SEARCH_HIDDEN);
+    (void)taskbar_set_show_desktop_button(
+        settings_row_state(0U, 2U) != 0U);
+    (void)taskbar_set_theme(settings_row_state(1U, 1U) == 0U ?
+        TASKBAR_THEME_DARK : TASKBAR_THEME_LIGHT);
+    (void)taskbar_set_alignment(settings_row_state(1U, 2U) == 0U ?
+        TASKBAR_ALIGNMENT_CENTER : TASKBAR_ALIGNMENT_LEFT);
+    (void)taskbar_set_transparency(settings_row_state(1U, 3U) != 0U);
+}
+
+static bool phipia_refresh_taskmgr(bool force)
+{
+    static const enum ui_panel_id panels[] = {
+        UI_PANEL_FILES, UI_PANEL_TERMINAL, UI_PANEL_NOTES, UI_PANEL_STUDIO,
+        UI_PANEL_CAMERA, UI_PANEL_PAINT, UI_PANEL_STORE, UI_PANEL_SETTINGS,
+        UI_PANEL_TASKMGR
+    };
+    static const char *const arts[] = {
+        "files", "terminal", "notes", "editor", "camera", "paint",
+        "store", "settings", "taskmgr"
+    };
+    const uint64_t second = clock_monotonic_ns() / UINT64_C(1000000000);
+    const struct heap_state heap = heap_get_state();
+    const struct thread_system_state threads = thread_get_state();
+    size_t slot = 0U;
+    struct taskmgr_process row = {
+        .present = true, .heading = true, .kind = TASKMGR_APP
+    };
+
+    if (!force && second == taskmgr_last_refresh_second) {
+        return false;
+    }
+    taskmgr_last_refresh_second = second;
+    (void)copy_string(row.name, sizeof(row.name), "Apps");
+    (void)taskmgr_set_process(slot++, &row);
+    for (size_t index = 0U; index < sizeof(panels) / sizeof(panels[0]);
+         ++index) {
+        const enum ui_panel_id panel = panels[index];
+
+        if (!panel_open[panel]) {
+            continue;
+        }
+        row = (struct taskmgr_process){
+            .present = true,
+            .kind = TASKMGR_APP,
+            .art = arts[index],
+            .pid = (uint32_t)panel
+        };
+        (void)copy_string(row.name, sizeof(row.name), ui_panel_name(panel));
+        (void)copy_string(row.status, sizeof(row.status),
+            panel_minimized[panel] ? "Minimized" :
+                (state.active_panel == panel ? "Foreground" : "Running"));
+        (void)taskmgr_set_process(slot++, &row);
+    }
+    row = (struct taskmgr_process){
+        .present = true, .heading = true, .kind = TASKMGR_SYSTEM
+    };
+    (void)copy_string(row.name, sizeof(row.name), "System");
+    (void)taskmgr_set_process(slot++, &row);
+    row = (struct taskmgr_process){
+        .present = true,
+        .kind = TASKMGR_SYSTEM,
+        .pid = 1U,
+        .threads = threads.live > UINT16_MAX ? UINT16_MAX :
+            (uint16_t)threads.live,
+        .memory_kb = heap.allocated_bytes > UINT64_C(0xFFFFFFFF) * 1024U ?
+            UINT32_MAX : (uint32_t)(heap.allocated_bytes / 1024U),
+        .glyph = "box"
+    };
+    (void)copy_string(row.name, sizeof(row.name), "Phipia kernel");
+    (void)copy_string(row.status, sizeof(row.status), "Protected");
+    (void)taskmgr_set_process(slot++, &row);
+    while (slot < TASKMGR_MAX_PROCESSES) {
+        (void)taskmgr_set_process(slot++, NULL);
+    }
+    {
+        struct taskmgr_meter memory = {
+            .present = true,
+            .percent_tenths = heap.size == 0U ? 0U :
+                (uint16_t)(heap.allocated_bytes * 1000U / heap.size),
+            .used = (uint32_t)(heap.allocated_bytes / 1024U),
+            .total = (uint32_t)(heap.size / 1024U)
+        };
+
+        (void)copy_string(memory.detail, sizeof(memory.detail), "Kernel heap KiB");
+        (void)taskmgr_set_meter(TASKMGR_RESOURCE_CPU, NULL);
+        (void)taskmgr_set_meter(TASKMGR_RESOURCE_MEMORY, &memory);
+        (void)taskmgr_set_meter(TASKMGR_RESOURCE_DISK, NULL);
+        (void)taskmgr_set_meter(TASKMGR_RESOURCE_NETWORK, NULL);
+    }
+    (void)taskmgr_set_core_count(0U);
+    (void)taskmgr_set_uptime(second > UINT32_MAX ? UINT32_MAX :
+        (uint32_t)second);
+    return true;
+}
+
 static bool phipia_initialize_shell(uint32_t width, uint32_t height)
 {
     phipia_shell_ready = false;
@@ -5836,6 +6258,7 @@ static bool phipia_initialize_shell(uint32_t width, uint32_t height)
     (void)paint_set_title("Paint");
     (void)settings_set_account("Phipia", "Local account");
     (void)settings_set_heading("Phipia Settings");
+    phipia_seed_settings();
     (void)phipia_camera_set_feed(false);
     (void)taskbar_set_theme(TASKBAR_THEME_DARK);
     (void)taskbar_set_alignment(TASKBAR_ALIGNMENT_LEFT);
@@ -5848,6 +6271,9 @@ static bool phipia_initialize_shell(uint32_t width, uint32_t height)
     phipia_note_from_buffer();
     phipia_shell_ready = true;
     taskbar_install_apps();
+    phipia_apply_settings();
+    phipia_sync_explorer();
+    phipia_refresh_taskmgr(true);
     return true;
 }
 
@@ -7154,6 +7580,19 @@ enum ui_status ui_handle_keyboard(const struct keyboard_event *event)
     if (!state.active) {
         return UI_STATUS_OK;
     }
+    if (phipia_shell_ready && dialog_is_open()) {
+        if (!event->pressed) {
+            return UI_STATUS_OK;
+        }
+        if (event->scancode == 0x01U) {
+            ui_event.type = UI_EVENT_PANEL_CLOSE;
+        } else if (event->scancode == 0x1CU) {
+            ui_event.type = UI_EVENT_KEYBOARD_ACTIVATION;
+        } else {
+            return UI_STATUS_OK;
+        }
+        return ui_event_publish(&ui_event);
+    }
     if (phipia_shell_ready && event->pressed && event->control &&
             event->shift && event->scancode == 0x01U) {
         ui_event.type = UI_EVENT_TASK_MANAGER;
@@ -7473,6 +7912,7 @@ static enum ui_status set_panel(
         return UI_STATUS_SCREEN_FAILURE;
     }
     taskbar_sync_run_states();
+    (void)phipia_refresh_taskmgr(true);
     return UI_STATUS_OK;
 }
 
@@ -8250,6 +8690,11 @@ static enum ui_status apply_event(
         }
         return set_panel(UI_PANEL_NONE, damage);
     }
+    if (phipia_shell_ready && event->type == UI_EVENT_KEYBOARD_ACTIVATION &&
+            dialog_is_open()) {
+        return dialog_key_return(damage) == DIALOG_STATUS_OK ?
+            UI_STATUS_OK : UI_STATUS_BAD_ELEMENT;
+    }
     if (phipia_shell_ready && event->type == UI_EVENT_TEXT_INPUT &&
             taskbar_search_panel_open()) {
         const enum taskbar_status taskbar_status = event->character == '\b' ?
@@ -8283,6 +8728,10 @@ static enum ui_status apply_event(
             explorer_status = explorer_key_enter(damage);
         } else {
             explorer_status = explorer_text_input(event->character, damage);
+        }
+        if (explorer_status == EXPLORER_STATUS_OK) {
+            phipia_apply_explorer_action();
+            *damage = rect_union(*damage, explorer_bounds());
         }
         return explorer_status == EXPLORER_STATUS_OK ? UI_STATUS_OK :
             UI_STATUS_BAD_ELEMENT;
@@ -8335,6 +8784,19 @@ static enum ui_status apply_event(
         dock_sync_layout();
         const struct ui_rect new_cursor = cursor_damage_rect_for(state.pointer);
         *damage = rect_union(*damage, rect_union(old_cursor, new_cursor));
+        if (phipia_shell_ready && dialog_is_open()) {
+            struct ui_rect dialog_damage = { 0U, 0U, 0U, 0U };
+
+            if (dialog_pointer_move(state.pointer, &dialog_damage) !=
+                    DIALOG_STATUS_OK) {
+                return UI_STATUS_BAD_ELEMENT;
+            }
+            (void)cursor_set_kind(CURSOR_NORMAL_SELECT);
+            *damage = rect_union(*damage, dialog_damage);
+            state.hover = UI_ELEMENT_NONE;
+            state.renders.cursor_moves += 1U;
+            return UI_STATUS_OK;
+        }
         if (panel_drag_active) {
             state.hover = UI_ELEMENT_NONE;
             state.renders.cursor_moves += 1U;
@@ -8402,6 +8864,17 @@ static enum ui_status apply_event(
         event->button == UI_POINTER_BUTTON_LEFT) {
         enum ui_element_id dock_hit = UI_ELEMENT_NONE;
 
+        if (phipia_shell_ready && dialog_is_open()) {
+            struct ui_rect dialog_damage = { 0U, 0U, 0U, 0U };
+
+            if (dialog_pointer_press(event->point, &dialog_damage) !=
+                    DIALOG_STATUS_OK) {
+                return UI_STATUS_BAD_ELEMENT;
+            }
+            *damage = rect_union(*damage, dialog_damage);
+            state.pressed = UI_ELEMENT_NONE;
+            return UI_STATUS_OK;
+        }
         if (phipia_shell_ready && taskbar_hit_test(event->point)) {
             struct ui_rect shell_damage = { 0U, 0U, 0U, 0U };
 
@@ -8453,9 +8926,106 @@ static enum ui_status apply_event(
                 return press_status;
             }
             *damage = rect_union(*damage, shell_damage);
+            if (state.active_panel == UI_PANEL_FILES) {
+                phipia_apply_explorer_action();
+                *damage = rect_union(*damage, explorer_bounds());
+            }
             if (state.active_panel == UI_PANEL_NOTES &&
                     shell_damage.width != 0U && shell_damage.height != 0U) {
                 phipia_note_to_buffer();
+            }
+            if (state.active_panel == UI_PANEL_SETTINGS) {
+                size_t page;
+                size_t row;
+
+                phipia_apply_settings();
+                *damage = rect_union(*damage, taskbar_bounds());
+                if (settings_take_action(&page, &row)) {
+                    if (page == 3U && row == 1U) {
+                        return set_panel(UI_PANEL_STORE, damage);
+                    }
+                    if (page == 4U && row == 1U) {
+                        return set_panel(UI_PANEL_CAMERA, damage);
+                    }
+                    if (page == 2U && row == 1U) {
+                        const struct network_state network =
+                            network_get_state();
+                        struct dialog_request request = {
+                            .title = "Network status",
+                            .icon = network.active ? DIALOG_ICON_NONE :
+                                DIALOG_ICON_WARNING,
+                            .buttons = 1U,
+                            .defaulted = 0U,
+                            .button = { "OK" }
+                        };
+
+                        (void)copy_string(request.message,
+                            sizeof(request.message), network.active ?
+                                "The Phipia network stack is active." :
+                                "No active network stack is available.");
+                        (void)copy_string(request.detail,
+                            sizeof(request.detail),
+                            network.configuration.configured ?
+                                "An IPv4 address is configured." :
+                                "No IPv4 address is configured.");
+                        (void)dialog_open(&request, damage);
+                    } else if (page == 5U && row == 1U) {
+                        const struct heap_state heap = heap_get_state();
+                        const struct thread_system_state threads =
+                            thread_get_state();
+                        struct dialog_request request = {
+                            .title = "About Phipia",
+                            .message =
+                                "Phipia kernel and desktop are running.",
+                            .icon = DIALOG_ICON_NONE,
+                            .buttons = 1U,
+                            .defaulted = 0U,
+                            .button = { "OK" }
+                        };
+
+                        (void)copy_string(request.detail,
+                            sizeof(request.detail),
+                            heap.active && threads.active ?
+                                "Memory and scheduler services are active." :
+                                "A core service is not active.");
+                        (void)dialog_open(&request, damage);
+                    }
+                }
+            }
+            if (state.active_panel == UI_PANEL_TASKMGR) {
+                char ended[TASKMGR_NAME_BYTES];
+
+                if (taskmgr_take_ended_task(ended, sizeof(ended))) {
+                    static const enum ui_panel_id panels[] = {
+                        UI_PANEL_FILES, UI_PANEL_TERMINAL, UI_PANEL_NOTES,
+                        UI_PANEL_STUDIO, UI_PANEL_CAMERA, UI_PANEL_PAINT,
+                        UI_PANEL_STORE, UI_PANEL_SETTINGS, UI_PANEL_TASKMGR
+                    };
+
+                    for (size_t index = 0U;
+                         index < sizeof(panels) / sizeof(panels[0]); ++index) {
+                        const enum ui_panel_id panel = panels[index];
+
+                        if (!strings_equal(ended, ui_panel_name(panel))) {
+                            continue;
+                        }
+                        if (panel == UI_PANEL_TASKMGR) {
+                            return set_panel(UI_PANEL_NONE, damage);
+                        }
+                        panel_open[panel] = false;
+                        panel_minimized[panel] = false;
+                        panel_maximized[panel] = false;
+                        if (panel == UI_PANEL_STUDIO) {
+                            struct ui_rect closed;
+
+                            (void)editor_close(&closed);
+                        }
+                        taskbar_sync_run_states();
+                        *damage = rect_union(*damage, taskbar_bounds());
+                        phipia_refresh_taskmgr(true);
+                        break;
+                    }
+                }
             }
             if (state.active_panel == UI_PANEL_CAMERA &&
                     rect_contains_point(phipia_camera_capture_bounds(),
@@ -8656,6 +9226,11 @@ enum ui_status ui_flush(void)
     if (phipia_shell_ready) {
         struct ui_rect motion_damage = { 0U, 0U, 0U, 0U };
         bool moving = taskbar_animate(&motion_damage);
+
+        if (phipia_refresh_taskmgr(false) &&
+                state.active_panel == UI_PANEL_TASKMGR) {
+            damage = rect_union(damage, taskmgr_bounds());
+        }
 
         damage = rect_union(damage, motion_damage);
         motion_damage = (struct ui_rect){ 0U, 0U, 0U, 0U };
