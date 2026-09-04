@@ -8676,6 +8676,14 @@ static enum ui_element_id active_hit(struct ui_point point)
         return rect_contains_point(panel, point) ? UI_ELEMENT_NONE :
             UI_ELEMENT_LAUNCHER_DISMISS;
     }
+    const int dock_hit = dock3d_hit(&dock_model, point.x, point.y);
+    enum ui_element_id hit = dock_hit >= 0 ?
+        (enum ui_element_id)(UI_ELEMENT_DOCK_FILES + dock_hit) :
+        UI_ELEMENT_NONE;
+
+    if (hit != UI_ELEMENT_NONE) {
+        return hit;
+    }
     if (phipia_shell_ready && state.active_panel != UI_PANEL_NONE &&
             phipia_panel(state.active_panel)) {
         const struct ui_rect frame = state.layout.panel;
@@ -8696,14 +8704,6 @@ static enum ui_element_id active_hit(struct ui_point point)
             }
         }
         return UI_ELEMENT_NONE;
-    }
-    const int dock_hit = dock3d_hit(&dock_model, point.x, point.y);
-    enum ui_element_id hit = dock_hit >= 0 ?
-        (enum ui_element_id)(UI_ELEMENT_DOCK_FILES + dock_hit) :
-        UI_ELEMENT_NONE;
-
-    if (hit != UI_ELEMENT_NONE) {
-        return hit;
     }
     if (state.active_panel == UI_PANEL_NONE) {
         return UI_ELEMENT_NONE;
