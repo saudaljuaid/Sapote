@@ -6263,10 +6263,17 @@ _Noreturn void kernel_test_complete_phipia_proof(void)
         const enum ui_panel_id expected_panel = panels[index];
 
         phipia_proof_click_taskbar_item(index, expected_panel);
+        console_serial_write("ST PHIPIA TASKBAR app ");
+        console_serial_write_u64(index);
+        console_serial_write(" active\n");
         phipia_proof_settle_ui(
             "Phipia taskbar application animation did not settle");
+        console_serial_write("ST PHIPIA TASKBAR app ");
+        console_serial_write_u64(index);
+        console_serial_write(" settled\n");
         ui = ui_get_state();
     }
+    console_serial_write("ST PHIPIA TASKBAR applications passed\n");
     if (trail_probe.x < 0 || trail_probe.y < 0 ||
         phipia_proof_pixel((uint32_t)trail_probe.x,
             (uint32_t)trail_probe.y) != trail_under ||
@@ -6284,6 +6291,7 @@ _Noreturn void kernel_test_complete_phipia_proof(void)
     phipia_proof_process_ui("Phipia keyboard panel close draw failed");
     phipia_proof_settle_ui(
         "Phipia keyboard panel close animation did not settle");
+    console_serial_write("ST PHIPIA TASKBAR close passed\n");
     keyboard.scancode = 0x0FU;
     if (ui_handle_keyboard(&keyboard) != UI_STATUS_OK) {
         kernel_test_fail("Phipia keyboard focus-next failed");
@@ -6311,6 +6319,7 @@ _Noreturn void kernel_test_complete_phipia_proof(void)
     if (ui_get_state()->active_panel != UI_PANEL_FILES) {
         kernel_test_fail("Phipia keyboard activation chose wrong panel");
     }
+    console_serial_write("ST PHIPIA TASKBAR keyboard passed\n");
 
     if (!boot_plan_pointer_absence_self_test()) {
         kernel_test_fail("Phipia pointer-absence synthetic plan failed");
