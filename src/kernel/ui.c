@@ -4425,10 +4425,10 @@ static enum ui_status draw_settings_control_page(
     }
     if (page == 11U) {
         status = draw_settings_row(0U, damage, "Kernel",
-            "Sapote 2.2.0 dev", false, false);
+            "Phipia 2.2.0 dev", false, false);
         if (status == UI_STATUS_OK) {
             status = draw_settings_row(1U, damage, "Interface",
-                "Sapote Redwood", false, false);
+                "Phipia Desktop", false, false);
         }
         if (status == UI_STATUS_OK) {
             status = draw_settings_row(2U, damage, "Rendering",
@@ -5211,7 +5211,7 @@ static enum ui_status draw_files_app(struct ui_rect damage)
     }
     if (status == UI_STATUS_OK) {
         status = draw_text(sidebar, damage, sidebar.x + 28U,
-            sidebar.y + 116U, "Sapote", state.theme.ink);
+            sidebar.y + 116U, "Phipia", state.theme.ink);
     }
     if (status == UI_STATUS_OK) {
         status = draw_text(sidebar, damage, sidebar.x + 28U,
@@ -5943,7 +5943,7 @@ static enum ui_status draw_store_app(struct ui_rect damage)
     }
     if (status == UI_STATUS_OK) {
         status = draw_text(content, damage, content.x + 28U,
-            content.y + 57U, "Applications for Sapote Redwood",
+            content.y + 57U, "Applications for Phipia",
             framebuffer_pack(0x6DU, 0x73U, 0x79U));
     }
 
@@ -5970,10 +5970,10 @@ static enum ui_status draw_store_app(struct ui_rect damage)
     }
     if (store_section == 12U) {
         status = draw_store_info_row(content, damage, 0U,
-            "Application", "Sapote Store");
+            "Application", "Phipia Store");
         if (status == UI_STATUS_OK) {
             status = draw_store_info_row(content, damage, 1U,
-                "Platform", "Sapote native ABI v1");
+                "Platform", "Phipia native ABI v1");
         }
         if (status == UI_STATUS_OK) {
             status = draw_store_info_row(content, damage, 2U,
@@ -5999,7 +5999,7 @@ static enum ui_status draw_store_app(struct ui_rect damage)
     }
     if (status == UI_STATUS_OK) {
         status = draw_text(hero, damage, hero.x + 116U, hero.y + 39U,
-            "Sapote Store", state.theme.ink);
+            "Phipia Store", state.theme.ink);
     }
     if (status == UI_STATUS_OK) {
         status = draw_text(hero, damage, hero.x + 116U, hero.y + 65U,
@@ -10368,7 +10368,7 @@ enum ui_status ui_verify_installed(struct ui_proof *proof)
          * Folding that measured work into the compositor proof keeps the
          * receipt meaningful when the legacy Dock is not the active shell. */
         .glyphs = state.renders.glyphs +
-            (desktop_taskbar ? taskbar_render.glyphs : 0U),
+            (phipia_shell_ready ? taskbar_render.glyphs : 0U),
         .ledger_fingerprint = ledger == NULL ? 0U : ledger->fingerprint,
         .render_hash = second_hash
     };

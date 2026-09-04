@@ -179,7 +179,7 @@ static void command_help(void)
     console_write("  netstat   bounded socket and packet counters\n");
     console_write("  reboot    sync, unmount, and restart cleanly\n");
     console_write("  clear     clear the screen\n");
-    console_write("  fetch     Sapote identity and live system summary\n");
+    console_write("  fetch     Phipia identity and live system summary\n");
     console_write("  uptime    nanoseconds since the clock started\n");
     console_write("  mem       physical frames and kernel heap\n");
     console_write("  pci       every function enumeration found\n");
@@ -970,7 +970,7 @@ static void command_version(void)
 {
     const struct screen_state screen = screen_get_state();
 
-    console_write("Sapote 2.1.0, a small proof-driven x86_64 operating system.\n");
+    console_write("Phipia 2.2.0 dev, a proof-driven x86_64 operating system.\n");
     console_write("console ");
     console_write_u64(screen.columns);
     console_putc('x');
@@ -996,11 +996,11 @@ static void command_fetch(void)
 
     console_write("\n");
     if (ui_terminal_draw_logo() != UI_STATUS_OK) {
-        console_write("  [ Sapote ]\n");
+        console_write("  [ Phipia ]\n");
     }
     console_write("\n");
-    console_write("  Sapote Redwood\n");
-    console_write("  kernel      Sapote 2.1.0 / x86_64\n");
+    console_write("  Phipia\n");
+    console_write("  kernel      Phipia 2.2.0 dev / x86_64\n");
     console_write("  terminal    ");
     console_write_u64(screen.columns);
     console_putc('x');
