@@ -213,7 +213,12 @@ def wait_for_named_file(data_image, name, expected_size, timeout=20.0):
             exported = files.get(name)
             if exported is not None and int(exported["size"]) == expected_size:
                 return
-            last_error = f"{name} was absent or incomplete"
+            last_error = (
+                f"{name} had {int(exported['size'])} bytes, "
+                f"expected {expected_size}"
+                if exported is not None
+                else f"{name} was absent"
+            )
         except (OSError, fat32_image.Fat32Error) as error:
             last_error = str(error)
         time.sleep(5.0)
@@ -720,12 +725,16 @@ def capture_phipia_session(args, qmp, pointer, work, output, durable_data):
     pointer.click()
     for _ in range(4):
         qmp.hmp("sendkey backspace")
-    send_text(qmp, "320", 0.025)
+    pointer.settle_guest(0.20)
+    send_text(qmp, "320", 0.060)
+    pointer.settle_guest(0.25)
     pointer.move_to(500, 366)
     pointer.click()
     for _ in range(3):
         qmp.hmp("sendkey backspace")
-    send_text(qmp, "180", 0.025)
+    pointer.settle_guest(0.20)
+    send_text(qmp, "180", 0.060)
+    pointer.settle_guest(0.25)
     pointer.move_to(550, 445)
     pointer.click()
     pointer.settle_guest(0.35)
