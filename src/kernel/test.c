@@ -56,6 +56,7 @@
 #include <phipia/timer.h>
 #include <phipia/tsc.h>
 #include <phipia/ui.h>
+#include <phipia/ui_anim.h>
 #include <phipia/ui_font.h>
 #include <phipia/xhci.h>
 
@@ -5931,6 +5932,21 @@ static void phipia_proof_process_ui(const char *failure)
     }
 }
 
+static void phipia_proof_settle_ui(const char *failure)
+{
+    if (!ui_animation_active()) {
+        return;
+    }
+    if (timer_sleep_ns(UI_ANIM_DEFAULT_OPEN_NS + UI_ANIM_FRAME_NS) !=
+            TIMER_STATUS_OK) {
+        kernel_test_fail(failure);
+    }
+    phipia_proof_process_ui(failure);
+    if (ui_animation_active()) {
+        kernel_test_fail(failure);
+    }
+}
+
 static void phipia_proof_inject_pointer(
     uint8_t flags,
     int32_t delta_x,
@@ -6216,6 +6232,8 @@ _Noreturn void kernel_test_complete_phipia_proof(void)
         if (ui_get_state()->active_panel != UI_PANEL_STORE) {
             kernel_test_fail("Phipia launcher page chose wrong app");
         }
+        phipia_proof_settle_ui(
+            "Phipia paged launcher animation did not settle");
         phipia_proof_click_point(ui->layout.surface.width - 19U, 12U,
             "Phipia application search did not reopen");
         static const char query[] = "paint";
@@ -6240,6 +6258,8 @@ _Noreturn void kernel_test_complete_phipia_proof(void)
                 ui_application_launch_dequeue(manifest, sizeof(manifest))) {
             kernel_test_fail("Phipia filtered Paint launch is wrong");
         }
+        phipia_proof_settle_ui(
+            "Phipia filtered Paint animation did not settle");
     }
 
     for (size_t index = 0U; index < UI_DOCK_ITEM_COUNT; ++index) {
@@ -6247,6 +6267,8 @@ _Noreturn void kernel_test_complete_phipia_proof(void)
 
         phipia_proof_click_dock_item(&ui->layout.dock_items[index],
             expected_panel);
+        phipia_proof_settle_ui(
+            "Phipia dock application animation did not settle");
         ui = ui_get_state();
     }
     if (trail_probe.x < 0 || trail_probe.y < 0 ||
