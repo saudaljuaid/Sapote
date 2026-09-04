@@ -3976,6 +3976,7 @@ static enum phipfs_status paint_save(void)
     if (status == PHIPFS_STATUS_OK) {
         paint_mark_saved();
         (void)files_refresh();
+        console_serial_write("Phipia: Paint saved PAINT.BMP\n");
     }
     return status;
 }
@@ -8487,6 +8488,9 @@ static enum ui_status set_panel(
     }
     taskbar_sync_run_states();
     (void)phipia_refresh_taskmgr(true);
+    if (opening && panel == UI_PANEL_PAINT) {
+        console_serial_write("Phipia: Paint opened\n");
+    }
     return UI_STATUS_OK;
 }
 

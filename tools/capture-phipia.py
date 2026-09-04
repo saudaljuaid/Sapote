@@ -164,6 +164,22 @@ def wait_serial(path, markers, timeout=90.0):
     raise RuntimeError(f"guest readiness markers were omitted\n{tail}")
 
 
+def wait_serial_after(path, offset, marker, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        transcript = path.read_bytes() if path.exists() else b""
+        if marker in transcript[offset:]:
+            return
+        time.sleep(0.05)
+    transcript = path.read_bytes() if path.exists() else b""
+    tail = transcript[max(offset, len(transcript) - 4096):].decode(
+        "utf-8", errors="replace"
+    )
+    raise RuntimeError(
+        f"guest action marker was omitted: {marker!r}\n{tail}"
+    )
+
+
 def storage_arguments(system, data):
     return [
         "-blockdev",
@@ -640,7 +656,9 @@ PHIPIA_REQUIRED_EVENTS = {
 }
 
 
-def capture_phipia_session(args, qmp, pointer, work, output, durable_data):
+def capture_phipia_session(
+    args, qmp, pointer, work, output, durable_data, serial
+):
     """Exercise Phipia through guest input and retain each visible result."""
     frames = []
     capture_times = []
@@ -654,15 +672,42 @@ def capture_phipia_session(args, qmp, pointer, work, output, durable_data):
         capture_times.append(time.monotonic())
         events.add(event)
 
-    def open_app(index, delay=0.85):
+    def open_app(index, delay=0.85, serial_marker=None):
         # Caption controls at the extreme right edge can clamp a relative
         # PS/2 packet before the script's coordinate accumulator observes it.
         # Re-establish a shared origin before every taskbar launch so a later
         # click cannot silently drift into the neighbouring application.
-        pointer.rehome()
-        pointer.move_to(dock_item_center(index), DOCK_POINTER_Y)
-        pointer.click()
-        pointer.settle_guest(delay)
+        last_error = None
+        for _ in range(3 if serial_marker is not None else 1):
+            offset = serial.stat().st_size if serial.exists() else 0
+            pointer.rehome()
+            pointer.move_to(dock_item_center(index), DOCK_POINTER_Y)
+            pointer.click()
+            pointer.settle_guest(delay)
+            if serial_marker is None:
+                return
+            try:
+                wait_serial_after(serial, offset, serial_marker)
+                return
+            except RuntimeError as error:
+                last_error = error
+        raise last_error
+
+    def save_paint():
+        last_error = None
+        for _ in range(3):
+            offset = serial.stat().st_size if serial.exists() else 0
+            pointer.rehome()
+            pointer.move_to(42, 16)
+            pointer.click()
+            try:
+                wait_serial_after(
+                    serial, offset, b"Phipia: Paint saved PAINT.BMP"
+                )
+                return
+            except RuntimeError as error:
+                last_error = error
+        raise last_error
 
     pointer.prime_terminal()
     snapshot("phipia-taskbar", "taskbar")
@@ -713,7 +758,7 @@ def capture_phipia_session(args, qmp, pointer, work, output, durable_data):
     # resize dialog to make a 320x180 image, and exercise the ribbon against
     # the backing bitmap: palette, size, shapes, text, selection, clipboard,
     # zoom, and durable save.
-    open_app(DOCK_CANVAS)
+    open_app(DOCK_CANVAS, serial_marker=b"Phipia: Paint opened")
     pointer.move_to(901, 78)
     pointer.click()
     pointer.settle_guest(0.40)
@@ -759,7 +804,7 @@ def capture_phipia_session(args, qmp, pointer, work, output, durable_data):
     pointer.click()
     pointer.move_to(947, 714)
     pointer.click()
-    qmp.hmp("sendkey ctrl-s")
+    save_paint()
     wait_for_named_file(durable_data, "PAINT.BMP", 54 + 320 * 180 * 3)
     pointer.settle_guest(0.45)
     snapshot("phipia-paint-working", "paint_drawn")
@@ -1189,7 +1234,7 @@ def main():
             else:
                 events, captured_frames, capture_times = \
                     capture_phipia_session(
-                        args, qmp, pointer, work, output, durable_data
+                        args, qmp, pointer, work, output, durable_data, serial
                     )
 
             required = PHIPIA_REQUIRED_EVENTS if not args.live_window else {
