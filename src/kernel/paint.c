@@ -9,6 +9,7 @@
 #include <sapote/cursor.h>
 
 #include <sapote/framebuffer.h>
+#include <sapote/heap.h>
 #include <sapote/ui_font.h>
 
 #include "paint_glyphs.h"
@@ -73,6 +74,11 @@
 #define PAINT_RESIZE_DIALOG_HEIGHT 214U
 #define PAINT_CLIPBOARD_PIXELS \
     (PAINT_CLIPBOARD_WIDTH * PAINT_CLIPBOARD_HEIGHT)
+#define PAINT_CANVAS_PIXELS (PAINT_CANVAS_WIDTH * PAINT_CANVAS_HEIGHT)
+#define PAINT_CANVAS_BYTES \
+    ((uint64_t)PAINT_CANVAS_PIXELS * sizeof(uint32_t))
+#define PAINT_CLIPBOARD_BYTES \
+    ((uint64_t)PAINT_CLIPBOARD_PIXELS * sizeof(uint32_t))
 
 /* ================================================================ PALETTE
  *
@@ -143,10 +149,10 @@ static size_t current_shape;
 static size_t colour_one;          /* index into swatches */
 static size_t colour_two = 10U;    /* White, which is Paint's default */
 static uint32_t zoom_percent = 100U;
-static uint32_t canvas_pixels[PAINT_CANVAS_WIDTH * PAINT_CANVAS_HEIGHT];
-static uint32_t undo_pixels[PAINT_CANVAS_WIDTH * PAINT_CANVAS_HEIGHT];
-static uint32_t redo_pixels[PAINT_CANVAS_WIDTH * PAINT_CANVAS_HEIGHT];
-static uint32_t clipboard_pixels[PAINT_CLIPBOARD_PIXELS];
+static uint32_t canvas_pixels[PAINT_CANVAS_PIXELS];
+static uint32_t *undo_pixels;
+static uint32_t *redo_pixels;
+static uint32_t *clipboard_pixels;
 static uint32_t image_width = PAINT_CANVAS_WIDTH;
 static uint32_t image_height = PAINT_CANVAS_HEIGHT;
 static uint32_t undo_width;
@@ -204,12 +210,55 @@ const char *paint_status_string(enum paint_status status)
         return "paint geometry is unsupported";
     case PAINT_STATUS_SURFACE_FAILURE:
         return "paint surface refused a pixel";
+    case PAINT_STATUS_ALLOCATION_FAILURE:
+        return "paint editing buffers could not be allocated";
     default:
         return "unknown paint status";
     }
 }
 
 /* ============================================================== PRIMITIVES */
+
+static bool allocate_editing_buffers(void)
+{
+    if (undo_pixels != NULL && redo_pixels != NULL &&
+            clipboard_pixels != NULL) {
+        return true;
+    }
+
+    if (undo_pixels != NULL) {
+        (void)heap_free(undo_pixels);
+        undo_pixels = NULL;
+    }
+    if (redo_pixels != NULL) {
+        (void)heap_free(redo_pixels);
+        redo_pixels = NULL;
+    }
+    if (clipboard_pixels != NULL) {
+        (void)heap_free(clipboard_pixels);
+        clipboard_pixels = NULL;
+    }
+
+    if (heap_allocate(PAINT_CANVAS_BYTES, (void **)&undo_pixels) !=
+            HEAP_STATUS_OK) {
+        return false;
+    }
+    if (heap_allocate(PAINT_CANVAS_BYTES, (void **)&redo_pixels) !=
+            HEAP_STATUS_OK) {
+        (void)heap_free(undo_pixels);
+        undo_pixels = NULL;
+        return false;
+    }
+    if (heap_allocate(PAINT_CLIPBOARD_BYTES, (void **)&clipboard_pixels) !=
+            HEAP_STATUS_OK) {
+        (void)heap_free(redo_pixels);
+        (void)heap_free(undo_pixels);
+        redo_pixels = NULL;
+        undo_pixels = NULL;
+        return false;
+    }
+    return true;
+}
 
 static uint32_t pack_rgb(struct paint_rgb colour)
 {
@@ -2874,8 +2923,11 @@ enum paint_status paint_initialize(struct surface *target,
     if (status != PAINT_STATUS_OK) {
         return status;
     }
+    if (!allocate_editing_buffers()) {
+        return PAINT_STATUS_ALLOCATION_FAILURE;
+    }
     for (size_t index = 0U;
-         index < (size_t)PAINT_CANVAS_WIDTH * PAINT_CANVAS_HEIGHT; ++index) {
+         index < (size_t)PAINT_CANVAS_PIXELS; ++index) {
         canvas_pixels[index] = pack_rgb(sheet);
     }
     image_width = PAINT_CANVAS_WIDTH;
