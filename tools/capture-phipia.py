@@ -644,6 +644,11 @@ def capture_phipia_session(args, qmp, pointer, work, output, durable_data):
         events.add(event)
 
     def open_app(index, delay=0.85):
+        # Caption controls at the extreme right edge can clamp a relative
+        # PS/2 packet before the script's coordinate accumulator observes it.
+        # Re-establish a shared origin before every taskbar launch so a later
+        # click cannot silently drift into the neighbouring application.
+        pointer.rehome()
         pointer.move_to(dock_item_center(index), DOCK_POINTER_Y)
         pointer.click()
         pointer.settle_guest(delay)
