@@ -68,6 +68,8 @@
 #define UI_STUDIO_MAX_CLIPS 6U
 #define UI_STUDIO_PATH_BYTES 64U
 #define UI_STUDIO_PROJECT_BYTES 424U
+#define UI_MEDIA_PROJECT_BYTES \
+    (16U + EDITOR_MAX_ITEMS * (16U + EDITOR_TEXT_BYTES))
 #define UI_STUDIO_PREVIEW_WIDTH 320U
 #define UI_STUDIO_PREVIEW_HEIGHT 180U
 #define UI_STUDIO_BMP_HEADER_BYTES 54U
@@ -192,10 +194,12 @@ static uint8_t studio_bmp_row[UI_STUDIO_BMP_MAX_WIDTH * 3U + 4U];
 static uint32_t studio_preview_width;
 static uint32_t studio_preview_height;
 static bool studio_preview_loaded;
+static bool media_editor_export_active;
 static uint32_t studio_playhead;
 static uint8_t studio_clip_count;
 static uint8_t studio_selected_clip = UINT8_MAX;
 static bool studio_dirty;
+static bool media_editor_dirty;
 static char studio_status[64U] = "Project ready";
 static int8_t settings_page = -1;
 static bool dock_dark;
@@ -235,6 +239,10 @@ static uint32_t dock_backdrop_pixels[UI_MAX_WIDTH * 48U];
 static uint64_t redraw_tile_hashes[
     UI_REDRAW_DIAGNOSTIC_COLUMNS * UI_REDRAW_DIAGNOSTIC_ROWS
 ];
+
+static void media_editor_sync_clip(void);
+static enum sapfs_status media_editor_load(void);
+static enum sapfs_status media_editor_save(void);
 enum ui_anim_pending {
     UI_ANIM_PENDING_NONE = 0,
     UI_ANIM_PENDING_OPEN,
@@ -3623,6 +3631,13 @@ static enum sapfs_status studio_write_export_scratch(void)
         (studio_preview_width * 3U + 3U) & ~UINT32_C(3);
     const uint32_t file_bytes = UI_STUDIO_BMP_HEADER_BYTES +
         row_stride * studio_preview_height;
+    const struct ui_rect stage = editor_stage_rect();
+    const uint32_t editor_x = stage.x +
+        (stage.width > studio_preview_width ?
+            (stage.width - studio_preview_width) / 2U : 0U);
+    const uint32_t editor_y = stage.y +
+        (stage.height > studio_preview_height ?
+            (stage.height - studio_preview_height) / 2U : 0U);
     sapfs_handle handle = 0U;
     enum sapfs_status status = studio_remove_if_present(scratch);
 
@@ -3655,10 +3670,19 @@ static enum sapfs_status studio_write_export_scratch(void)
             studio_bmp_row[x] = 0U;
         }
         for (uint32_t x = 0U; x < studio_preview_width; ++x) {
-            const uint32_t pixel = studio_preview_pixels[
-                (size_t)source_y * UI_STUDIO_PREVIEW_WIDTH + x
-            ];
+            uint32_t pixel = studio_preview_pixels[
+                (size_t)source_y * UI_STUDIO_PREVIEW_WIDTH + x];
             const size_t destination = (size_t)x * 3U;
+
+            if (media_editor_export_active &&
+                    (studio_preview_width > stage.width ||
+                        studio_preview_height > stage.height ||
+                        surface_read_pixel(canvas, editor_x + x,
+                            editor_y + source_y, &pixel) !=
+                                SURFACE_STATUS_OK)) {
+                status = SAPFS_STATUS_IO;
+                break;
+            }
 
             studio_bmp_row[destination] =
                 (uint8_t)(pixel >> logo_blue_shift);
@@ -3667,7 +3691,9 @@ static enum sapfs_status studio_write_export_scratch(void)
             studio_bmp_row[destination + 2U] =
                 (uint8_t)(pixel >> logo_red_shift);
         }
-        status = studio_write_all(handle, studio_bmp_row, row_stride);
+        if (status == SAPFS_STATUS_OK) {
+            status = studio_write_all(handle, studio_bmp_row, row_stride);
+        }
     }
     if (handle != 0U) {
         const enum sapfs_status close_status = sapfs_close(handle);
@@ -3792,6 +3818,341 @@ static enum sapfs_status studio_export(void)
         (void)files_refresh();
     } else {
         studio_set_status("Export failed / previous output retained");
+    }
+    return status;
+}
+
+/*
+ * The imported Media Editor owns the text/effect timeline while the older
+ * project service still owns the source BMP and its crash-safe import/export
+ * path.  Keep those two concerns in separate, independently recoverable
+ * files: existing SAPSTUDI.SAP projects continue to open, and PHIPMED.SAP
+ * records exactly the state the new editor exposes.
+ */
+static void media_editor_clear_items(void)
+{
+    for (size_t index = 0U; index < EDITOR_MAX_ITEMS; ++index) {
+        (void)editor_set_item(index, NULL);
+    }
+}
+
+static void media_editor_sync_clip(void)
+{
+    struct editor_clip clip = { 0 };
+    struct ui_rect damage;
+
+    if (studio_selected_clip == UINT8_MAX ||
+            studio_selected_clip >= studio_clip_count ||
+            !studio_preview_loaded) {
+        (void)copy_string(clip.name, sizeof(clip.name), "No media loaded");
+        (void)editor_set_clip(&clip);
+        (void)editor_set_poster(NULL, 0U, 0U);
+        return;
+    }
+    (void)copy_string(clip.name, sizeof(clip.name),
+        studio_clip_paths[studio_selected_clip]);
+    clip.length_ms = studio_clip_durations[studio_selected_clip] >
+            UINT32_MAX / 1000U ? UINT32_MAX :
+        studio_clip_durations[studio_selected_clip] * 1000U;
+    (void)editor_set_clip(&clip);
+    (void)editor_set_poster(studio_preview_pixels, studio_preview_width,
+        studio_preview_height);
+    (void)editor_seek(studio_playhead > UINT32_MAX / 1000U ? UINT32_MAX :
+        studio_playhead * 1000U, &damage);
+}
+
+static void media_editor_encode(uint8_t *bytes)
+{
+    static const uint8_t magic[8U] = {
+        'P', 'H', 'I', 'P', 'M', 'E', 'D', '1'
+    };
+
+    for (size_t index = 0U; index < UI_MEDIA_PROJECT_BYTES; ++index) {
+        bytes[index] = 0U;
+    }
+    for (size_t index = 0U; index < sizeof(magic); ++index) {
+        bytes[index] = magic[index];
+    }
+    for (size_t index = 0U; index < EDITOR_MAX_ITEMS; ++index) {
+        const struct editor_item *item = editor_item(index);
+        const size_t record = 16U + index * (16U + EDITOR_TEXT_BYTES);
+
+        if (item == NULL) {
+            continue;
+        }
+        bytes[record] = 1U;
+        bytes[record + 1U] = (uint8_t)item->track;
+        bytes[record + 2U] = (uint8_t)item->style;
+        bytes[record + 3U] = (uint8_t)item->effect;
+        studio_store_u32(bytes, record + 4U, item->start_ms);
+        studio_store_u32(bytes, record + 8U, item->length_ms);
+        bytes[record + 12U] = item->strength;
+        for (size_t at = 0U; at + 1U < EDITOR_TEXT_BYTES &&
+             item->label[at] != '\0'; ++at) {
+            bytes[record + 16U + at] = (uint8_t)item->label[at];
+        }
+    }
+}
+
+static bool media_editor_decode(const uint8_t *bytes)
+{
+    static const uint8_t magic[8U] = {
+        'P', 'H', 'I', 'P', 'M', 'E', 'D', '1'
+    };
+
+    for (size_t index = 0U; index < sizeof(magic); ++index) {
+        if (bytes[index] != magic[index]) {
+            return false;
+        }
+    }
+    media_editor_clear_items();
+    for (size_t index = 0U; index < EDITOR_MAX_ITEMS; ++index) {
+        const size_t record = 16U + index * (16U + EDITOR_TEXT_BYTES);
+        struct editor_item item = { 0 };
+        size_t length = 0U;
+
+        if (bytes[record] == 0U) {
+            continue;
+        }
+        if (bytes[record] != 1U ||
+                bytes[record + 1U] < EDITOR_TRACK_TEXT ||
+                bytes[record + 1U] > EDITOR_TRACK_EFFECT ||
+                bytes[record + 2U] >= EDITOR_STYLE_COUNT ||
+                bytes[record + 3U] >= EDITOR_EFFECT_COUNT ||
+                bytes[record + 12U] > 100U) {
+            media_editor_clear_items();
+            return false;
+        }
+        item.present = true;
+        item.track = (enum editor_track)bytes[record + 1U];
+        item.style = (enum editor_style)bytes[record + 2U];
+        item.effect = (enum editor_effect)bytes[record + 3U];
+        item.start_ms = studio_load_u32(bytes, record + 4U);
+        item.length_ms = studio_load_u32(bytes, record + 8U);
+        item.strength = bytes[record + 12U];
+        if (item.length_ms == 0U ||
+                item.start_ms > UINT32_MAX - item.length_ms) {
+            media_editor_clear_items();
+            return false;
+        }
+        while (length < EDITOR_TEXT_BYTES &&
+                bytes[record + 16U + length] != 0U) {
+            const uint8_t character = bytes[record + 16U + length];
+
+            if (character < 0x20U || character > 0x7EU ||
+                    length + 1U >= EDITOR_TEXT_BYTES) {
+                media_editor_clear_items();
+                return false;
+            }
+            item.label[length++] = (char)character;
+        }
+        item.label[length] = '\0';
+        if (editor_set_item(index, &item) != EDITOR_STATUS_OK) {
+            media_editor_clear_items();
+            return false;
+        }
+    }
+    return true;
+}
+
+static enum sapfs_status media_editor_recover(void)
+{
+    static const char project[] = "PHIPMED.SAP";
+    static const char scratch[] = "MEDTEMP.SAP";
+    static const char backup[] = "MEDBACK.SAP";
+    bool primary = false;
+    bool staged = false;
+    bool saved = false;
+    bool changed = false;
+    enum sapfs_status status = studio_regular_presence(project, &primary);
+
+    if (status == SAPFS_STATUS_OK) {
+        status = studio_regular_presence(scratch, &staged);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = studio_regular_presence(backup, &saved);
+    }
+    if (status == SAPFS_STATUS_OK && !primary && saved) {
+        status = sapfs_rename(SAPFS_VOLUME_DATA, backup, project);
+        changed = status == SAPFS_STATUS_OK;
+        saved = status != SAPFS_STATUS_OK;
+    } else if (status == SAPFS_STATUS_OK && !primary && !saved && staged) {
+        status = sapfs_rename(SAPFS_VOLUME_DATA, scratch, project);
+        changed = status == SAPFS_STATUS_OK;
+        staged = status != SAPFS_STATUS_OK;
+    }
+    if (status == SAPFS_STATUS_OK && primary && saved) {
+        status = studio_remove_if_present(backup);
+        changed = status == SAPFS_STATUS_OK;
+    }
+    if (status == SAPFS_STATUS_OK && staged) {
+        status = studio_remove_if_present(scratch);
+        changed = changed || status == SAPFS_STATUS_OK;
+    }
+    if (status == SAPFS_STATUS_OK && changed) {
+        status = sapfs_sync(SAPFS_VOLUME_DATA);
+    }
+    return status;
+}
+
+static enum sapfs_status media_editor_load(void)
+{
+    static const char project[] = "PHIPMED.SAP";
+    uint8_t bytes[UI_MEDIA_PROJECT_BYTES];
+    struct sapfs_stat stat;
+    sapfs_handle handle = 0U;
+    size_t read_bytes = 0U;
+    enum sapfs_status status = media_editor_recover();
+
+    media_editor_clear_items();
+    media_editor_dirty = false;
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_stat_path(SAPFS_VOLUME_DATA, project, &stat);
+    }
+    if (status == SAPFS_STATUS_NOT_FOUND) {
+        return SAPFS_STATUS_OK;
+    }
+    if (status == SAPFS_STATUS_OK &&
+            (stat.directory || stat.size != sizeof(bytes))) {
+        status = SAPFS_STATUS_CORRUPT;
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_open(SAPFS_VOLUME_DATA, project,
+            SAPFS_ACCESS_READ, &handle);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_read(handle, bytes, sizeof(bytes), &read_bytes);
+    }
+    if (handle != 0U) {
+        const enum sapfs_status close_status = sapfs_close(handle);
+
+        if (status == SAPFS_STATUS_OK && close_status != SAPFS_STATUS_OK) {
+            status = close_status;
+        }
+    }
+    if (status == SAPFS_STATUS_OK &&
+            (read_bytes != sizeof(bytes) || !media_editor_decode(bytes))) {
+        status = SAPFS_STATUS_CORRUPT;
+    }
+    if (status == SAPFS_STATUS_OK) {
+        studio_set_status("Media Editor project opened");
+    } else {
+        media_editor_clear_items();
+        studio_set_status("Media Editor timeline unavailable");
+    }
+    return status;
+}
+
+static enum sapfs_status media_editor_write_scratch(const uint8_t *bytes)
+{
+    static const char scratch[] = "MEDTEMP.SAP";
+    sapfs_handle handle = 0U;
+    enum sapfs_status status = studio_remove_if_present(scratch);
+
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_create(SAPFS_VOLUME_DATA, scratch);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_open(SAPFS_VOLUME_DATA, scratch,
+            SAPFS_ACCESS_WRITE, &handle);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = studio_write_all(handle, bytes, UI_MEDIA_PROJECT_BYTES);
+    }
+    if (handle != 0U) {
+        const enum sapfs_status close_status = sapfs_close(handle);
+
+        if (status == SAPFS_STATUS_OK && close_status != SAPFS_STATUS_OK) {
+            status = close_status;
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_sync(SAPFS_VOLUME_DATA);
+    } else {
+        (void)studio_remove_if_present(scratch);
+    }
+    return status;
+}
+
+static enum sapfs_status media_editor_save_timeline(void)
+{
+    static const char project[] = "PHIPMED.SAP";
+    static const char scratch[] = "MEDTEMP.SAP";
+    static const char backup[] = "MEDBACK.SAP";
+    uint8_t bytes[UI_MEDIA_PROJECT_BYTES];
+    struct sapfs_stat stat;
+    bool original_exists = false;
+    bool backed_up = false;
+    bool replacement_visible = false;
+    enum sapfs_status status = media_editor_recover();
+
+    media_editor_encode(bytes);
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_stat_path(SAPFS_VOLUME_DATA, project, &stat);
+        if (status == SAPFS_STATUS_OK) {
+            original_exists = !stat.directory;
+            status = stat.directory ? SAPFS_STATUS_IS_DIRECTORY :
+                SAPFS_STATUS_OK;
+        } else if (status == SAPFS_STATUS_NOT_FOUND) {
+            status = SAPFS_STATUS_OK;
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = media_editor_write_scratch(bytes);
+    }
+    if (status == SAPFS_STATUS_OK && original_exists) {
+        status = sapfs_rename(SAPFS_VOLUME_DATA, project, backup);
+        backed_up = status == SAPFS_STATUS_OK;
+        if (status == SAPFS_STATUS_OK) {
+            status = sapfs_sync(SAPFS_VOLUME_DATA);
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_rename(SAPFS_VOLUME_DATA, scratch, project);
+        replacement_visible = status == SAPFS_STATUS_OK;
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_sync(SAPFS_VOLUME_DATA);
+    }
+    if (status != SAPFS_STATUS_OK && backed_up) {
+        if (replacement_visible) {
+            (void)sapfs_rename(SAPFS_VOLUME_DATA, project, scratch);
+        }
+        const enum sapfs_status restore = sapfs_rename(SAPFS_VOLUME_DATA,
+            backup, project);
+
+        if (restore == SAPFS_STATUS_OK) {
+            (void)sapfs_sync(SAPFS_VOLUME_DATA);
+            (void)studio_remove_if_present(scratch);
+        } else {
+            status = restore;
+        }
+    } else if (status != SAPFS_STATUS_OK) {
+        (void)studio_remove_if_present(scratch);
+    }
+    if (status == SAPFS_STATUS_OK && original_exists) {
+        status = studio_remove_if_present(backup);
+        if (status == SAPFS_STATUS_OK) {
+            status = sapfs_sync(SAPFS_VOLUME_DATA);
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        media_editor_dirty = false;
+        studio_set_status("Media Editor project saved");
+    } else {
+        studio_set_status("Save failed / Media Editor project retained");
+    }
+    return status;
+}
+
+static enum sapfs_status media_editor_save(void)
+{
+    enum sapfs_status status;
+
+    studio_playhead = editor_playhead_ms() / 1000U;
+    status = studio_dirty ? studio_save() : SAPFS_STATUS_OK;
+    if (status == SAPFS_STATUS_OK) {
+        status = media_editor_save_timeline();
     }
     return status;
 }
@@ -5888,9 +6249,16 @@ static enum ui_status phipia_pointer_press_active(
     case UI_PANEL_NOTES:
         return notes_pointer_press(point, damage) == NOTES_STATUS_OK ?
             UI_STATUS_OK : UI_STATUS_BAD_ELEMENT;
-    case UI_PANEL_STUDIO:
-        return editor_pointer_press(point, damage) == EDITOR_STATUS_OK ?
-            UI_STATUS_OK : UI_STATUS_BAD_ELEMENT;
+    case UI_PANEL_STUDIO: {
+        const enum editor_status status = editor_pointer_press(point, damage);
+
+        if (status == EDITOR_STATUS_OK && damage->width != 0U &&
+                damage->height != 0U) {
+            media_editor_dirty = true;
+        }
+        return status == EDITOR_STATUS_OK ? UI_STATUS_OK :
+            UI_STATUS_BAD_ELEMENT;
+    }
     case UI_PANEL_CAMERA:
         return phipia_camera_pointer_press(point, damage) ==
             PHIPIA_CAMERA_STATUS_OK ? UI_STATUS_OK : UI_STATUS_BAD_ELEMENT;
@@ -7382,6 +7750,8 @@ enum ui_status ui_construct(bool pointer_present)
     camera_capture_count = 0U;
     camera_frame_available = false;
     camera_seen_generation = 0U;
+    media_editor_export_active = false;
+    media_editor_dirty = false;
     camera_initialize();
     ui_anim_reset(&panel_anim);
     panel_anim_panel = UI_PANEL_NONE;
@@ -7713,8 +8083,13 @@ enum ui_status ui_handle_keyboard(const struct keyboard_event *event)
         ui_event.type = UI_EVENT_TEXT_INPUT;
         ui_event.control = event->control;
         if (event->control && (event->character == 's' ||
-                event->character == 'S')) {
-            ui_event.character = 's';
+                event->character == 'S' || event->character == 'o' ||
+                event->character == 'O' || event->character == 'e' ||
+                event->character == 'E' || event->character == 'n' ||
+                event->character == 'N')) {
+            ui_event.character = event->character >= 'A' &&
+                event->character <= 'Z' ?
+                (char)(event->character - 'A' + 'a') : event->character;
         } else if (state.active_panel == UI_PANEL_STUDIO) {
             return UI_STATUS_OK;
         } else if (event->scancode == 0x0EU) {
@@ -7795,7 +8170,8 @@ static enum ui_status set_panel(
         return UI_STATUS_OK;
     }
     if (panel == UI_PANEL_NONE && old_panel == UI_PANEL_STUDIO &&
-            studio_dirty && studio_save() != SAPFS_STATUS_OK) {
+            (studio_dirty || media_editor_dirty) &&
+            media_editor_save() != SAPFS_STATUS_OK) {
         *damage = rect_union(*damage, state.layout.panel);
         return UI_STATUS_OK;
     }
@@ -7888,7 +8264,11 @@ static enum ui_status set_panel(
     } else if (opening && panel == UI_PANEL_NOTES) {
         (void)note_load();
     } else if (opening && panel == UI_PANEL_STUDIO) {
-        (void)studio_load();
+        if (studio_load() == SAPFS_STATUS_OK && studio_clip_count == 0U) {
+            studio_import_clip();
+        }
+        media_editor_sync_clip();
+        (void)media_editor_load();
     }
 
     if (panel_open[UI_PANEL_TERMINAL]) {
@@ -8459,7 +8839,9 @@ static enum ui_status activate_element(
     } else if (element == UI_ELEMENT_STUDIO_SAVE) {
         (void)studio_save();
     } else if (element == UI_ELEMENT_STUDIO_EXPORT) {
+        media_editor_export_active = true;
         (void)studio_export();
+        media_editor_export_active = false;
     } else if (element == UI_ELEMENT_STUDIO_TIMELINE) {
         const struct ui_rect timeline = studio_timeline_rect();
         const uint32_t left = timeline.x + 38U;
@@ -9162,9 +9544,31 @@ static enum ui_status apply_event(
         note_input(event->character, event->control);
         *damage = rect_union(*damage, state.layout.panel);
     } else if (event->type == UI_EVENT_TEXT_INPUT &&
-        state.active_panel == UI_PANEL_STUDIO && event->control &&
-        (event->character == 's' || event->character == 'S')) {
-        (void)studio_save();
+            state.active_panel == UI_PANEL_STUDIO && event->control) {
+        if (event->character == 's') {
+            if (media_editor_save() != SAPFS_STATUS_OK) {
+                return UI_STATUS_FILESYSTEM_FAILURE;
+            }
+        } else if (event->character == 'o') {
+            studio_import_clip();
+            media_editor_sync_clip();
+            media_editor_dirty = true;
+        } else if (event->character == 'e') {
+            media_editor_export_active = true;
+            const enum sapfs_status status = studio_export();
+
+            media_editor_export_active = false;
+            if (status != SAPFS_STATUS_OK) {
+                return UI_STATUS_FILESYSTEM_FAILURE;
+            }
+        } else if (event->character == 'n') {
+            studio_reset(true);
+            media_editor_clear_items();
+            media_editor_sync_clip();
+            media_editor_dirty = true;
+        } else {
+            return UI_STATUS_OK;
+        }
         *damage = rect_union(*damage, state.layout.panel);
     } else if (event->type == UI_EVENT_REDRAW_REQUEST) {
         *damage = state.layout.surface;
