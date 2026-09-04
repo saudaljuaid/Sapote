@@ -526,24 +526,29 @@ fn a_framed_programme_exports_a_row_at_a_time_and_is_the_render_of_it() {
 
 #[test]
 fn a_programme_that_cannot_be_scanned_is_refused_before_anything_is_committed() {
-    // A turn resamples along a slope, and a slope crosses every row of the
-    // picture it lies in -- so there is no band to read. The refusal arrives
-    // at the first instant of the span, and the destination slot is untouched.
+    // What is left that an export cannot scan, now that strips have made
+    // every invertible transform scannable: a vertical downscale steep enough
+    // that even one column of one row reads more source rows than a band may
+    // hold. Narrowing a strip does nothing to a map that takes horizontals to
+    // horizontals, so there is no slicing that helps. That is `BandTooTall`,
+    // and it is a question about a *row* -- so the export refuses part way
+    // through the first frame, with the destination slot untouched.
     //
-    // A half scale used to stand here and does not any more: it scans, because
-    // a scale takes horizontals to horizontals. The clip below is turned by
-    // the three-four-five triangle, whose cosine and sine are both rational,
-    // so the map is an exact rotation and not a scale wearing one's name.
-    let cosine = Rational::new(4, 5).expect("a cosine");
-    let sine = Rational::new(3, 5).expect("a sine");
+    // A half scale stood here once and a turn after it, and both scan now.
+    // The picture is two hundred rows tall because the band is clamped to the
+    // picture: a shrink of any steepness over a three-row frame reads three
+    // rows, which is nobody's problem. At two hundred rows a 1/256 shrink
+    // reads a hundred of them for the row at the centre, and sixty-four is
+    // the bound.
     let mut project = Project::new();
     let sequence = project.add_sequence(RATE).expect("a sequence");
     let shot = media(&mut project, 3);
     let framed = Clip::new(shot, 0, frames(20))
         .expect("a clip")
         .with_transform(Some(
-            sapstudio_model::Transform::new(
-                [cosine, sine.checked_neg().expect("a sine"), sine, cosine],
+            sapstudio_model::Transform::scaled(
+                Rational::ONE,
+                Rational::new(1, 256).expect("a scale"),
                 (Rational::ZERO, Rational::ZERO),
                 sapstudio_model::Resampling::Area,
             )
@@ -553,20 +558,28 @@ fn a_programme_that_cannot_be_scanned_is_refused_before_anything_is_committed() 
     let mut library = Flat {
         colours: std::vec![(digest_of(&project, shot), [1, 2, 3, 255])],
     };
+    let tall = FrameDescription::square(
+        Geometry::new(4, 200).expect("a geometry"),
+        PixelFormat::Rgba8,
+        ColourDescription::srgb_full(),
+        None,
+        Some(AlphaState::Premultiplied),
+    )
+    .expect("a description");
     let mut storage = MemoryStorage::new(1 << 20);
     storage
         .write(Slot::Vault, b"the last reel")
         .expect("a write");
     assert_eq!(
         export::export(
-            &job(&project, sequence, span(0, 4), described()),
+            &job(&project, sequence, span(0, 4), tall),
             &mut library,
             None,
             None,
             &mut storage,
         )
         .err(),
-        Some(SlateStatus::Render(RenderStatus::NotRowLocal))
+        Some(SlateStatus::Render(RenderStatus::BandTooTall))
     );
     assert_eq!(storage.stored(), Some(&b"the last reel"[..]));
     assert_eq!(storage.commits(), 0);

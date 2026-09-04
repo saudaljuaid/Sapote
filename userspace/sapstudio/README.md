@@ -845,9 +845,9 @@ which of its numbered requests Sapote has since answered.
   non-PIE `ET_EXEC` with no dynamic section, no relocations, and no SIMD, built
   twice into different directories and compared byte for byte.
 
-1350 tests, no third-party dependencies, no `unsafe` outside the two crates
+1348 tests, no third-party dependencies, no `unsafe` outside the two crates
 that are allowed it, and every rule this project wrote down is enforced by
-something that runs. 754 invariants have been checked by
+something that runs. 762 invariants have been checked by
 deliberately breaking the code and requiring the break to be caught; four of
 those found real bugs, nine found gaps in the tests themselves, two found a
 sentence claiming more than the code delivers, and one

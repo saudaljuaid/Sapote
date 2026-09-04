@@ -3614,16 +3614,17 @@ fn a_scan_plans_once_however_many_rows_it_renders() {
 }
 
 #[test]
-fn a_scan_of_a_turned_clip_is_refused_before_a_row_is_rendered() {
-    // A turn resamples along a slope, and a slope crosses every row of the
-    // picture it lies in -- so there is no band to read and no row to draw.
-    // The refusal arrives at `open` rather than at row four hundred, which is
-    // the whole reason `open` asks.
+fn a_scan_of_a_turned_clip_agrees_with_the_render_of_it() {
+    // This test has now said three different things, and each change was a
+    // refusal turning out to be narrower than it claimed. It began as "a
+    // framed clip cannot be scanned"; M8.44 found that a scale takes
+    // horizontals to horizontals and made it a turn; and strips find that even
+    // a turn can be scanned, because whether a row's preimage fits a band is a
+    // question about the **width** of the strip and not about the map.
     //
-    // This used to say "a framed clip", and the framing was a half scale. That
-    // scans now: a scale takes horizontals to horizontals, so a row of it
-    // reads a bounded band. What could never scan is a turn, and that is what
-    // this test is about now.
+    // Nothing in the planner refuses a programme for the operation it performs
+    // any more. What is left is one row of a steep enough downscale, and that
+    // is a question about a row.
     let cosine = sapstudio_core::Rational::new(4, 5).expect("a cosine");
     let sine = sapstudio_core::Rational::new(3, 5).expect("a sine");
     let mut project = Project::new();
@@ -3650,16 +3651,7 @@ fn a_scan_of_a_turned_clip_is_refused_before_a_row_is_rendered() {
         looks: std::vec::Vec::new(),
         answers_wrongly: false,
     };
-    assert_eq!(
-        timeline::Scan::open(&project, sequence, at(0), described(), &mut source).err(),
-        Some(SlateStatus::Render(RenderStatus::NotRowLocal))
-    );
-    assert!(
-        source.asked.is_empty(),
-        "a row was fetched before the refusal"
-    );
-    // And rendering it whole still works, which is the point of keeping both.
-    timeline::render(
+    let whole = timeline::render(
         &project,
         sequence,
         at(0),
@@ -3668,6 +3660,18 @@ fn a_scan_of_a_turned_clip_is_refused_before_a_row_is_rendered() {
         &mut source,
     )
     .expect("a render");
+    let scan =
+        timeline::Scan::open(&project, sequence, at(0), described(), &mut source).expect("a scan");
+    let packed = whole.to_packed().expect("bytes");
+    let stride = packed.len() / scan.height();
+    for row in 0..scan.height() {
+        let one = scan.row(row, &mut source).expect("a row");
+        assert_eq!(
+            one.to_packed().expect("bytes"),
+            packed[row * stride..(row + 1) * stride],
+            "row {row} of a turned clip disagrees with the render"
+        );
+    }
 }
 
 #[test]

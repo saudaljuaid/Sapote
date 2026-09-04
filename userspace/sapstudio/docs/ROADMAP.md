@@ -5403,6 +5403,114 @@ that outlives one frame; **reading** a sidecar back; **SCC**; **cue
 positioning**; a caption on a **nest or a title**; and a **rotation scanned in
 strips**.
 
+## M8.48 — A turn scanned in strips
+
+*Requires nothing new.*
+
+`NotRowLocal` said a resampled row "needs more than a band of input rows", and
+called that a statement about the *operation*. It was overclaiming, and finding
+that out is the milestone.
+
+### The width was always the missing term
+
+A destination row's preimage under an affine map is a segment of the source.
+When the map takes horizontals to horizontals the segment lies flat, so the
+whole row reads one short band. When it does not — a rotation, a vertical
+shear — the segment has a slope, and **a segment of slope `m` across `w`
+columns crosses about `m · w` rows**.
+
+That `w` is the term the old refusal left out. A turn's row is too tall for a
+band *across the whole picture*; across a narrow enough part of it, it is not.
+So the row is drawn in **strips**, and a strip is a range of columns and not a
+different arithmetic: the pixels are identical, and where the boundaries fall
+changes nothing.
+
+The test says it in numbers. The three-four-five turn about the centre of a
+two-hundred-square picture has `v(x, y) = −3(x − 100)/5 + 4(y − 100)/5 + 100`,
+so at row 100:
+
+```
+whole row, x in {0, 200} : floor(40)  ..= floor(160.8) = a band of 121
+half a row, x in {0, 100} : floor(100) ..= floor(160.8) = a band of  61
+```
+
+Sixty-four is the bound. Same map, same row, same arithmetic — a different
+width.
+
+### The width tunes itself, and correctness does not depend on it
+
+`Graph::banded` starts optimistic, at the whole row, and halves whenever
+`resample::strip` says the band would be too tall, keeping whatever width
+worked for the strips after it. A scale pays one probe a row; a turn pays about
+fourteen once. Neither has to be told which it is.
+
+That is only safe because correctness does not depend on the width at all, and
+that is the property worth stating: a strip is a range of columns. Nothing
+about a pixel changes with which strip it fell in.
+
+### What it costs, honestly
+
+A turn **re-reads**. Neighbouring strips have overlapping bands, so a row drawn
+in strips fetches more source rows than the picture has. How many is not up to
+the slicing: `w` columns read about `m · w` rows and there are `width / w`
+strips, so the total is about `m · width` however wide the strips are. That is
+the number of rows the row's preimage genuinely crosses, so **no
+row-at-a-time evaluator can read fewer**. Strips reach the floor; they do not
+add to it.
+
+Reading fewer means not working a row at a time. Tiles — a band of output rows
+by a strip of columns, so one source band serves many output rows — is the
+design that does better, and it is recorded as not done rather than pretended
+away.
+
+### What the refusal turned out to mean
+
+`NotRowLocal` is now only about **subsampled formats**, and there it is exactly
+right and irreducible: one chroma row of a 4:2:0 frame serves two luma rows, so
+a luma row is not independent of its neighbour and no slicing changes that.
+
+`BandTooTall` is what is left for a transform, and it is a question about *one
+row of one map* rather than about an operation. It survives only where
+narrowing cannot help — a vertical downscale, where a map that takes
+horizontals to horizontals reads the same band however much of the row is asked
+for. The export test that used to say "a programme that cannot be scanned" now
+says it with a shrink of one in two hundred and fifty-six, and had to be given
+a two-hundred-row picture to say it at all: the band is clamped to the picture,
+so a shrink of any steepness over a three-row frame reads three rows.
+
+### A tenth thing deleted
+
+`Mapping::horizontal` was M8.44's answer to "can this be scanned", and after
+strips nothing in the crate asks it. It is gone. What it meant is asserted
+directly instead — that a flat map's band is the same however much of the row
+is asked for — which is a stronger statement than the predicate was.
+
+### And a guard that stayed
+
+A control found that `rows_under`'s check for a strip of no columns changes no
+answer: `Graph::banded` never makes an empty strip and nothing else called it
+with one. It stayed, for the reason M8.42 kept `Run::plane_row`'s bound — it is
+**public**, and a public function that silently answers a meaningless question
+is a hazard however well its callers behave. It got a direct test instead.
+
+### What it cost
+
+**The image got smaller**, which no milestone that added a capability has
+managed before. 111 pages both sides, `.text` 352,256 both sides, 545 symbols
+both sides; attributed bytes **−82** and `.rodata` −8.
+
+None of it is the feature: `strip`, `rows_under`, `resample_strip` and
+`Graph::banded` are in none of the 545 symbols, because the slate renders whole
+frames. Every byte is the shared arithmetic underneath — `preimage_of` −54 for
+taking a range of columns rather than building each corner from `x + dx`,
+`drawn` −39 for taking a strip rather than a width and a row, `resample` −27,
+against `area_at` +38 for passing `x, x + 1`. Generalising a function made it
+smaller, because the general form does less work per corner.
+
+**State: done.** Not done: **tiles**, which is how a turn stops re-reading;
+**building the card once a stretch**; **reading** a sidecar back; **SCC**;
+**cue positioning**; and a caption on a **nest or a title**.
+
 ## M7 — Speed
 
 *Requires `SAP-04`, then `SAP-10` and `SAP-11`.*

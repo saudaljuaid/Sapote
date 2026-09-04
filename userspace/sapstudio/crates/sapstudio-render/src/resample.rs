@@ -253,25 +253,6 @@ impl Mapping {
         Self::new(linear, shifted)
     }
 
-    /// Whether this map takes horizontals to horizontals.
-    ///
-    /// The one property that makes a resample row-local. A destination row is
-    /// a horizontal segment, and its preimage is a segment; that segment lies
-    /// in a band of source rows exactly when the source's vertical coordinate
-    /// does not vary along it. The inverse's `v` is `inverse[2]·x +
-    /// inverse[3]·y + offset.1`, so the condition is that `inverse[2]` is
-    /// nought — which is the same as the forward map's `c` being nought, since
-    /// `inverse[2]` is `-c` over the determinant and a determinant is never
-    /// nought here.
-    ///
-    /// So: a scale is horizontal, a translation is horizontal, a mirror is
-    /// horizontal, a horizontal shear is horizontal — and a rotation is not,
-    /// nor is a vertical shear.
-    #[must_use]
-    pub fn horizontal(&self) -> bool {
-        self.inverse[2].is_zero()
-    }
-
     /// Where a destination point came from in the source, for a test that
     /// needs to ask about a *point* rather than about a pixel.
     ///
@@ -360,7 +341,18 @@ pub fn resample(
     )
     .map_err(|_| RenderStatus::OutOfMemory)?;
     for y in 0..height {
-        drawn(&source, &table, mapping, filter, (width, y), &mut out)?;
+        drawn(
+            &source,
+            &table,
+            mapping,
+            filter,
+            Strip {
+                row: y,
+                from: 0,
+                to: width,
+            },
+            &mut out,
+        )?;
     }
     Ok(Frame::from_owned(target, out)?)
 }
@@ -368,25 +360,14 @@ pub fn resample(
 /// Move one destination row of a premultiplied frame, from a band of the
 /// source rather than from all of it.
 ///
-/// The band is what [`band`] said this row reads, fetched by whoever is
-/// scanning; `from` is the first picture row it holds and `source` describes
-/// the **whole** picture it came out of, which is what tells a sample landing
-/// past the band's edge whether it is off the picture or off the band.
-///
-/// `None` is an **empty** band, which happens legitimately and often — a
-/// picture moved off the top of its own frame contributes nothing to the rows
-/// it has left — and the answer is a transparent row rather than a refusal. It
-/// is spelled as an absent frame rather than as a frame of no rows because a
-/// picture with no rows is not a picture: [`sapstudio_media::Geometry`]
-/// refuses one, so there would be nothing for a caller to pass.
+/// The whole row as one strip, which is what a map that takes horizontals to
+/// horizontals needs and all it needs. A turn wants [`resample_strip`], and
+/// this is that function with the strip filled in.
 ///
 /// # Errors
 ///
-/// Everything [`resample`] refuses, plus [`RenderStatus::RowOutsideBand`] for
-/// a band that does not hold what this row reads — which is a wrong answer
-/// from [`band`] rather than a bad argument from a caller — and
-/// [`RenderStatus::NotComposable`] for a band that does not describe the
-/// picture it claims to be part of.
+/// As [`resample_strip`], plus [`RenderStatus::OutsideDomain`] for a row
+/// outside the frame.
 pub fn resample_row(
     band: Option<&Frame>,
     source: FrameDescription,
@@ -401,7 +382,6 @@ pub fn resample_row(
     if row >= height {
         return Err(RenderStatus::OutsideDomain);
     }
-    let one = one_row_of(target)?;
     let mut out = Vec::new();
     out.try_reserve(
         width
@@ -409,25 +389,85 @@ pub fn resample_row(
             .ok_or(RenderStatus::OutsideDomain)?,
     )
     .map_err(|_| RenderStatus::OutOfMemory)?;
+    resample_strip(
+        band,
+        source,
+        from,
+        mapping,
+        filter,
+        Strip {
+            row,
+            from: 0,
+            to: width,
+        },
+        &mut out,
+    )?;
+    Ok(Frame::from_owned(one_row_of(target)?, out)?)
+}
+
+/// Move one strip of one destination row, appending its pixels.
+///
+/// The band is what [`strip`] said this strip reads, fetched by whoever is
+/// scanning; `from` is the first picture row it holds and `described` is the
+/// **whole** picture it came out of, which is what tells a sample landing past
+/// the band's edge whether it is off the picture or off the band.
+///
+/// One description rather than a source and a target, because a transform
+/// resamples into its source's own description and this exists for a
+/// transform. A resample between two descriptions is [`resample`].
+///
+/// `None` is an **empty** band, which happens legitimately and often — a
+/// picture moved off the top of its own frame contributes nothing to the rows
+/// it has left — and the answer is a transparent strip rather than a refusal.
+/// It is spelled as an absent frame rather than as a frame of no rows because
+/// a picture with no rows is not a picture: [`sapstudio_media::Geometry`]
+/// refuses one, so there would be nothing for a caller to pass.
+///
+/// # Errors
+///
+/// Everything [`resample`] refuses, plus [`RenderStatus::RowOutsideBand`] for
+/// a band that does not hold what this strip reads — which is a wrong answer
+/// from [`strip`] rather than a bad argument from a caller — and
+/// [`RenderStatus::NotComposable`] for a band that does not describe the
+/// picture it claims to be part of.
+pub fn resample_strip(
+    band: Option<&Frame>,
+    described: FrameDescription,
+    from: usize,
+    mapping: Mapping,
+    filter: Filter,
+    over: Strip,
+    out: &mut Vec<u8>,
+) -> Result<()> {
+    agreed(described, described)?;
+    let (width, height) = extent(described)?;
+    if over.row >= height || over.to > width || over.from >= over.to {
+        return Err(RenderStatus::OutsideDomain);
+    }
+    let columns = over.to - over.from;
+    out.try_reserve(
+        columns
+            .checked_mul(CHANNELS)
+            .ok_or(RenderStatus::OutsideDomain)?,
+    )
+    .map_err(|_| RenderStatus::OutOfMemory)?;
     let Some(band) = band else {
-        out.resize(width * CHANNELS, 0);
-        return Ok(Frame::from_owned(one, out)?);
+        out.resize(out.len() + columns * CHANNELS, 0);
+        return Ok(());
     };
-    if band.description().geometry().width() != source.geometry().width()
-        || band.description().format() != source.format()
-        || band.description().colour() != source.colour()
-        || band.description().alpha() != source.alpha()
+    if band.description().geometry().width() != described.geometry().width()
+        || band.description().format() != described.format()
+        || band.description().colour() != described.colour()
+        || band.description().alpha() != described.alpha()
     {
         // The band has to be the same picture, cut down. A band described
         // otherwise is a band of something else, and resampling it would
         // answer confidently about a picture nobody asked for.
         return Err(RenderStatus::NotComposable);
     }
-    let (_, tall) = extent(source)?;
-    let held = Picture::banded(band, from, tall)?;
-    let table = TransferTable::build(source.colour())?;
-    drawn(&held, &table, mapping, filter, (width, row), &mut out)?;
-    Ok(Frame::from_owned(one, out)?)
+    let held = Picture::banded(band, from, height)?;
+    let table = TransferTable::build(described.colour())?;
+    drawn(&held, &table, mapping, filter, over, out)
 }
 
 /// The checks a resample makes before it moves a pixel.
@@ -484,12 +524,11 @@ fn drawn(
     table: &TransferTable,
     mapping: Mapping,
     filter: Filter,
-    at: (usize, usize),
+    over: Strip,
     out: &mut Vec<u8>,
 ) -> Result<()> {
-    let (width, y) = at;
-    let row = i64::try_from(y).map_err(|_| RenderStatus::OutsideDomain)?;
-    for x in 0..width {
+    let row = i64::try_from(over.row).map_err(|_| RenderStatus::OutsideDomain)?;
+    for x in over.from..over.to {
         let column = i64::try_from(x).map_err(|_| RenderStatus::OutsideDomain)?;
         let pixel = match filter {
             Filter::Area => area_at(source, table, mapping, column, row)?,
@@ -619,20 +658,22 @@ impl<'a> Picture<'a> {
     }
 }
 
-/// The destination pixel square, taken back into the source.
+/// A run of destination pixels, taken back into the source.
 ///
-/// An affine map sends a square to a parallelogram, so this is exact and has
-/// four corners however the picture is turned.
-fn preimage_of(mapping: Mapping, x: i64, y: i64) -> Result<Vec<(Rational, Rational)>> {
+/// An affine map sends a rectangle to a parallelogram, so this is exact and
+/// has four corners however the picture is turned. `from..to` is a range of
+/// columns: one pixel is `x..x + 1`, and a whole strip is the range it covers.
+/// That generality is the milestone that made a rotation scannable — the
+/// vertical extent of this parallelogram is what a band has to hold, and it
+/// shrinks as the range narrows.
+fn preimage_of(mapping: Mapping, from: i64, to: i64, y: i64) -> Result<Vec<(Rational, Rational)>> {
     let mut preimage = Vec::new();
     preimage
         .try_reserve(4)
         .map_err(|_| RenderStatus::OutOfMemory)?;
-    for (dx, dy) in [(0, 0), (1, 0), (1, 1), (0, 1)] {
-        preimage.push(mapping.source_of(
-            Rational::from_integer(x + dx),
-            Rational::from_integer(y + dy),
-        )?);
+    for (x, dy) in [(from, 0), (to, 0), (to, 1), (from, 1)] {
+        preimage
+            .push(mapping.source_of(Rational::from_integer(x), Rational::from_integer(y + dy))?);
     }
     Ok(preimage)
 }
@@ -680,55 +721,90 @@ fn landing_of(mapping: Mapping, x: i64, y: i64) -> Result<Landing> {
     })
 }
 
-/// The source rows one destination row reads, inclusive at both ends and
-/// before any clamping to the picture.
+/// Which part of which destination row a strip covers.
 ///
-/// It asks about **column nought** and answers for every column, which is only
-/// true for a mapping that takes horizontals to horizontals — so it refuses
-/// for any other, rather than answering something that happens to be right for
-/// one column of the row.
+/// The unit a resampled row is actually drawn in. A whole row is the strip
+/// from nought to the width, and for a map that takes horizontals to
+/// horizontals that is the only strip anybody needs. For a turn it is not,
+/// and [`strip`] says why.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Strip {
+    /// The destination row.
+    pub row: usize,
+    /// The first destination column.
+    pub from: usize,
+    /// One past the last destination column.
+    pub to: usize,
+}
+
+/// The source rows one strip of one destination row reads, inclusive at both
+/// ends and before any clamping to the picture.
 ///
 /// The arithmetic is not this function's: it is `preimage_of` and
 /// `landing_of`, the same two the samplers use, so a band and the pixels drawn
 /// inside it cannot disagree about which rows those are.
-fn rows_under(mapping: Mapping, filter: Filter, y: i64) -> Result<(i64, i64)> {
-    if !mapping.horizontal() {
-        return Err(RenderStatus::NotRowLocal);
+fn rows_under(mapping: Mapping, filter: Filter, over: Strip) -> Result<(i64, i64)> {
+    let from = i64::try_from(over.from).map_err(|_| RenderStatus::OutsideDomain)?;
+    let to = i64::try_from(over.to).map_err(|_| RenderStatus::OutsideDomain)?;
+    let y = i64::try_from(over.row).map_err(|_| RenderStatus::OutsideDomain)?;
+    if to <= from {
+        return Err(RenderStatus::OutsideDomain);
     }
     match filter {
         Filter::Area => {
-            let (_, top, _, bottom) = bounds(&preimage_of(mapping, 0, y)?)?;
+            let (_, top, _, bottom) = bounds(&preimage_of(mapping, from, to, y)?)?;
             Ok((top, bottom))
         }
-        // Bilinear reads the sample above and the one below it, and no more.
+        // Bilinear reads the sample above each centre and the one below it,
+        // and no more. The source's vertical coordinate is affine in the
+        // column, so over a run of columns its extremes are at the two ends —
+        // there is nothing in the middle to check.
         Filter::Bilinear => {
-            let top = landing_of(mapping, 0, y)?.corner.1;
-            Ok((top, top.saturating_add(1)))
+            let first = landing_of(mapping, from, y)?.corner.1;
+            let last = landing_of(mapping, to - 1, y)?.corner.1;
+            Ok((first.min(last), first.max(last).saturating_add(1)))
         }
     }
 }
 
-/// The source rows one destination row reads, half-open and inside the
-/// picture.
+/// The source rows one strip of one destination row reads, half-open and
+/// inside the picture.
 ///
 /// Asked **before** the rows are fetched, which is the whole point: a caller
 /// that scans gathers exactly this band and no more, and a caller that cannot
 /// afford the band learns so before it has spent a row on it.
 ///
-/// The band is empty when the destination row's preimage misses the picture
-/// altogether — a picture moved off the top of its frame, say — and an empty
-/// band is not an error. There is simply nothing there, and a resampled row of
-/// nothing is transparent.
+/// ## Why a strip and not a row
+///
+/// A destination row's preimage is a segment of the source. When the map takes
+/// horizontals to horizontals that segment lies flat, so the whole row reads
+/// one short band and there is nothing to slice. When it does not — a rotation,
+/// a vertical shear — the segment has a slope, and a segment of slope `m`
+/// across a picture `w` wide crosses about `m · w` rows. For a picture of any
+/// size that is more than a band may hold.
+///
+/// But a *part* of that segment crosses proportionally fewer, and the part is
+/// what a strip is. So a turn is scanned in strips narrow enough that each
+/// one's band fits, and the pixels are identical either way — a strip is a
+/// range of columns, not a different arithmetic.
+///
+/// The band is empty when the strip's preimage misses the picture altogether,
+/// and an empty band is not an error: there is nothing there, and a resampled
+/// strip of nothing is transparent.
 ///
 /// # Errors
 ///
-/// [`RenderStatus::NotRowLocal`] for a map that does not take horizontals to
-/// horizontals, [`RenderStatus::BandTooTall`] past [`MAX_BAND_ROWS`], and
+/// [`RenderStatus::BandTooTall`] past [`MAX_BAND_ROWS`],
+/// [`RenderStatus::OutsideDomain`] for a strip of no columns, and
 /// [`RenderStatus::Time`] wrapping an overflow.
-pub fn band(mapping: Mapping, filter: Filter, row: usize, height: usize) -> Result<(usize, usize)> {
+pub fn strip(
+    mapping: Mapping,
+    filter: Filter,
+    over: Strip,
+    height: usize,
+) -> Result<(usize, usize)> {
     let tall = i64::try_from(height).map_err(|_| RenderStatus::OutsideDomain)?;
-    let at = i64::try_from(row).map_err(|_| RenderStatus::OutsideDomain)?;
-    let (top, bottom) = rows_under(mapping, filter, at)?;
+    let (top, bottom) = rows_under(mapping, filter, over)?;
     let from = top.clamp(0, tall);
     let to = bottom.saturating_add(1).clamp(from, tall);
     let held = usize::try_from(to - from).map_err(|_| RenderStatus::OutsideDomain)?;
@@ -749,7 +825,7 @@ fn area_at(
     x: i64,
     y: i64,
 ) -> Result<[u8; CHANNELS]> {
-    let preimage = preimage_of(mapping, x, y)?;
+    let preimage = preimage_of(mapping, x, x + 1, y)?;
     let (left, top, right, bottom) = bounds(&preimage)?;
     let mut light = [Fixed::ZERO; CHANNELS];
     for row in top..=bottom {

@@ -13,7 +13,9 @@ use sapstudio_media::{
     AlphaState, ColourDescription, Frame, FrameDescription, Geometry, PixelFormat,
 };
 use sapstudio_render::RenderStatus;
-use sapstudio_render::resample::{Filter, MAX_BAND_ROWS, Mapping, band, resample, resample_row};
+use sapstudio_render::resample::{
+    Filter, MAX_BAND_ROWS, Mapping, Strip, resample, resample_row, resample_strip, strip,
+};
 
 fn r(numerator: i64, denominator: i64) -> Rational {
     Rational::new(numerator, denominator).expect("a rational")
@@ -742,7 +744,17 @@ fn a_scanned_resample_is_the_resampled_picture_row_for_row() {
         for (name, mapping) in &maps {
             let whole = resample(&source, target, *mapping, filter).expect("a frame");
             for row in 0..6 {
-                let (from, to) = band(*mapping, filter, row, 6).expect("a band");
+                let (from, to) = strip(
+                    *mapping,
+                    filter,
+                    Strip {
+                        row,
+                        from: 0,
+                        to: 6,
+                    },
+                    6,
+                )
+                .expect("a band");
                 let held = if from < to {
                     let packed = source.to_packed().expect("bytes");
                     Some(
@@ -774,7 +786,17 @@ fn a_band_that_is_short_of_what_the_row_reads_is_refused() {
     let source = flat(4, 4, [10, 20, 30, 255]);
     let target = described(4, 4);
     let mapping = Mapping::scaled(Rational::ONE, r(1, 2), (n(0), n(0))).expect("a map");
-    let (from, to) = band(mapping, Filter::Area, 1, 4).expect("a band");
+    let (from, to) = strip(
+        mapping,
+        Filter::Area,
+        Strip {
+            row: 1,
+            from: 0,
+            to: 4,
+        },
+        4,
+    )
+    .expect("a band");
     assert!(to - from > 1, "the band is one row and cannot be shortened");
     let packed = source.to_packed().expect("bytes");
     // One row short at the bottom, and the row still asks for it.
@@ -790,34 +812,106 @@ fn a_band_that_is_short_of_what_the_row_reads_is_refused() {
 }
 
 #[test]
-fn a_turn_has_no_band_at_all() {
-    // Not a bound but a shape: a rotated row's preimage is a slope, and a
-    // slope crosses every row of the picture it lies in. So there is no band
-    // to ask for, and asking is refused rather than answered with all of them.
+fn a_turn_needs_strips_and_the_width_decides_how_many() {
+    // `NotRowLocal` used to say a turn's row "needs more than a band of input
+    // rows", and that was **overclaiming**. It is not a property of the map.
+    // The preimage of a destination row under a turn is a segment of some
+    // slope, and a segment of slope m across w columns crosses about m·w
+    // rows -- so whether it fits a band depends on w, and a narrow enough
+    // strip always fits.
+    //
+    // The three-four-five turn has cosine 4/5 and sine 3/5 and determinant
+    // one, so its inverse is [4/5, 3/5, -3/5, 4/5]. About the centre of a
+    // two-hundred-square picture that is
+    //
+    //   v(x, y) = -3/5·(x - 100) + 4/5·(y - 100) + 100
+    //
+    // and the corners of a strip at row 100 give, by hand:
+    //
+    //   whole row, x in {0, 200}, y in {100, 101}
+    //     (0,100) 160    (200,100)  40    (200,101)  40.8   (0,101) 160.8
+    //     floor(40) .. floor(160.8) inclusive = 40..=160, a band of **121**
+    //
+    //   half a row, x in {0, 100}
+    //     (0,100) 160    (100,100) 100    (100,101) 100.8   (0,101) 160.8
+    //     floor(100) .. floor(160.8) inclusive = 100..=160, a band of **61**
+    //
+    // Sixty-four is the bound, so the whole row refuses and half of it does
+    // not. Same map, same row, same arithmetic -- a different width.
     let cosine = r(4, 5);
     let sine = r(3, 5);
-    let mapping = Mapping::new(
+    let mapping = Mapping::about(
         [cosine, sine.checked_neg().expect("a sine"), sine, cosine],
         (n(0), n(0)),
+        (r(1, 2), r(1, 2)),
+        200,
+        200,
     )
     .expect("a map");
-    assert!(!mapping.horizontal());
     assert_eq!(
-        band(mapping, Filter::Area, 0, 8),
-        Err(RenderStatus::NotRowLocal)
+        strip(
+            mapping,
+            Filter::Area,
+            Strip {
+                row: 100,
+                from: 0,
+                to: 200
+            },
+            200
+        ),
+        Err(RenderStatus::BandTooTall)
     );
-    // And every map that does take horizontals to horizontals says so.
+    assert_eq!(
+        strip(
+            mapping,
+            Filter::Area,
+            Strip {
+                row: 100,
+                from: 0,
+                to: 100
+            },
+            200
+        ),
+        Ok((100, 161)),
+        "half a row of a turn is sixty-one source rows"
+    );
+
+    // And a map that takes horizontals to horizontals is the case where the
+    // width does not matter at all: a scale, a move, a horizontal shear and a
+    // mirror read the same band however much of the row is asked for.
+    //
+    // `Mapping::horizontal` used to say which of the two a map was, and it is
+    // gone. Strips made it a question nobody has to ask -- the width tunes
+    // itself -- and what it meant is asserted here directly, by comparing the
+    // bands, which is a stronger statement than the predicate was.
     for linear in [
         [n(1), n(0), n(0), n(1)],
         [r(1, 2), n(0), n(0), r(1, 3)],
         [n(1), r(3, 4), n(0), n(1)],
         [n(-1), n(0), n(0), n(-1)],
     ] {
-        assert!(
-            Mapping::new(linear, (n(0), n(0)))
-                .expect("a map")
-                .horizontal()
+        let flat = Mapping::new(linear, (n(0), n(0))).expect("a map");
+        let whole = strip(
+            flat,
+            Filter::Area,
+            Strip {
+                row: 4,
+                from: 0,
+                to: 64,
+            },
+            64,
         );
+        let part = strip(
+            flat,
+            Filter::Area,
+            Strip {
+                row: 4,
+                from: 7,
+                to: 9,
+            },
+            64,
+        );
+        assert_eq!(whole, part, "the width changed a horizontal map's band");
     }
 }
 
@@ -834,7 +928,16 @@ fn a_band_past_its_bound_is_refused_and_an_empty_one_is_not() {
     )
     .expect("a map");
     assert_eq!(
-        band(steep, Filter::Area, 0, 1024),
+        strip(
+            steep,
+            Filter::Area,
+            Strip {
+                row: 0,
+                from: 0,
+                to: 4
+            },
+            1024,
+        ),
         Err(RenderStatus::BandTooTall)
     );
     // Exactly at the bound it is admitted, which is what "past" means -- and
@@ -852,9 +955,21 @@ fn a_band_past_its_bound_is_refused_and_an_empty_one_is_not() {
         (n(0), n(0)),
     )
     .expect("a map");
-    assert_eq!(band(allowed, Filter::Area, 0, 1024), Ok((0, MAX_BAND_ROWS)));
     assert_eq!(
-        band(
+        strip(
+            allowed,
+            Filter::Area,
+            Strip {
+                row: 0,
+                from: 0,
+                to: 4
+            },
+            1024,
+        ),
+        Ok((0, MAX_BAND_ROWS))
+    );
+    assert_eq!(
+        strip(
             Mapping::scaled(
                 Rational::ONE,
                 r(1, i64::try_from(MAX_BAND_ROWS).expect("a bound")),
@@ -862,14 +977,30 @@ fn a_band_past_its_bound_is_refused_and_an_empty_one_is_not() {
             )
             .expect("a map"),
             Filter::Area,
-            0,
+            Strip {
+                row: 0,
+                from: 0,
+                to: 4
+            },
             1024
         ),
         Err(RenderStatus::BandTooTall)
     );
 
     let away = Mapping::new([n(1), n(0), n(0), n(1)], (n(0), n(100))).expect("a map");
-    assert_eq!(band(away, Filter::Area, 0, 4), Ok((0, 0)));
+    assert_eq!(
+        strip(
+            away,
+            Filter::Area,
+            Strip {
+                row: 0,
+                from: 0,
+                to: 4
+            },
+            4,
+        ),
+        Ok((0, 0))
+    );
     let target = described(4, 4);
     let row = resample_row(None, target, 0, target, away, Filter::Area, 0).expect("a row");
     assert_eq!(pixels(&row), std::vec![[0, 0, 0, 0]; 4]);
@@ -914,4 +1045,53 @@ fn a_band_of_a_different_picture_is_refused_rather_than_resampled() {
         resample_row(Some(&past), target, 2, target, mapping, Filter::Area, 0),
         Err(RenderStatus::RowOutsideBand)
     );
+}
+
+#[test]
+fn a_strip_of_no_columns_is_refused_rather_than_measured() {
+    // `strip` is public, and a strip from a column to itself has no preimage
+    // to measure: the parallelogram is degenerate and `bounds` would happily
+    // report a band for it. Nothing inside this crate asks — `Graph::banded`
+    // never makes an empty strip — so a control found the check changed no
+    // answer, and it stayed anyway for the reason M8.42 kept `Run::plane_row`'s
+    // bound: a public function that silently answers a meaningless question is
+    // a hazard however well its callers behave. This is the test that holds it.
+    let mapping = identity();
+    for over in [
+        Strip {
+            row: 0,
+            from: 3,
+            to: 3,
+        },
+        Strip {
+            row: 0,
+            from: 4,
+            to: 2,
+        },
+    ] {
+        assert_eq!(
+            strip(mapping, Filter::Area, over, 8),
+            Err(RenderStatus::OutsideDomain),
+            "{over:?}"
+        );
+        assert_eq!(
+            strip(mapping, Filter::Bilinear, over, 8),
+            Err(RenderStatus::OutsideDomain),
+            "{over:?}"
+        );
+        let mut out = Vec::new();
+        assert_eq!(
+            resample_strip(
+                None,
+                described(8, 8),
+                0,
+                mapping,
+                Filter::Area,
+                over,
+                &mut out
+            ),
+            Err(RenderStatus::OutsideDomain)
+        );
+        assert!(out.is_empty(), "an empty strip wrote pixels");
+    }
 }

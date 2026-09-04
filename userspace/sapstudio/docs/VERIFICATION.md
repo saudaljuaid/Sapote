@@ -832,6 +832,14 @@ Examples this project will need:
 | A reading answers only for its own span | Drop the bounds check | One test fails; an instant outside the span is answered with the nearest stretch |
 | A reading answers only in its own timebase | Drop the timebase check | One test fails; a position in another rate is answered as though its ticks meant the same |
 | A line covers the stretch it is given for | Compare `from <= to` instead of `from < to` | Four tests fail; a caption that has finished is still on screen |
+| A strip's band is measured across its own columns | Measure every strip across one column | Six tests fail; the band is short for all but the first column of each strip |
+| A bilinear strip looks at both of its ends | Sample the first column twice | One test fails; a strip's band misses the rows its far end reads |
+| A strip too tall is narrowed rather than refused | Never halve the span | One test fails; a turn wide enough to need strips refuses instead of being sliced |
+| The whole row is covered by its strips | Advance past one extra column between strips | One test fails; a column between two strips is never drawn |
+| A strip draws the columns it was given | Draw from column nought in every strip | One test fails; the picture repeats across the row |
+| A band taller than its bound is refused | Multiply `MAX_BAND_ROWS` by 1024 at the check | Three tests fail; a downscale of any steepness is admitted |
+| A strip of no columns is refused | Drop the empty-range check in `rows_under` | One test fails; a strip from a column to itself is answered for |
+| A subsampled format still has no row | Drop the subsampling check in `row_description` | Four tests fail; a 4:2:0 frame is scanned a luma row at a time |
 
 ### A rule stated in a comment is not a rule
 

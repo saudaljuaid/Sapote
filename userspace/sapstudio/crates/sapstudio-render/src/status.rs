@@ -68,19 +68,29 @@ pub enum RenderStatus {
     FrameAbsent,
     /// A library was asked for a look it does not hold.
     LookAbsent,
-    /// A node whose output row depends on more than a bounded band of its
-    /// inputs' rows, asked for a row.
+    /// A node whose output row is not independent of its neighbours, asked for
+    /// a row.
     ///
-    /// A statement about the operation rather than about this build: a
-    /// resampled frame's output row has a *line* in its source for a preimage,
-    /// and only a linear map that takes horizontals to horizontals makes that
-    /// line lie in one band of rows — which a rotation never does. Distinct
-    /// from [`RenderStatus::NoRowForm`], which is a statement about the build.
+    /// A statement about the *format*, and now only about the format: one
+    /// chroma row of a subsampled frame serves two luma rows, so a luma row
+    /// cannot be produced without its neighbour and no slicing changes that.
+    ///
+    /// It used to cover resampling too, and that was overclaiming. A turn's
+    /// row does read more than a band — across the whole width. Across a
+    /// narrow enough strip it does not, and a row drawn in strips is the same
+    /// row. What can still refuse there is [`RenderStatus::BandTooTall`],
+    /// which is about one row of one map rather than about the operation.
+    ///
+    /// Distinct from [`RenderStatus::NoRowForm`], which is a statement about
+    /// the build.
     NotRowLocal,
     /// A band of source rows taller than one may be.
     ///
     /// A vertical downscale steeper than [`crate::resample::MAX_BAND_ROWS`] to
     /// one, where a band is most of a frame and scanning has bought nothing.
+    /// Narrowing the strip does not help, because a map that takes horizontals
+    /// to horizontals reads the same band however much of the row is asked
+    /// for — which is exactly the case this refuses.
     BandTooTall,
     /// A resampled row reached for a source row outside the band it was given.
     ///
@@ -146,7 +156,7 @@ impl RenderStatus {
             Self::MediaUnreadable => "that media is here and cannot be read as material",
             Self::FrameAbsent => "that media holds no frame at that tick",
             Self::LookAbsent => "this library does not hold that look",
-            Self::NotRowLocal => "an output row of that node needs more than a band of input rows",
+            Self::NotRowLocal => "an output row of that node is not independent of its neighbours",
             Self::BandTooTall => "one output row reads more source rows than a band holds",
             Self::RowOutsideBand => "a resampled row reached past the band it was given",
             Self::NoRowForm => "this build cannot produce that a row at a time",

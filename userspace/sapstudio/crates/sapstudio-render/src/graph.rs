@@ -966,28 +966,14 @@ impl Graph {
                 self.row_local(layers[0])?;
                 self.row_local(layers[1])
             }
-            Node::Transform {
-                input,
-                linear,
-                offset,
-                anchor,
-                ..
-            } => {
-                // The map decides, and it decides before a row is spent: a
-                // scale scans and a rotation never will.
-                let described = self.described(*input)?;
-                let geometry = described.geometry();
-                let mapping = crate::resample::Mapping::about(
-                    *linear,
-                    *offset,
-                    *anchor,
-                    geometry.width(),
-                    geometry.height(),
-                )?;
-                if !mapping.horizontal() {
-                    return Err(RenderStatus::NotRowLocal);
-                }
-                row_description(described, 0)?;
+            Node::Transform { input, .. } => {
+                // No question asked of the map, and that is the change strips
+                // made. Every invertible transform is scannable now: a scale
+                // in one strip, a turn in several. What can still refuse is
+                // one *row* of one, and only because its band would be taller
+                // than a band may be -- which is a question about a row and
+                // not about a graph, so `Graph::row` is where it is answered.
+                row_description(self.described(*input)?, 0)?;
                 self.row_local(*input)
             }
             // Every generator has a row form now. The description is still
@@ -999,14 +985,39 @@ impl Graph {
         }
     }
 
-    /// One row of a resampled node, drawn from a band of its input's rows.
+    /// One row of a resampled node, drawn in strips from bands of its input's
+    /// rows.
     ///
-    /// The band is asked for **first** and fetched second, so a row that
-    /// cannot be scanned costs nothing and a row that can costs exactly the
-    /// rows it reads. That is the whole of what this milestone buys: a
-    /// scaled-down programme used to force a whole frame through the graph,
-    /// and now it forces a band whose height [`crate::resample::MAX_BAND_ROWS`]
-    /// bounds.
+    /// The band is asked for **first** and fetched second, so a strip that
+    /// cannot be scanned costs nothing and one that can costs exactly the rows
+    /// it reads. A map that takes horizontals to horizontals needs one strip
+    /// for the whole row; a turn needs several, because its row's preimage is
+    /// a slope and a slope crosses more rows than a band may hold.
+    ///
+    /// ## The width tunes itself
+    ///
+    /// It starts optimistic — the whole row — and halves whenever
+    /// [`crate::resample::strip`] says the band would be too tall, keeping
+    /// whatever width worked for the strips after it. So a scale pays one
+    /// probe a row and a turn pays about fourteen once, and neither has to be
+    /// told which it is.
+    ///
+    /// Correctness does not depend on the width at all, and that is what makes
+    /// the tuning safe: a strip is a range of columns, not a different
+    /// arithmetic, so where the boundaries fall changes nothing about the
+    /// pixels.
+    ///
+    /// ## What it costs, honestly
+    ///
+    /// A turn re-reads. Strip *s* and strip *s + 1* have overlapping bands, so
+    /// a row drawn in strips fetches more source rows than the picture has.
+    /// How many is not up to the slicing: a strip of *w* columns reads about
+    /// `|m|·w` rows for a slope *m*, and there are `width / w` of them, so the
+    /// total is about `|m|·width` however wide the strips are. That is the
+    /// number of rows the row's preimage genuinely crosses, so no
+    /// row-at-a-time evaluator can read fewer. Reading fewer means not working
+    /// a row at a time — tiles, which is a different design and is recorded as
+    /// not done.
     ///
     /// The rows are stitched into one frame rather than handed over one at a
     /// time because a resampled pixel reads from two of them at once, and a
@@ -1041,17 +1052,48 @@ impl Graph {
             crate::resample::Filter::Area
         };
         let height = usize::try_from(geometry.height()).map_err(|_| RenderStatus::OutsideDomain)?;
-        let (from, to) = crate::resample::band(mapping, filter, row, height)?;
-        let band = self.gathered(input, from, to, library)?;
-        crate::resample::resample_row(
-            band.as_ref(),
-            described,
-            from,
-            described,
-            mapping,
-            filter,
-            row,
+        let width = usize::try_from(geometry.width()).map_err(|_| RenderStatus::OutsideDomain)?;
+        let mut out = Vec::new();
+        out.try_reserve(
+            row_description(described, row)?
+                .packed_bytes()
+                .map_err(RenderStatus::Media)?,
         )
+        .map_err(|_| RenderStatus::OutOfMemory)?;
+        let mut wide = width;
+        let mut at = 0;
+        while at < width {
+            let mut span = wide.min(width - at);
+            let (from, to) = loop {
+                let over = crate::resample::Strip {
+                    row,
+                    from: at,
+                    to: at + span,
+                };
+                match crate::resample::strip(mapping, filter, over, height) {
+                    Ok(found) => break found,
+                    Err(RenderStatus::BandTooTall) if span > 1 => span = span.div_ceil(2),
+                    Err(other) => return Err(other),
+                }
+            };
+            wide = span;
+            let band = self.gathered(input, from, to, library)?;
+            crate::resample::resample_strip(
+                band.as_ref(),
+                described,
+                from,
+                mapping,
+                filter,
+                crate::resample::Strip {
+                    row,
+                    from: at,
+                    to: at + span,
+                },
+                &mut out,
+            )?;
+            at += span;
+        }
+        Ok(Frame::from_owned(row_description(described, row)?, out)?)
     }
 
     /// Rows `from..to` of a node, as one frame that many rows tall.

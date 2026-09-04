@@ -180,15 +180,37 @@ fn slice(frame: &Frame, row: usize) -> Result<Frame, RenderStatus> {
 /// The linear part of an exact rotation: the three-four-five triangle, whose
 /// cosine and sine are both rational and whose determinant is one.
 ///
-/// A turn is the only kind of map this file can provoke `NotRowLocal` with
-/// now. A scale, a translation, a mirror and a horizontal shear all take
-/// horizontals to horizontals, so a row of each has a band of source rows for
-/// a preimage and every one of them scans. A rotation takes a horizontal to a
-/// slope, and a slope crosses every row of the picture it lies in.
+/// A scale, a translation, a mirror and a horizontal shear all take
+/// horizontals to horizontals, so a row of each has one band of source rows
+/// for a preimage. A rotation takes a horizontal to a *slope*, so its row is
+/// drawn in strips -- as many as the width and the slope between them need.
 fn turned() -> [Rational; 4] {
     let cosine = Rational::new(4, 5).expect("a cosine");
     let sine = Rational::new(3, 5).expect("a sine");
     [cosine, sine.checked_neg().expect("a sine"), sine, cosine]
+}
+
+/// A description with no rows: one chroma row of a 4:2:0 frame serves two
+/// luma rows, so a luma row is not independent of its neighbour.
+///
+/// The only thing left that `row_local` refuses. Every invertible transform
+/// scans now — a scale in one strip and a turn in several — so this is what
+/// the tests about the *walk* have to be built on.
+fn planar() -> FrameDescription {
+    FrameDescription::new(
+        Geometry::new(WIDE + 1, TALL + 1).expect("a geometry"),
+        PixelFormat::Yuv420p8,
+        ColourDescription::new(
+            sapstudio_media::colour::Primaries::Bt709,
+            sapstudio_media::colour::TransferFunction::Srgb,
+            sapstudio_media::colour::MatrixCoefficients::Bt709,
+            sapstudio_media::colour::Range::Full,
+        ),
+        Some(sapstudio_media::colour::ChromaSiting::Centre),
+        None,
+        Rational::ONE,
+    )
+    .expect("a description")
 }
 
 fn pool() -> FramePool {
@@ -419,274 +441,85 @@ fn a_conversion_and_an_association_agree_row_for_row() {
 }
 
 #[test]
-fn a_turn_is_refused_because_a_row_is_not_its_preimage() {
-    // Not "this build cannot": an output row of a resampled frame has a *line*
-    // in its source for a preimage, and only a linear map that takes
-    // horizontals to horizontals makes that line lie in a band of rows. A
-    // rotation never does -- its preimage is a slope, and a slope crosses
-    // every row of the picture it lies in. The status says which of the two it
-    // is.
+fn a_turn_is_scanned_in_strips_and_is_the_render_of_it() {
+    // The refusal this used to assert was wrong, and finding that out is the
+    // milestone. A turn's row has a *slope* for a preimage, and a slope of m
+    // across w columns crosses about m·w rows -- so whether it fits a band is
+    // a question about the **width**, not about the map. Narrow the strip and
+    // it always fits.
+    //
+    // What that buys is not speed: a turn re-reads its source, because
+    // neighbouring strips have overlapping bands. What it buys is a bound on
+    // memory, which on Sapote is the difference between running and not.
     let description = described(PixelFormat::Rgba8);
     let media = Digest::of(b"a shot");
-    let mut graph = Graph::new();
-    let source = graph
-        .add(Node::Source {
-            media,
-            tick: 0,
-            description,
-        })
-        .expect("a node");
-    let moved = graph
-        .add(Node::Transform {
-            input: source,
-            linear: turned(),
-            offset: (
-                Rational::new(1, 10).expect("an offset"),
-                Rational::new(1, 10).expect("an offset"),
-            ),
-            anchor: (
-                Rational::new(1, 2).expect("an anchor"),
-                Rational::new(1, 2).expect("an anchor"),
-            ),
-            bilinear: false,
-        })
-        .expect("a node");
-    let mut library = Pictures::new(std::vec![(media, picture(description, 5))]);
-    assert_eq!(
-        graph.row(moved, 0, &mut library),
-        Err(RenderStatus::NotRowLocal)
-    );
-    // And a node *above* a transform is refused too, because reaching it means
-    // walking through one.
-    let faded = graph
-        .add(Node::Fade {
-            input: moved,
-            opacity: Rational::new(1, 2).expect("an opacity"),
-        })
-        .expect("a node");
-    assert_eq!(
-        graph.row(faded, 0, &mut library),
-        Err(RenderStatus::NotRowLocal)
-    );
-    // The whole-frame evaluator still does it, which is the point of keeping
-    // both.
-    graph
-        .evaluate(moved, &mut pool(), &mut library)
-        .expect("a whole frame");
-}
-
-#[test]
-fn a_row_of_a_source_reaches_the_caller_without_being_copied() {
-    // `Graph::row` on a source hands back what the library handed it, and the
-    // point is that it hands back the *bytes*, not a copy of them. Measured by
-    // address rather than by contents: a graph that copied would still be
-    // correct and would still pass every other test in this file.
-    struct FromAWindow {
-        /// Where the window this handed out lived.
-        lent: usize,
-    }
-
-    impl Library for FromAWindow {
-        fn frame(
-            &mut self,
-            _media: Digest,
-            _tick: i64,
-            _description: FrameDescription,
-        ) -> Result<Frame, RenderStatus> {
-            Err(RenderStatus::MediaAbsent)
-        }
-
-        fn look(&mut self, _look: Digest) -> Result<Look, RenderStatus> {
-            Err(RenderStatus::LookAbsent)
-        }
-
-        fn row(
-            &mut self,
-            _media: Digest,
-            _tick: i64,
-            description: FrameDescription,
-            row: usize,
-        ) -> Result<Frame, RenderStatus> {
-            let one = sapstudio_render::graph::row_description(description, row)?;
-            let bytes = one.packed_bytes().map_err(RenderStatus::Media)?;
-            let window: std::vec::Vec<u8> = (0..bytes)
-                .map(|index| u8::try_from((index + row) % 251).unwrap_or(0))
-                .collect();
-            self.lent = window.as_ptr() as usize;
-            Frame::from_owned(one, window).map_err(RenderStatus::Media)
-        }
-    }
-
-    let description = described(PixelFormat::Rgba8);
-    let mut graph = Graph::new();
-    let source = graph
-        .add(Node::Source {
-            media: Digest::of(b"a shot"),
-            tick: 0,
-            description,
-        })
-        .expect("a node");
-    let mut library = FromAWindow { lent: 0 };
-    let held = graph.row(source, 2, &mut library).expect("a row");
-    assert!(held.is_packed());
-    assert_eq!(
-        held.packed().expect("bytes").as_ptr() as usize,
-        library.lent,
-        "the row was copied between the library and the caller"
-    );
-}
-
-#[test]
-fn every_banded_transform_agrees_row_for_row() {
-    // Four maps that take horizontals to horizontals, each scanned row by row
-    // and compared against the whole render. If `band` said the wrong rows,
-    // the row it drew would not be the row the frame holds -- and `picture`
-    // makes every byte a function of where it is, so a row taken from one
-    // place and compared against another is visible rather than plausible.
-    let description = described(PixelFormat::Rgba8);
-    let media = Digest::of(b"a shot");
-    let half = Rational::new(1, 2).expect("a scale");
-    let maps: std::vec::Vec<(&str, [Rational; 4], (Rational, Rational))> = std::vec![
-        // A move, which reads one band offset from the row it writes.
-        (
-            "a move",
-            [Rational::ONE, Rational::ZERO, Rational::ZERO, Rational::ONE],
-            (Rational::ZERO, Rational::new(1, 5).expect("a move")),
-        ),
-        // A shrink, which is the case a band is *for*: one destination row
-        // reads two source rows and the answer is their weighted mean.
-        (
-            "a shrink",
-            [half, Rational::ZERO, Rational::ZERO, half],
-            (Rational::ZERO, Rational::ZERO),
-        ),
-        // A vertical mirror, where the band walks the picture backwards.
-        (
-            "a mirror",
-            [
-                Rational::ONE,
-                Rational::ZERO,
-                Rational::ZERO,
-                Rational::ONE.checked_neg().expect("a mirror"),
-            ],
-            (Rational::ZERO, Rational::ZERO),
-        ),
-        // A horizontal shear, which slides each row sideways by an amount
-        // that depends on the row -- and still reads one band, because what
-        // it moves is `u` and a band is about `v`.
-        (
-            "a shear",
-            [Rational::ONE, half, Rational::ZERO, Rational::ONE],
-            (Rational::ZERO, Rational::ZERO),
-        ),
-    ];
     for bilinear in [false, true] {
-        for (name, linear, offset) in &maps {
-            let mut graph = Graph::new();
-            let source = graph
-                .add(Node::Source {
-                    media,
-                    tick: 0,
-                    description,
-                })
-                .expect("a node");
-            let moved = graph
-                .add(Node::Transform {
-                    input: source,
-                    linear: *linear,
-                    offset: *offset,
-                    anchor: (
-                        Rational::new(1, 2).expect("an anchor"),
-                        Rational::new(1, 2).expect("an anchor"),
-                    ),
-                    bilinear,
-                })
-                .expect("a node");
-            let mut library = Pictures::new(std::vec![(media, picture(description, 5))]);
-            assert_eq!(graph.row_local(moved), Ok(()), "{name} does not scan");
-            agrees(&graph, moved, &mut library);
-            // And through something above it, because reaching a fade means
-            // walking the transform underneath.
-            let faded = graph
-                .add(Node::Fade {
-                    input: moved,
-                    opacity: Rational::new(1, 2).expect("an opacity"),
-                })
-                .expect("a node");
-            assert_eq!(graph.row_local(faded), Ok(()), "{name} under a fade");
-            agrees(&graph, faded, &mut library);
-        }
+        let mut graph = Graph::new();
+        let source = graph
+            .add(Node::Source {
+                media,
+                tick: 0,
+                description,
+            })
+            .expect("a node");
+        let moved = graph
+            .add(Node::Transform {
+                input: source,
+                linear: turned(),
+                offset: (
+                    Rational::new(1, 10).expect("an offset"),
+                    Rational::new(1, 10).expect("an offset"),
+                ),
+                anchor: (
+                    Rational::new(1, 2).expect("an anchor"),
+                    Rational::new(1, 2).expect("an anchor"),
+                ),
+                bilinear,
+            })
+            .expect("a node");
+        let mut library = Pictures::new(std::vec![(media, picture(description, 5))]);
+        assert_eq!(graph.row_local(moved), Ok(()), "a turn says it scans");
+        agrees(&graph, moved, &mut library);
+        // And through something above it, because reaching a fade means
+        // walking the turn underneath.
+        let faded = graph
+            .add(Node::Fade {
+                input: moved,
+                opacity: Rational::new(1, 2).expect("an opacity"),
+            })
+            .expect("a node");
+        agrees(&graph, faded, &mut library);
     }
 }
 
 #[test]
-fn a_band_reads_only_the_rows_it_needs() {
-    // The whole claim of the milestone, measured rather than asserted: a
-    // bilinear move asks its source for two rows per destination row and not
-    // for the picture. Five rows out of a five-row source would be exactly
-    // what a scan exists to avoid -- and would still produce every correct
-    // pixel, which is why this counts instead of comparing.
-    let description = described(PixelFormat::Rgba8);
-    let media = Digest::of(b"a shot");
-    let mut graph = Graph::new();
-    let source = graph
-        .add(Node::Source {
-            media,
-            tick: 0,
-            description,
-        })
-        .expect("a node");
-    let moved = graph
-        .add(Node::Transform {
-            input: source,
-            linear: [Rational::ONE, Rational::ZERO, Rational::ZERO, Rational::ONE],
-            offset: (Rational::ZERO, Rational::new(1, 5).expect("a move")),
-            anchor: (
-                Rational::new(1, 2).expect("an anchor"),
-                Rational::new(1, 2).expect("an anchor"),
-            ),
-            bilinear: true,
-        })
-        .expect("a node");
-    let mut library = Pictures::new(std::vec![(media, picture(description, 5))]);
-    graph.row(moved, 2, &mut library).expect("a row");
-    assert_eq!(
-        library.rows_asked, 2,
-        "a bilinear row read {} source rows",
-        library.rows_asked
-    );
-}
-
-#[test]
-fn a_shrink_steeper_than_a_band_is_refused_rather_than_holding_a_frame() {
-    // `MAX_BAND_ROWS` is not a limit somebody picked: past it a band is the
-    // frame, and a scan that holds a frame has bought nothing. So a downscale
-    // steep enough to want more rows than that refuses by name -- and the
-    // refusal arrives from `band`, before a single source row is fetched.
-    let tall = FrameDescription::square(
-        Geometry::new(4, 512).expect("a geometry"),
+fn a_turn_wide_enough_to_need_them_is_drawn_in_more_than_one_strip() {
+    // The fixture above is seven pixels wide, so its turn fits one strip and
+    // proves the arithmetic without exercising the slicing. This one is wide
+    // enough that it cannot, and the evidence is the *count*: a turn that
+    // fetched one band a row would be a turn that had not been sliced, and it
+    // would still draw every pixel correctly.
+    let wide = FrameDescription::square(
+        Geometry::new(160, 160).expect("a geometry"),
         PixelFormat::Rgba8,
         ColourDescription::srgb_full(),
         None,
         Some(AlphaState::Premultiplied),
     )
     .expect("a description");
-    let media = Digest::of(b"a tall shot");
+    let media = Digest::of(b"a wide shot");
     let mut graph = Graph::new();
     let source = graph
         .add(Node::Source {
             media,
             tick: 0,
-            description: tall,
+            description: wide,
         })
         .expect("a node");
-    // One hundred and twenty-eight to one: each destination row covers 128
-    // source rows, which is twice what a band holds.
-    let steep = Rational::new(1, 128).expect("a scale");
     let moved = graph
         .add(Node::Transform {
             input: source,
-            linear: [Rational::ONE, Rational::ZERO, Rational::ZERO, steep],
+            linear: turned(),
             offset: (Rational::ZERO, Rational::ZERO),
             anchor: (
                 Rational::new(1, 2).expect("an anchor"),
@@ -695,24 +528,25 @@ fn a_shrink_steeper_than_a_band_is_refused_rather_than_holding_a_frame() {
             bilinear: false,
         })
         .expect("a node");
-    let mut library = Pictures::new(std::vec![(media, picture(tall, 3))]);
-    // It says it scans, because whether it does is a question about the map
-    // and this map takes horizontals to horizontals. What it cannot do is
-    // afford this particular row, and that is a different sentence.
-    assert_eq!(graph.row_local(moved), Ok(()));
-    assert_eq!(
-        graph.row(moved, 256, &mut library),
-        Err(RenderStatus::BandTooTall)
+    let mut library = Pictures::new(std::vec![(media, picture(wide, 9))]);
+    // The three-four-five turn's inverse moves v by 3/5 a column, so a hundred
+    // and sixty columns span 96 rows and one strip of them would be a band of
+    // ninety-seven -- past sixty-four. It has to be cut, and it is.
+    graph.row(moved, 80, &mut library).expect("a row");
+    assert!(
+        library.rows_asked > 64,
+        "a row of a turn read {} source rows, which is one band",
+        library.rows_asked
     );
-    assert_eq!(
-        library.rows_asked, 0,
-        "a source row was fetched before the refusal"
-    );
-    // And the whole-frame evaluator still does it, which is what a caller
-    // that sees this refusal should fall back to.
-    graph
+    // And the pixels are still the pixels: the strips are a range of columns,
+    // not a different arithmetic.
+    let whole = graph
         .evaluate(moved, &mut pool(), &mut library)
         .expect("a whole frame");
+    assert_eq!(
+        graph.row(moved, 80, &mut library).expect("a row"),
+        slice(&whole, 80).expect("a slice")
+    );
 }
 
 #[test]
@@ -942,11 +776,12 @@ fn a_row_that_is_not_the_row_that_was_asked_for_is_refused() {
 }
 
 #[test]
-fn a_mask_over_a_turn_is_refused_before_a_row_is_computed() {
+fn a_mask_over_a_turn_is_placed_against_the_whole_frame() {
     // A mask is placed against the whole frame, so it has to know how tall
-    // that frame is -- and above a turn nothing here can know. The
-    // geometry is asked for *before* the source's row, so this refuses
-    // without doing the work rather than after.
+    // that frame is -- and the walk that finds out goes straight through a
+    // transform, because a transform resamples into its source's own
+    // description. That was true when a turn refused and it is what makes a
+    // masked turn scan now that one does not.
     let description = described(PixelFormat::Rgba8);
     let media = Digest::of(b"a shot");
     let mut graph = Graph::new();
@@ -981,19 +816,11 @@ fn a_mask_over_a_turn_is_refused_before_a_row_is_computed() {
         })
         .expect("a node");
     let mut library = Pictures::new(std::vec![(media, picture(description, 2))]);
-    assert_eq!(
-        graph.row(masked, 0, &mut library),
-        Err(RenderStatus::NotRowLocal)
-    );
-    assert_eq!(
-        library.rows_asked, 0,
-        "a row was computed before the refusal"
-    );
-    // The geometry walk itself does *not* refuse a turn, and that is
-    // deliberate: a transform resamples into its source's own description, so
-    // it changes what the picture looks like rather than how large it is. The
-    // refusal above is `row`'s, one step later, which is the only one there
-    // is now.
+    assert_eq!(graph.row_local(masked), Ok(()));
+    agrees(&graph, masked, &mut library);
+    // The geometry the mask is placed against is the *source's*, not the
+    // turned picture's bounding box: a transform changes what the picture
+    // looks like rather than how large it is.
     let (width, height) = (
         masked_extent(&graph, masked).0,
         masked_extent(&graph, masked).1,
@@ -1063,7 +890,7 @@ fn asking_first_gives_the_same_answer_as_asking_at_the_row() {
         .expect("a node");
     assert_eq!(graph.row_local(masked), Ok(()));
     assert!(graph.row(masked, 0, &mut library).is_ok());
-    // A turn does not, and neither does anything reached through one.
+    // A turn scans too, in strips.
     let moved = graph
         .add(Node::Transform {
             input: masked,
@@ -1076,20 +903,30 @@ fn asking_first_gives_the_same_answer_as_asking_at_the_row() {
             bilinear: false,
         })
         .expect("a node");
-    let over_a_turn = graph
+    assert_eq!(graph.row_local(moved), Ok(()));
+    assert!(graph.row(moved, 0, &mut library).is_ok());
+    // A subsampled format does not, and neither does anything reached through
+    // one. It is the last thing `row_local` refuses, and unlike a turn it is
+    // a fact about the *format*: one chroma row serves two luma rows.
+    let subsampled = graph
+        .add(Node::Blank {
+            description: planar(),
+        })
+        .expect("a node");
+    let over_it = graph
         .add(Node::Fade {
-            input: moved,
+            input: subsampled,
             opacity: Rational::ONE,
         })
         .expect("a node");
-    assert_eq!(graph.row_local(moved), Err(RenderStatus::NotRowLocal));
+    assert_eq!(graph.row_local(subsampled), Err(RenderStatus::NotRowLocal));
     assert_eq!(
-        graph.row_local(over_a_turn),
+        graph.row_local(over_it),
         Err(RenderStatus::NotRowLocal),
         "the walk stopped at the fade instead of going through it"
     );
     assert_eq!(
-        graph.row(over_a_turn, 0, &mut library),
+        graph.row(over_it, 0, &mut library),
         Err(RenderStatus::NotRowLocal)
     );
 
@@ -1110,8 +947,8 @@ fn asking_first_looks_at_both_layers_of_a_composite() {
     // Both, and in a graph where only one of them is the problem — twice, once
     // each way round. A walk that checked the top layer only would pass the
     // first of these and fail the second, and a stack is built bottom first,
-    // so the layer a planner puts the framing on is whichever one the cutter
-    // happened to frame.
+    // so the layer a planner puts the awkward one on is whichever one the
+    // cutter happened to put there.
     let description = described(PixelFormat::Rgba8);
     let media = Digest::of(b"a shot");
     let mut graph = Graph::new();
@@ -1122,13 +959,10 @@ fn asking_first_looks_at_both_layers_of_a_composite() {
             description,
         })
         .expect("a node");
+    let _ = source;
     let moved = graph
-        .add(Node::Transform {
-            input: source,
-            linear: turned(),
-            offset: (Rational::ZERO, Rational::ZERO),
-            anchor: (Rational::ZERO, Rational::ZERO),
-            bilinear: false,
+        .add(Node::Blank {
+            description: planar(),
         })
         .expect("a node");
     let plain = graph.add(Node::Blank { description }).expect("a node");
