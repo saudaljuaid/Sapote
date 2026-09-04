@@ -1,11 +1,36 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Premultiplied alpha compositing in linear light.
+//! Compositing: putting one picture over another.
 //!
-//! Colour samples are decoded before compositing and encoded afterward. Alpha
-//! remains a linear coverage value. Premultiplication means
-//! `encode(light × coverage)`, not `encode(light) × coverage`, and
-//! [`checked_premultiplied`] validates that contract. Compositing is limited to
-//! [`PixelFormat::Rgba8`], the supported format with alpha.
+//! Two decisions have to be made before a single sample is touched, and
+//! getting either wrong produces a picture that looks nearly right, which is
+//! the worst kind of wrong.
+//!
+//! **In what space?** Alpha is coverage: the fraction of a pixel the top layer
+//! actually occupies. What reaches the eye is that fraction of the top layer's
+//! light plus the rest of the bottom layer's light, and that sentence is only
+//! true of *light*. Adding gamma-encoded code values instead produces edges
+//! that are too bright, which is why a white title over black looks like it
+//! has a halo in one application and not another. So every sample here is
+//! decoded to linear light, composited, and encoded back — regardless of what
+//! the frames are encoded in. Nothing is refused for being sRGB; it is simply
+//! not added in sRGB.
+//!
+//! **Straight or premultiplied?** `over` is only correct — and only
+//! associative — on premultiplied values. Compositing straight samples as
+//! though they were premultiplied is the dark fringe around every badly keyed
+//! title: the edge pixels are half-covered, their colour is still full
+//! strength, and adding the background underneath them makes them too dark.
+//! A frame here says which kind it holds ([`AlphaState`]), and the two are not
+//! interchangeable.
+//!
+//! SapStudio premultiplies **in linear light**. A premultiplied sample is the
+//! encoding of `light × coverage`, not the encoded value scaled by coverage.
+//! Both conventions exist in the wild and they disagree, so this one is
+//! written down here and enforced by [`checked_premultiplied`] rather than
+//! assumed.
+//!
+//! Only [`PixelFormat::Rgba8`] can be composited, because it is the only
+//! format with an alpha channel. There is nothing to composite without one.
 
 use alloc::vec::Vec;
 
@@ -104,19 +129,25 @@ fn ceiling_table(table: &TransferTable, coverage: &[Fixed; LEVELS]) -> [u8; LEVE
     ceiling
 }
 
-/// Validate that a frame's samples are premultiplied by alpha.
+/// Check that a frame calling itself premultiplied actually is.
+///
+/// A frame whose colour is brighter than its coverage has not been
+/// premultiplied, whatever its description says — the straight samples were
+/// simply relabelled. That is the dark-fringe bug arriving with a note saying
+/// it is not one, so it is caught here rather than composited.
 ///
 /// # Errors
 ///
 /// [`RenderStatus::AlphaRequired`] for a format with no alpha channel,
-/// [`RenderStatus::WrongAlphaState`] for a frame not marked as premultiplied,
-/// and [`RenderStatus::NotPremultiplied`] when its samples violate that state.
+/// [`RenderStatus::WrongAlphaState`] for a frame that does not claim to be
+/// premultiplied, and [`RenderStatus::NotPremultiplied`] for one that claims
+/// it and is not.
 pub fn checked_premultiplied(frame: &Frame) -> Result<()> {
     let described = require(frame, AlphaState::Premultiplied)?;
     let table = TransferTable::build(described.colour())?;
     let coverage = coverage_table()?;
     let ceiling = ceiling_table(&table, &coverage);
-    let samples = frame.to_packed()?;
+    let samples = frame.packed()?;
     for pixel in samples.chunks_exact(CHANNELS) {
         let limit = ceiling[usize::from(pixel[ALPHA])];
         for &code in &pixel[..ALPHA] {
@@ -139,7 +170,7 @@ pub fn premultiply(frame: &Frame) -> Result<Frame> {
     let described = require(frame, AlphaState::Straight)?;
     let table = TransferTable::build(described.colour())?;
     let coverage = coverage_table()?;
-    let samples = frame.to_packed()?;
+    let samples = frame.packed()?;
     let mut out = reserved(samples.len())?;
     for pixel in samples.chunks_exact(CHANNELS) {
         let alpha = pixel[ALPHA];
@@ -150,9 +181,9 @@ pub fn premultiply(frame: &Frame) -> Result<Frame> {
         }
         out.push(alpha);
     }
-    Ok(Frame::from_packed(
+    Ok(Frame::from_owned(
         described.with_alpha(AlphaState::Premultiplied)?,
-        &out,
+        out,
     )?)
 }
 
@@ -173,7 +204,7 @@ pub fn unpremultiply(frame: &Frame) -> Result<Frame> {
     let described = require(frame, AlphaState::Premultiplied)?;
     let table = TransferTable::build(described.colour())?;
     let coverage = coverage_table()?;
-    let samples = frame.to_packed()?;
+    let samples = frame.packed()?;
     let mut out = reserved(samples.len())?;
     for pixel in samples.chunks_exact(CHANNELS) {
         let alpha = pixel[ALPHA];
@@ -188,9 +219,9 @@ pub fn unpremultiply(frame: &Frame) -> Result<Frame> {
         }
         out.push(alpha);
     }
-    Ok(Frame::from_packed(
+    Ok(Frame::from_owned(
         described.with_alpha(AlphaState::Straight)?,
-        &out,
+        out,
     )?)
 }
 
@@ -207,7 +238,7 @@ pub fn unpremultiply(frame: &Frame) -> Result<Frame> {
 /// ([`checked_premultiplied`]), and must share a description exactly. Two
 /// frames with different colour descriptions are not two layers of one picture
 /// — they are two pictures, and adding them means deciding which one's
-/// primaries the answer is in. That is [`crate::convert()`]'s decision to make,
+/// primaries the answer is in. That is [`crate::convert`]'s decision to make,
 /// with a name on it, not a silent assumption here (R-8.3).
 ///
 /// # Errors
@@ -227,8 +258,8 @@ pub fn over(top: &Frame, bottom: &Frame) -> Result<Frame> {
 
     let table = TransferTable::build(described.colour())?;
     let coverage = coverage_table()?;
-    let above = top.to_packed()?;
-    let below = bottom.to_packed()?;
+    let above = top.packed()?;
+    let below = bottom.packed()?;
     let mut out = reserved(above.len())?;
     for (upper, lower) in above
         .chunks_exact(CHANNELS)
@@ -249,7 +280,7 @@ pub fn over(top: &Frame, bottom: &Frame) -> Result<Frame> {
             .checked_add(alpha_top)?;
         out.push(quantise_coverage(clamp_to_one(alpha))?);
     }
-    Ok(Frame::from_packed(described, &out)?)
+    Ok(Frame::from_owned(described, out)?)
 }
 
 /// A premultiplied frame behind a coverage plane.
@@ -278,7 +309,7 @@ pub fn over(top: &Frame, bottom: &Frame) -> Result<Frame> {
 /// pixel of this frame, and [`RenderStatus::OutOfMemory`].
 pub fn masked(frame: &Frame, coverage: &[u8]) -> Result<Frame> {
     let described = require(frame, AlphaState::Premultiplied)?;
-    let samples = frame.to_packed()?;
+    let samples = frame.packed()?;
     if coverage.len().checked_mul(CHANNELS) != Some(samples.len()) {
         return Err(RenderStatus::CoverageSizeMismatch);
     }
@@ -304,7 +335,7 @@ pub fn masked(frame: &Frame, coverage: &[u8]) -> Result<Frame> {
         }
         out.push(masked_coverage);
     }
-    Ok(Frame::from_packed(described, &out)?)
+    Ok(Frame::from_owned(described, out)?)
 }
 
 /// A buffer of the right size, or a named refusal (R-5.3).
@@ -315,12 +346,32 @@ fn reserved(bytes: usize) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Scale a premultiplied frame to a fraction of its opacity.
+/// A premultiplied frame at a fraction of its opacity.
 ///
-/// Colour is decoded and scaled in linear light; stored alpha is scaled
-/// directly. Both must change together to preserve premultiplication. This also
-/// makes a dissolve equivalent to fading the incoming frame over the outgoing
-/// frame.
+/// Every channel, coverage included. In premultiplied form the colour has
+/// already been multiplied by the coverage, so halving the coverage means
+/// halving the colour too — anything else would leave a frame claiming more
+/// colour than its coverage allows, which [`over`] refuses and is right to.
+///
+/// The **colour** is scaled in linear light and the **coverage** is scaled in
+/// its stored value, and those are two different things because only one of
+/// them is light. This is the correction of a real bug: the first version
+/// scaled both in code values and defended it in a comment — "coverage is not
+/// light, and a premultiplied colour sample is a coverage-weighted quantity"
+/// — which is true of the coverage and false of the colour. A premultiplied
+/// sample stores `encode(colour x coverage)`, and `encode(c) x t` is not
+/// `encode(c x t)` for any transfer curve that bends.
+///
+/// What it cost: a dissolve between two *identical* pictures dipped by as much
+/// as twenty-eight code values in the middle, which is a visible sag in the
+/// middle of every dissolve between two shots of anything. Every test the
+/// project had faded a layer that was **black**, where nought times anything
+/// is nought and the two arithmetics agree — the third time that particular
+/// blind spot has cost something here.
+///
+/// This is what makes a dissolve need no operator of its own: fade the
+/// incoming layer and put it `over` the outgoing one, and the result is
+/// `in x t + out x (1 - t)` — which is now true rather than nearly true.
 ///
 /// # Errors
 ///
@@ -338,7 +389,7 @@ pub fn faded(frame: &Frame, opacity: Rational) -> Result<Frame> {
     let table = TransferTable::build(described.colour())?;
     let fractions = coverage_table()?;
     let fraction = Fixed::from_rational(opacity).map_err(RenderStatus::Time)?;
-    let samples = frame.to_packed()?;
+    let samples = frame.packed()?;
     let mut out = reserved(samples.len())?;
     for pixel in samples.chunks_exact(CHANNELS) {
         let faded_coverage = scaled_coverage(pixel[ALPHA], opacity)?;
@@ -349,7 +400,7 @@ pub fn faded(frame: &Frame, opacity: Rational) -> Result<Frame> {
         }
         out.push(faded_coverage);
     }
-    Ok(Frame::from_packed(described, &out)?)
+    Ok(Frame::from_owned(described, out)?)
 }
 
 /// A light value no brighter than the coverage carrying it.

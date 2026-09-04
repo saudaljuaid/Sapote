@@ -5,6 +5,8 @@
 //! caches, rendered frames, waveform overviews, interface state — is derived
 //! from it and can be thrown away.
 
+use alloc::vec::Vec;
+
 use sapstudio_core::Timebase;
 
 use crate::edit::Edit;
@@ -66,13 +68,21 @@ impl Project {
 
     /// Add a media asset to the library, or find the one already there.
     ///
-    /// Media is content-addressed, so each digest maps to one asset identifier.
-    /// Adding the same content again returns the existing identifier. This keeps
-    /// conform imports unambiguous.
+    /// **One asset per digest.** Media is content-addressed, so the same bytes
+    /// are the same asset however many times somebody opens the file — adding
+    /// it again gives back the identifier it already has rather than a second
+    /// one naming the same content.
+    ///
+    /// That is not a convenience. Two identifiers for one digest quietly
+    /// falsified the conform round trip: an export writes the digest, an
+    /// import looks it up, and with two candidates it finds the first — so a
+    /// sequence cutting the same footage under two identifiers came back
+    /// pointing at one of them, with nothing reported as lost. The theorem was
+    /// stated three milestones before the case that breaks it was tried.
     ///
     /// The location hint is deliberately *not* part of the comparison, and the
     /// existing one is kept. The same content found in a second place is the
-    /// same content; moving the hint is [`Project::set_media_location`]'s job, and
+    /// same content; moving the hint is [`Edit::SetMediaLocation`]'s job, and
     /// doing it here would rewrite a project's records as a side effect of
     /// opening a file.
     ///
@@ -102,10 +112,20 @@ impl Project {
             .map(|(id, _)| id)
     }
 
-    /// Update an asset's location hint and return the previous hint.
+    /// Say where an asset's bytes were last seen, giving back the old hint.
     ///
-    /// Content identity remains the digest. Location changes are project-level
-    /// metadata and are not stored in the sequence edit journal.
+    /// **Relinking is this and nothing else.** A hint moves; identity does
+    /// not. Pointing a clip at *different* bytes is different media, and the
+    /// digest says so rather than a flag — so there is no operation here that
+    /// swaps one piece of content for another while keeping its name, because
+    /// that is the operation that silently changes what a programme is.
+    ///
+    /// This is **not in the undo journal**, and that is a limitation rather
+    /// than a decision. The journal applies edits to a *sequence*, and the
+    /// media library belongs to the project; making a media change undoable
+    /// means the journal becoming project-level, which is a larger change than
+    /// the hint is worth. The previous hint is returned so a caller can put it
+    /// back, which is the whole of what undo would do.
     ///
     /// # Errors
     ///
@@ -176,7 +196,160 @@ impl Project {
     pub fn apply(&mut self, id: SequenceId, edit: Edit) -> Result<()> {
         self.validate(id, &edit)?;
         let sequence = self.sequences.get_mut(id)?;
-        self.history.apply(sequence, edit)
+        self.history.apply(sequence, edit)?;
+        // Nesting is the one thing an edit can break at a *distance*. Every
+        // other invariant here is about the sequence the edit named, so
+        // `validate` can check it beforehand; a nest makes one sequence's
+        // length a fact about another's clips, and a trim over there can put a
+        // clip over here past the end of what it reads.
+        //
+        // Checked after rather than before, because "what this sequence will
+        // be" is not a question `validate` can answer without performing the
+        // edit -- there are two dozen kinds of edit and each changes the length
+        // differently. So the edit is performed, the project is asked whether
+        // it is still consistent, and a refusal is **undone** before it is
+        // returned. Nothing partial is published either way (R-1.4), and the
+        // journal ends where it started because the undo pops the entry the
+        // apply pushed.
+        self.refresh_nests()?;
+        if let Err(refusal) = self.check_nesting() {
+            self.history.undo(self.sequences.get_mut(id)?)?;
+            // And put the lengths back. The refresh above already published
+            // the new ones, so undoing the *sequence* alone would leave the
+            // library saying a nest is a length no sequence is -- a refused
+            // edit having changed something, which is the one thing R-1.4
+            // does not allow. A test found exactly that.
+            //
+            // This cannot loop: the refresh is a refresh, and the state it
+            // runs against is the state that was consistent a moment ago.
+            self.refresh_nests()?;
+            return Err(refusal);
+        }
+        Ok(())
+    }
+
+    /// Bring every nest's length up to date with the sequence it names.
+    ///
+    /// A nest is the one asset whose length is a fact about the *project*
+    /// rather than about the world, so it is the project's business to keep it
+    /// true — and keeping it in the asset rather than deriving it at every use
+    /// is what lets every existing check go on asking an asset how long it is,
+    /// without one of them learning what a nest is.
+    ///
+    /// A project with no nests takes the first line and leaves, which is every
+    /// project this repository held until nesting existed.
+    fn refresh_nests(&mut self) -> Result<()> {
+        if !self.media.iter().any(|(_, asset)| asset.nested().is_some()) {
+            return Ok(());
+        }
+        let nests: Vec<(MediaId, SequenceId)> = self
+            .media
+            .iter()
+            .filter_map(|(id, asset)| asset.nested().map(|sequence| (id, sequence)))
+            .collect();
+        for (id, sequence) in &nests {
+            let length = self.sequences.get(*sequence)?.duration()?;
+            let asset = self.media.get(*id)?;
+            if asset.duration() != length {
+                let refreshed = asset.relengthened(length);
+                *self.media.get_mut(*id)? = refreshed;
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether nesting has left this project one an edit could have produced.
+    ///
+    /// Two questions the shape answers — no sequence contains itself, and
+    /// nothing is nested deeper than this program renders — and then the
+    /// ordinary source-range check over every clip, because
+    /// [`Project::refresh_nests`] may just have changed the answer to it.
+    ///
+    /// That last one is the reason this runs at all. Every other invariant in
+    /// this model is about the sequence an edit named, so `validate` can check
+    /// it beforehand. A nest makes one sequence's length a fact about
+    /// another's clips, and a trim over there can put a clip over here past
+    /// the end of what it reads.
+    fn check_nesting(&self) -> Result<()> {
+        if !self.media.iter().any(|(_, asset)| asset.nested().is_some()) {
+            return Ok(());
+        }
+        self.check_nesting_shape()?;
+        for (_, sequence) in self.sequences.iter() {
+            for track in sequence.tracks() {
+                for item in track.items() {
+                    if let Item::Clip(clip) = item {
+                        self.check_source(sequence, clip)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether the nesting graph is acyclic and shallow enough to render.
+    ///
+    /// A depth-limited walk with an **explicit stack** rather than recursion,
+    /// which R-5.5 requires by name for exactly this structure — "in the
+    /// timeline, in nested sequences, in effect graphs, and in every parser".
+    /// The stack cannot exceed [`crate::MAX_NESTING_DEPTH`] entries, so a cycle
+    /// is caught by the depth bound even before the repeat check finds it, and
+    /// both are named separately because they are different mistakes.
+    fn check_nesting_shape(&self) -> Result<()> {
+        for (start, _) in self.sequences.iter() {
+            let mut path: Vec<SequenceId> = Vec::new();
+            let mut work: Vec<(SequenceId, usize)> = Vec::new();
+            work.try_reserve(1).map_err(|_| ModelStatus::OutOfMemory)?;
+            work.push((start, 0));
+            while let Some((held, step)) = work.pop() {
+                if step == 0 {
+                    if path.contains(&held) {
+                        return Err(ModelStatus::SequenceWouldContainItself);
+                    }
+                    if path.len() >= crate::MAX_NESTING_DEPTH {
+                        return Err(ModelStatus::NestingTooDeep);
+                    }
+                    path.try_reserve(1).map_err(|_| ModelStatus::OutOfMemory)?;
+                    path.push(held);
+                }
+                let Some(next) = self.nested_under(held, step)? else {
+                    path.pop();
+                    continue;
+                };
+                work.try_reserve(2).map_err(|_| ModelStatus::OutOfMemory)?;
+                work.push((held, step + 1));
+                work.push((next, 0));
+            }
+        }
+        Ok(())
+    }
+
+    /// The `step`-th sequence nested inside this one, in a fixed order.
+    ///
+    /// Index order over tracks and items, so the walk above visits the same
+    /// sequences in the same order on every machine (R-4.5) — which matters
+    /// because *which* cycle a refusal names would otherwise depend on
+    /// iteration order.
+    fn nested_under(&self, held: SequenceId, step: usize) -> Result<Option<SequenceId>> {
+        let mut seen = 0;
+        for track in self.sequences.get(held)?.tracks() {
+            for item in track.items() {
+                let Item::Clip(clip) = item else {
+                    continue;
+                };
+                let Ok(asset) = self.media.get(clip.media()) else {
+                    continue;
+                };
+                let Some(sequence) = asset.nested() else {
+                    continue;
+                };
+                if seen == step {
+                    return Ok(Some(sequence));
+                }
+                seen += 1;
+            }
+        }
+        Ok(None)
     }
 
     /// Undo the most recent edit to a sequence.
@@ -219,9 +392,13 @@ impl Project {
     /// changes. Removals, splits, joins, and track edits cannot introduce a
     /// reference or widen a range, so they have nothing to check.
     ///
-    /// Validation uses [`crate::Clip::source_span`], so retimed clips are checked
-    /// against the source range they actually read rather than their timeline
-    /// duration.
+    /// Retiming was missing for a milestone, and the shape of the omission is
+    /// worth keeping: `check_source` took a start and a *length on the
+    /// timeline*, which was the same thing as what a clip read right up until
+    /// a clip could be retimed. A clip at double speed reads twice its length
+    /// and nothing noticed. So the question it asks is now the clip's own —
+    /// [`crate::Clip::source_span`] — which cannot fall behind the mapping,
+    /// because it *is* the mapping.
     fn validate(&self, id: SequenceId, edit: &Edit) -> Result<()> {
         let sequence = self.sequences.get(id)?;
         let held = |track: &usize, index: &usize| -> Result<Option<crate::Clip>> {

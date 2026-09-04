@@ -38,7 +38,7 @@ pub mod vector;
 pub use chromaticity::{Chromaticity, Gamut, gamut_of};
 pub use composite::{checked_premultiplied, faded, over, premultiply, unpremultiply};
 pub use convert::convert;
-pub use graph::{Graph, Library, Node, NodeId};
+pub use graph::{Graph, Library, Node, NodeId, row_description};
 pub use look::Look;
 pub use lut::{Colour, Interpolation, Lut3D};
 pub use matrix::{Matrix3, Vector3};

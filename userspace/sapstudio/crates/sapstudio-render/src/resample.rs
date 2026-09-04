@@ -1,11 +1,56 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Scale and position frames.
+//! Moving a picture: scaling, positioning, and the arithmetic in between.
 //!
-//! Resampling works on premultiplied samples in linear light. [`Mapping::new`]
-//! inverts the caller's source-to-destination transform so each destination
-//! pixel can find its source region. Singular transforms are rejected.
-//! [`Filter::Area`] is intended for reduction; [`Filter::Bilinear`] is intended
-//! for enlargement. The caller selects the filter explicitly.
+//! Scaling a clip is the most-used operation in an editor after cutting, and
+//! it is the one where "looks about right" hides the most. Two decisions
+//! decide whether it is right, and both are the same shape as the ones
+//! [`crate::composite`] already made.
+//!
+//! ## In what space?
+//!
+//! **Linear light.** A resampled pixel is a *weighted average of what was
+//! there*, and an average is only meaningful over quantities that add — which
+//! light does and code values do not. Averaging gamma-encoded values makes a
+//! reduced picture darker than the one it came from, most visibly on fine
+//! bright detail against dark: the highlights lose more than they should
+//! because they were compressed before being averaged. So every sample is
+//! decoded, weighted, summed and encoded back, exactly as `over` does.
+//!
+//! ## Straight or premultiplied?
+//!
+//! **Premultiplied, and nothing else.** Averaging straight samples across an
+//! edge mixes the colour of pixels that are barely there with the colour of
+//! pixels that are fully there, at equal weight — so a title over black picks
+//! up a dark fringe from the transparent pixels beyond its edge, which held
+//! whatever colour happened to be in the buffer. In premultiplied form a
+//! transparent pixel contributes nothing to the colour sum because its colour
+//! *is* nothing, which is the whole reason the form exists.
+//!
+//! ## The map runs backwards
+//!
+//! A caller says what they want — twice the size, shifted right — and that is
+//! a **forward** map from source to destination. A resampler needs the
+//! opposite: for each destination pixel, which part of the source landed on
+//! it. So [`Mapping::new`] takes the forward map and inverts it, exactly,
+//! because a rational two-by-two inverse is a determinant and four divisions.
+//! A map that squashes the picture to a line has no inverse and is refused.
+//!
+//! ## Two filters, and what each is for
+//!
+//! [`Filter::Area`] gives every destination pixel the **exact area-weighted
+//! average** of the source it covers. That is the correct answer for
+//! *reduction*: a destination pixel really is standing in for a region, and
+//! this is that region's mean. Point sampling instead is what makes a reduced
+//! picture shimmer, because which source pixel each destination pixel happens
+//! to land on changes as the picture moves.
+//!
+//! It is also, honestly, a poor filter for *enlargement*: a destination pixel
+//! that falls entirely inside one source pixel gets that pixel's value and
+//! nothing else, which is nearest-neighbour with extra arithmetic. That is
+//! what [`Filter::Bilinear`] is for, and choosing between them is the
+//! caller's rather than a heuristic's, because a heuristic that switched on a
+//! scale factor would change a picture's look at the moment somebody dragged
+//! past 100%.
 
 use alloc::vec::Vec;
 
@@ -23,6 +68,21 @@ const ALPHA: usize = 3;
 
 /// The largest picture this will resample to or from, on either axis.
 pub const MAX_EXTENT: usize = 16_384;
+
+/// How many source rows one destination row may read.
+///
+/// Sixty-four, and the number is an argument rather than a limit somebody
+/// picked. A band is what makes [`resample_row`] worth having: the row path
+/// exists so that an export never holds a whole frame, and a band of *k* rows
+/// holds *k* rows. Let *k* grow without a bound and a steep enough downscale
+/// makes the band the frame, at which point scanning has bought nothing and is
+/// merely slower. So a vertical downscale steeper than sixty-four to one is
+/// refused (R-1.3) rather than quietly costing a frame — and a caller that
+/// wants one can render whole frames, which is what it would be doing anyway.
+///
+/// It bounds nothing horizontally, because a destination row's preimage is one
+/// row-shaped strip however wide the source is.
+pub const MAX_BAND_ROWS: usize = 64;
 
 /// How to weigh the source under a destination pixel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -118,12 +178,36 @@ impl Mapping {
         Self::new([across, Rational::ZERO, Rational::ZERO, down], offset)
     }
 
-    /// Build a frame-relative transform about an anchor.
+    /// A dimensionless map about a point of a picture, with a move in
+    /// fractions of it.
     ///
-    /// The linear part is dimensionless; offset and anchor are fractions of
-    /// the picture. The anchor may lie outside the frame. It is converted to
-    /// pixels here because folding a fractional anchor into the offset is not
-    /// correct for rotations on non-square frames.
+    /// This is the shape a *transform* has, as opposed to the raw pixel-space
+    /// map [`Mapping::new`] takes: the linear part means the same thing at
+    /// every resolution, the move is a fraction rather than a pixel count, and
+    /// it acts about a named point rather than about the corner. Scaling about
+    /// the corner is what the arithmetic does if nobody decides otherwise, and
+    /// it sends the picture sliding off to the lower right the moment somebody
+    /// drags a scale slider.
+    ///
+    /// The anchor is in **fractions** of the picture, so a half and a half is
+    /// the middle and nought is the top-left corner. It is not required to be
+    /// inside the picture.
+    ///
+    /// ## Why the anchor cannot be folded into the offset
+    ///
+    /// It looks as though it could. Acting about `a` rather than about the
+    /// centre `c` contributes `(a − c) − M(a − c)`, which is a translation,
+    /// and the caller already passes one — so a model could add the two and
+    /// this function would never need to know.
+    ///
+    /// That is true in **pixels** and false in **fractions**, which is the
+    /// only place the model could do it. The vector from the centre to the
+    /// anchor is `(W·Δx, H·Δy)`, and `M` mixes the two components; dividing
+    /// the result back by `(W, H)` per axis does not undo that unless `M` is
+    /// diagonal. So the folding is exact for a scale, exact for a move, and
+    /// **wrong for every rotation** — which is to say, wrong for the case the
+    /// anchor was added for. The anchor therefore arrives here, where the
+    /// pixel dimensions are known and the arithmetic is done once.
     ///
     /// # Errors
     ///
@@ -167,6 +251,25 @@ impl Mapping {
                 .map_err(RenderStatus::Time)?,
         );
         Self::new(linear, shifted)
+    }
+
+    /// Whether this map takes horizontals to horizontals.
+    ///
+    /// The one property that makes a resample row-local. A destination row is
+    /// a horizontal segment, and its preimage is a segment; that segment lies
+    /// in a band of source rows exactly when the source's vertical coordinate
+    /// does not vary along it. The inverse's `v` is `inverse[2]·x +
+    /// inverse[3]·y + offset.1`, so the condition is that `inverse[2]` is
+    /// nought — which is the same as the forward map's `c` being nought, since
+    /// `inverse[2]` is `-c` over the determinant and a determinant is never
+    /// nought here.
+    ///
+    /// So: a scale is horizontal, a translation is horizontal, a mirror is
+    /// horizontal, a horizontal shear is horizontal — and a rotation is not,
+    /// nor is a vertical shear.
+    #[must_use]
+    pub fn horizontal(&self) -> bool {
+        self.inverse[2].is_zero()
     }
 
     /// Where a destination point came from in the source, for a test that
@@ -243,6 +346,92 @@ pub fn resample(
     filter: Filter,
 ) -> Result<Frame> {
     let described = *frame.description();
+    agreed(described, target)?;
+    let source = Picture::new(frame)?;
+    let (width, height) = extent(target)?;
+    let table = TransferTable::build(described.colour())?;
+    let mut out = Vec::new();
+    out.try_reserve(
+        width
+            .checked_mul(height)
+            .ok_or(RenderStatus::OutsideDomain)?
+            .checked_mul(CHANNELS)
+            .ok_or(RenderStatus::OutsideDomain)?,
+    )
+    .map_err(|_| RenderStatus::OutOfMemory)?;
+    for y in 0..height {
+        drawn(&source, &table, mapping, filter, (width, y), &mut out)?;
+    }
+    Ok(Frame::from_owned(target, out)?)
+}
+
+/// Move one destination row of a premultiplied frame, from a band of the
+/// source rather than from all of it.
+///
+/// The band is what [`band`] said this row reads, fetched by whoever is
+/// scanning; `from` is the first picture row it holds and `source` describes
+/// the **whole** picture it came out of, which is what tells a sample landing
+/// past the band's edge whether it is off the picture or off the band.
+///
+/// `None` is an **empty** band, which happens legitimately and often — a
+/// picture moved off the top of its own frame contributes nothing to the rows
+/// it has left — and the answer is a transparent row rather than a refusal. It
+/// is spelled as an absent frame rather than as a frame of no rows because a
+/// picture with no rows is not a picture: [`sapstudio_media::Geometry`]
+/// refuses one, so there would be nothing for a caller to pass.
+///
+/// # Errors
+///
+/// Everything [`resample`] refuses, plus [`RenderStatus::RowOutsideBand`] for
+/// a band that does not hold what this row reads — which is a wrong answer
+/// from [`band`] rather than a bad argument from a caller — and
+/// [`RenderStatus::NotComposable`] for a band that does not describe the
+/// picture it claims to be part of.
+pub fn resample_row(
+    band: Option<&Frame>,
+    source: FrameDescription,
+    from: usize,
+    target: FrameDescription,
+    mapping: Mapping,
+    filter: Filter,
+    row: usize,
+) -> Result<Frame> {
+    agreed(source, target)?;
+    let (width, height) = extent(target)?;
+    if row >= height {
+        return Err(RenderStatus::OutsideDomain);
+    }
+    let one = one_row_of(target)?;
+    let mut out = Vec::new();
+    out.try_reserve(
+        width
+            .checked_mul(CHANNELS)
+            .ok_or(RenderStatus::OutsideDomain)?,
+    )
+    .map_err(|_| RenderStatus::OutOfMemory)?;
+    let Some(band) = band else {
+        out.resize(width * CHANNELS, 0);
+        return Ok(Frame::from_owned(one, out)?);
+    };
+    if band.description().geometry().width() != source.geometry().width()
+        || band.description().format() != source.format()
+        || band.description().colour() != source.colour()
+        || band.description().alpha() != source.alpha()
+    {
+        // The band has to be the same picture, cut down. A band described
+        // otherwise is a band of something else, and resampling it would
+        // answer confidently about a picture nobody asked for.
+        return Err(RenderStatus::NotComposable);
+    }
+    let (_, tall) = extent(source)?;
+    let held = Picture::banded(band, from, tall)?;
+    let table = TransferTable::build(source.colour())?;
+    drawn(&held, &table, mapping, filter, (width, row), &mut out)?;
+    Ok(Frame::from_owned(one, out)?)
+}
+
+/// The checks a resample makes before it moves a pixel.
+fn agreed(described: FrameDescription, target: FrameDescription) -> Result<()> {
     if described.format() != PixelFormat::Rgba8 || target.format() != PixelFormat::Rgba8 {
         return Err(RenderStatus::AlphaRequired);
     }
@@ -256,8 +445,11 @@ pub fn resample(
         // a picture ends up converted twice or not at all (R-1.3).
         return Err(RenderStatus::NotComposable);
     }
+    Ok(())
+}
 
-    let source = Picture::new(frame)?;
+/// A description's extent in pixels, refused if it is not one this resamples.
+fn extent(target: FrameDescription) -> Result<(usize, usize)> {
     let width =
         usize::try_from(target.geometry().width()).map_err(|_| RenderStatus::OutsideDomain)?;
     let height =
@@ -265,45 +457,104 @@ pub fn resample(
     if width == 0 || height == 0 || width > MAX_EXTENT || height > MAX_EXTENT {
         return Err(RenderStatus::OutsideDomain);
     }
-
-    let table = TransferTable::build(described.colour())?;
-    let mut out = Vec::new();
-    out.try_reserve(
-        width
-            .checked_mul(height)
-            .ok_or(RenderStatus::OutsideDomain)?
-            .checked_mul(CHANNELS)
-            .ok_or(RenderStatus::OutsideDomain)?,
-    )
-    .map_err(|_| RenderStatus::OutOfMemory)?;
-    for y in 0..height {
-        for x in 0..width {
-            let row = i64::try_from(y).map_err(|_| RenderStatus::OutsideDomain)?;
-            let column = i64::try_from(x).map_err(|_| RenderStatus::OutsideDomain)?;
-            let pixel = match filter {
-                Filter::Area => area_at(&source, &table, mapping, column, row)?,
-                Filter::Bilinear => bilinear_at(&source, &table, mapping, column, row)?,
-            };
-            out.extend_from_slice(&pixel);
-        }
-    }
-    Ok(Frame::from_packed(target, &out)?)
+    Ok((width, height))
 }
 
-/// A source frame's samples, with its size.
-struct Picture {
-    packed: Vec<u8>,
+/// The same picture, one row high.
+fn one_row_of(description: FrameDescription) -> Result<FrameDescription> {
+    FrameDescription::new(
+        sapstudio_media::Geometry::new(description.geometry().width(), 1)
+            .map_err(RenderStatus::Media)?,
+        description.format(),
+        description.colour(),
+        description.siting(),
+        description.alpha(),
+        description.pixel_aspect(),
+    )
+    .map_err(RenderStatus::Media)
+}
+
+/// One destination row, appended.
+///
+/// The one loop both a whole frame and a single row go through, so a scanned
+/// picture and a rendered one cannot differ by a pixel: there is nothing for
+/// them to differ in.
+fn drawn(
+    source: &Picture,
+    table: &TransferTable,
+    mapping: Mapping,
+    filter: Filter,
+    at: (usize, usize),
+    out: &mut Vec<u8>,
+) -> Result<()> {
+    let (width, y) = at;
+    let row = i64::try_from(y).map_err(|_| RenderStatus::OutsideDomain)?;
+    for x in 0..width {
+        let column = i64::try_from(x).map_err(|_| RenderStatus::OutsideDomain)?;
+        let pixel = match filter {
+            Filter::Area => area_at(source, table, mapping, column, row)?,
+            Filter::Bilinear => bilinear_at(source, table, mapping, column, row)?,
+        };
+        out.extend_from_slice(&pixel);
+    }
+    Ok(())
+}
+
+/// A source frame's samples, with its size — or a band of its rows, with the
+/// size of the picture they came out of.
+///
+/// The second is what makes a resampled row possible, and the reason the two
+/// are one type rather than two is that every sampler here asks the same two
+/// questions: *is this position inside the picture* and *what is the sample
+/// there*. A band answers the first exactly as a whole frame does — it knows
+/// how tall the picture is even though it does not hold it — and answers the
+/// second for the rows it holds. Outside those, it refuses.
+struct Picture<'a> {
+    packed: alloc::borrow::Cow<'a, [u8]>,
     width: i64,
     height: i64,
+    /// The first row of the picture that `packed` holds.
+    from: i64,
+    /// One past the last row of the picture that `packed` holds.
+    to: i64,
 }
 
-impl Picture {
-    fn new(frame: &Frame) -> Result<Self> {
+impl<'a> Picture<'a> {
+    fn new(frame: &'a Frame) -> Result<Self> {
         let geometry = frame.description().geometry();
+        let height = i64::from(geometry.height());
         Ok(Self {
-            packed: frame.to_packed()?,
+            // Lent, not copied. Everything this resamples is `Rgba8`, which
+            // is one plane, so this is always the borrow -- and a whole frame
+            // is the largest thing the resampler touches.
+            packed: frame.packed()?,
             width: i64::from(geometry.width()),
-            height: i64::from(geometry.height()),
+            height,
+            from: 0,
+            to: height,
+        })
+    }
+
+    /// A band of a picture: rows `from` onwards of a picture `height` tall.
+    fn banded(frame: &'a Frame, from: usize, height: usize) -> Result<Self> {
+        let geometry = frame.description().geometry();
+        let from = i64::try_from(from).map_err(|_| RenderStatus::OutsideDomain)?;
+        let to = from
+            .checked_add(i64::from(geometry.height()))
+            .ok_or(RenderStatus::OutsideDomain)?;
+        let height = i64::try_from(height).map_err(|_| RenderStatus::OutsideDomain)?;
+        if to > height {
+            // A band that claims rows the picture does not have is a band
+            // computed against a different picture, and drawing from it would
+            // produce a row nobody could explain.
+            return Err(RenderStatus::RowOutsideBand);
+        }
+        Ok(Self {
+            packed: frame.packed()?,
+            width: i64::from(geometry.width()),
+            height,
+            from,
+            to,
         })
     }
 
@@ -313,13 +564,27 @@ impl Picture {
     /// own edge would smear its last column outwards forever, and a picture
     /// scaled smaller than its frame would arrive with a streak instead of a
     /// border.
-    fn at(&self, x: i64, y: i64) -> Option<[u8; CHANNELS]> {
+    ///
+    /// Inside the picture and outside the band is neither of those, and is the
+    /// one case that must not be answered: transparency is what a source
+    /// legitimately returns past its own edge, so a band that came back too
+    /// short would draw a hole in the picture and look like a picture with a
+    /// hole in it.
+    fn at(&self, x: i64, y: i64) -> Result<Option<[u8; CHANNELS]>> {
         if x < 0 || y < 0 || x >= self.width || y >= self.height {
-            return None;
+            return Ok(None);
         }
-        let index = usize::try_from(y * self.width + x).ok()? * CHANNELS;
-        let held = self.packed.get(index..index + CHANNELS)?;
-        Some([held[0], held[1], held[2], held[3]])
+        if y < self.from || y >= self.to {
+            return Err(RenderStatus::RowOutsideBand);
+        }
+        let index = usize::try_from((y - self.from) * self.width + x)
+            .map_err(|_| RenderStatus::OutsideDomain)?
+            * CHANNELS;
+        let held = self
+            .packed
+            .get(index..index + CHANNELS)
+            .ok_or(RenderStatus::OutsideDomain)?;
+        Ok(Some([held[0], held[1], held[2], held[3]]))
     }
 
     /// Whether a position lies inside the picture's extent.
@@ -347,24 +612,18 @@ impl Picture {
     /// last sample's centre the best estimate of the signal is the last
     /// sample, and repeating it is what every reconstruction does at a
     /// boundary.
-    fn clamped(&self, x: i64, y: i64) -> [u8; CHANNELS] {
+    fn clamped(&self, x: i64, y: i64) -> Result<[u8; CHANNELS]> {
         let x = x.clamp(0, self.width.saturating_sub(1));
         let y = y.clamp(0, self.height.saturating_sub(1));
-        self.at(x, y).unwrap_or([0; CHANNELS])
+        Ok(self.at(x, y)?.unwrap_or([0; CHANNELS]))
     }
 }
 
-/// The exact area-weighted mean of the source under one destination pixel.
-fn area_at(
-    source: &Picture,
-    table: &TransferTable,
-    mapping: Mapping,
-    x: i64,
-    y: i64,
-) -> Result<[u8; CHANNELS]> {
-    // The destination pixel square, taken back into the source. An affine map
-    // sends a square to a parallelogram, so this is exact and has four
-    // corners however the picture is turned.
+/// The destination pixel square, taken back into the source.
+///
+/// An affine map sends a square to a parallelogram, so this is exact and has
+/// four corners however the picture is turned.
+fn preimage_of(mapping: Mapping, x: i64, y: i64) -> Result<Vec<(Rational, Rational)>> {
     let mut preimage = Vec::new();
     preimage
         .try_reserve(4)
@@ -375,12 +634,127 @@ fn area_at(
             Rational::from_integer(y + dy),
         )?);
     }
+    Ok(preimage)
+}
 
+/// Where a destination pixel's centre lands on the source's sample grid.
+struct Landing {
+    /// The centre, in source pixel coordinates.
+    centre: (Rational, Rational),
+    /// The sample above and to the left of it.
+    corner: (i64, i64),
+    /// How far past that sample the centre sits, per axis, from nought to one.
+    fraction: (Rational, Rational),
+}
+
+/// Take a destination pixel's centre back to the source's sample grid.
+///
+/// The centre, because a pixel's value belongs at its middle rather than at
+/// its corner. Sampling at the corner shifts the whole picture half a pixel up
+/// and left, which is the single most common resampling bug and is invisible
+/// until two versions of the same shot are compared. And the samples
+/// themselves sit at pixel centres, so the grid this interpolates on is offset
+/// by half a pixel from the pixel grid.
+fn landing_of(mapping: Mapping, x: i64, y: i64) -> Result<Landing> {
+    let half = Rational::new(1, 2).map_err(RenderStatus::Time)?;
+    let shifted = |value: i64| -> Result<Rational> {
+        Rational::from_integer(value)
+            .checked_add(half)
+            .map_err(RenderStatus::Time)
+    };
+    let centre = mapping.source_of(shifted(x)?, shifted(y)?)?;
+    let across = centre.0.checked_sub(half).map_err(RenderStatus::Time)?;
+    let down = centre.1.checked_sub(half).map_err(RenderStatus::Time)?;
+    let left = across.floor().map_err(RenderStatus::Time)?;
+    let top = down.floor().map_err(RenderStatus::Time)?;
+    Ok(Landing {
+        centre,
+        corner: (left, top),
+        fraction: (
+            across
+                .checked_sub(Rational::from_integer(left))
+                .map_err(RenderStatus::Time)?,
+            down.checked_sub(Rational::from_integer(top))
+                .map_err(RenderStatus::Time)?,
+        ),
+    })
+}
+
+/// The source rows one destination row reads, inclusive at both ends and
+/// before any clamping to the picture.
+///
+/// It asks about **column nought** and answers for every column, which is only
+/// true for a mapping that takes horizontals to horizontals — so it refuses
+/// for any other, rather than answering something that happens to be right for
+/// one column of the row.
+///
+/// The arithmetic is not this function's: it is `preimage_of` and
+/// `landing_of`, the same two the samplers use, so a band and the pixels drawn
+/// inside it cannot disagree about which rows those are.
+fn rows_under(mapping: Mapping, filter: Filter, y: i64) -> Result<(i64, i64)> {
+    if !mapping.horizontal() {
+        return Err(RenderStatus::NotRowLocal);
+    }
+    match filter {
+        Filter::Area => {
+            let (_, top, _, bottom) = bounds(&preimage_of(mapping, 0, y)?)?;
+            Ok((top, bottom))
+        }
+        // Bilinear reads the sample above and the one below it, and no more.
+        Filter::Bilinear => {
+            let top = landing_of(mapping, 0, y)?.corner.1;
+            Ok((top, top.saturating_add(1)))
+        }
+    }
+}
+
+/// The source rows one destination row reads, half-open and inside the
+/// picture.
+///
+/// Asked **before** the rows are fetched, which is the whole point: a caller
+/// that scans gathers exactly this band and no more, and a caller that cannot
+/// afford the band learns so before it has spent a row on it.
+///
+/// The band is empty when the destination row's preimage misses the picture
+/// altogether — a picture moved off the top of its frame, say — and an empty
+/// band is not an error. There is simply nothing there, and a resampled row of
+/// nothing is transparent.
+///
+/// # Errors
+///
+/// [`RenderStatus::NotRowLocal`] for a map that does not take horizontals to
+/// horizontals, [`RenderStatus::BandTooTall`] past [`MAX_BAND_ROWS`], and
+/// [`RenderStatus::Time`] wrapping an overflow.
+pub fn band(mapping: Mapping, filter: Filter, row: usize, height: usize) -> Result<(usize, usize)> {
+    let tall = i64::try_from(height).map_err(|_| RenderStatus::OutsideDomain)?;
+    let at = i64::try_from(row).map_err(|_| RenderStatus::OutsideDomain)?;
+    let (top, bottom) = rows_under(mapping, filter, at)?;
+    let from = top.clamp(0, tall);
+    let to = bottom.saturating_add(1).clamp(from, tall);
+    let held = usize::try_from(to - from).map_err(|_| RenderStatus::OutsideDomain)?;
+    if held > MAX_BAND_ROWS {
+        return Err(RenderStatus::BandTooTall);
+    }
+    Ok((
+        usize::try_from(from).map_err(|_| RenderStatus::OutsideDomain)?,
+        usize::try_from(to).map_err(|_| RenderStatus::OutsideDomain)?,
+    ))
+}
+
+/// The exact area-weighted mean of the source under one destination pixel.
+fn area_at(
+    source: &Picture,
+    table: &TransferTable,
+    mapping: Mapping,
+    x: i64,
+    y: i64,
+) -> Result<[u8; CHANNELS]> {
+    let preimage = preimage_of(mapping, x, y)?;
     let (left, top, right, bottom) = bounds(&preimage)?;
     let mut light = [Fixed::ZERO; CHANNELS];
     for row in top..=bottom {
         for column in left..=right {
-            let Some(pixel) = source.at(column, row) else {
+            let Some(pixel) = source.at(column, row)? else {
                 continue;
             };
             let share = overlap(&preimage, column, row)?;
@@ -415,31 +789,9 @@ fn bilinear_at(
     x: i64,
     y: i64,
 ) -> Result<[u8; CHANNELS]> {
-    // The centre, because a pixel's value belongs at its middle rather than at
-    // its corner. Sampling at the corner shifts the whole picture half a pixel
-    // up and left, which is the single most common resampling bug and is
-    // invisible until two versions of the same shot are compared.
-    let half = Rational::new(1, 2).map_err(RenderStatus::Time)?;
-    let centre = mapping.source_of(
-        Rational::from_integer(x)
-            .checked_add(half)
-            .map_err(RenderStatus::Time)?,
-        Rational::from_integer(y)
-            .checked_add(half)
-            .map_err(RenderStatus::Time)?,
-    )?;
-    // And the samples themselves sit at pixel centres, so the grid this
-    // interpolates on is offset by half a pixel from the pixel grid.
-    let across = centre.0.checked_sub(half).map_err(RenderStatus::Time)?;
-    let down = centre.1.checked_sub(half).map_err(RenderStatus::Time)?;
-    let left = across.floor().map_err(RenderStatus::Time)?;
-    let top = down.floor().map_err(RenderStatus::Time)?;
-    let fraction_x = across
-        .checked_sub(Rational::from_integer(left))
-        .map_err(RenderStatus::Time)?;
-    let fraction_y = down
-        .checked_sub(Rational::from_integer(top))
-        .map_err(RenderStatus::Time)?;
+    let landing = landing_of(mapping, x, y)?;
+    let (left, top) = landing.corner;
+    let (fraction_x, fraction_y) = landing.fraction;
 
     // Outside the picture's *extent* is nothing at all. Inside it but beyond
     // the last sample's centre is a different thing entirely, and conflating
@@ -448,13 +800,13 @@ fn bilinear_at(
     // lies beyond every sample and has no second one to interpolate towards.
     // There the reconstruction clamps to the edge sample, which is the best
     // estimate of a signal past its last measurement.
-    if !source.holds(centre.0, centre.1)? {
+    if !source.holds(landing.centre.0, landing.centre.1)? {
         return Ok([0; CHANNELS]);
     }
 
     let mut light = [Fixed::ZERO; CHANNELS];
     for (dx, dy) in [(0_i64, 0_i64), (1, 0), (0, 1), (1, 1)] {
-        let pixel = source.clamped(left + dx, top + dy);
+        let pixel = source.clamped(left + dx, top + dy)?;
         let weight_x = if dx == 0 {
             Rational::ONE
                 .checked_sub(fraction_x)

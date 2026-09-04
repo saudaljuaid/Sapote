@@ -11,9 +11,19 @@
 //! 48      N     payload
 //! ```
 //!
-//! The file is versioned, length-prefixed, and protected by a payload digest
-//! (R-9.3). The hand-written codec uses the model's own bounds. Edit history is
-//! session state and is not stored in the project file.
+//! Versioned from its first byte, length-prefixed, and digested (R-9.3). The
+//! digest is what makes a half-written file detectable rather than loadable:
+//! any change to any payload byte, and any change to the length, is refused by
+//! name before a single field reaches the model.
+//!
+//! The payload is written by hand rather than derived. That is deliberate: the
+//! format is the long-term custody of the user's work, so every field in it is
+//! a decision someone made and can read here, and the decoder's bounds are the
+//! model's own capacities rather than whatever a derive happened to allow.
+//!
+//! History is not saved. Undo is a property of a session, not of a project; a
+//! file that carried its own history would make "open the file" and "open the
+//! file and undo twice" two different projects with one name.
 
 use alloc::vec::Vec;
 
@@ -27,7 +37,7 @@ use sapstudio_model::title::{Alignment, Ink, MAX_TITLE_LINES, MAX_TITLE_TEXT, Ti
 use sapstudio_model::track::MAX_ITEMS_PER_TRACK;
 use sapstudio_model::transform::{Motion, Resampling, Transform};
 use sapstudio_model::{
-    Clip, Curve, Edit, Fader, Interpolation, Item, Keyframe, MAX_MARKER_TEXT,
+    Clip, Curve, Edit, Fader, Interpolation, Item, Keyframe, MAX_MARKER_TEXT, MAX_MARKERS_PER_CLIP,
     MAX_MARKERS_PER_SEQUENCE, MediaAsset, MediaId, Playback, Project, TrackKind, Transition,
     TransitionKind, Wipe,
 };
@@ -49,7 +59,7 @@ pub const MAGIC: [u8; 4] = *b"SPRJ";
 /// only for changes that break (R-1.2). A clip's grade is written after its
 /// length, so a version-five file read as version six would find a flag byte
 /// in the next item's tag.
-pub const FORMAT_VERSION: u16 = 24;
+pub const FORMAT_VERSION: u16 = 28;
 
 /// How long the fixed header is.
 pub const HEADER_BYTES: usize = 48;
@@ -96,7 +106,10 @@ pub fn encode(project: &Project) -> Result<Vec<u8>> {
 
 /// Write one item.
 ///
-/// Keep this field order aligned with `read_item`.
+/// The decoder has had a `read_item` since the format's first version; this is
+/// its other half, and having them face each other is what makes it possible
+/// to read the two side by side and see that every field written is a field
+/// read.
 fn write_item(writer: &mut Writer, item: &Item, media: &[(MediaId, &MediaAsset)]) -> Result<()> {
     match item {
         Item::Clip(clip) => {
@@ -182,17 +195,26 @@ fn write_item(writer: &mut Writer, item: &Item, media: &[(MediaId, &MediaAsset)]
             // case and a fraction of one over one is sixteen bytes of saying
             // so.
             match clip.playback() {
-                Playback::At(speed) if speed == sapstudio_core::Rational::ONE => {
+                Playback::At(speed) if *speed == sapstudio_core::Rational::ONE => {
                     writer.u8(SPEED_REAL_TIME)?;
                 }
                 Playback::At(speed) => {
                     writer.u8(SPEED_PRESENT)?;
-                    write_rational(writer, speed)?;
+                    write_rational(writer, *speed)?;
                 }
                 // A tag and nothing after it. A freeze has no number: the
                 // frame it holds is the clip's in point, which is already in
                 // the file a few bytes above this.
                 Playback::Frozen => writer.u8(SPEED_FROZEN)?,
+                // And a ramp is a curve, written by the same helper every
+                // other curve in this format goes through. Its count is never
+                // nought -- a curve holds at least one keyframe -- so the tag
+                // above it is what says whether there is one at all, and the
+                // count is never asked to mean two things.
+                Playback::Ramp(curve) => {
+                    writer.u8(SPEED_RAMP)?;
+                    write_curve(writer, Some(curve))?;
+                }
             }
             // A flag, because a clip nobody has faded is the common one and
             // two lengths of nought are sixteen bytes of saying so.
@@ -210,9 +232,27 @@ fn write_item(writer: &mut Writer, item: &Item, media: &[(MediaId, &MediaAsset)]
                     writer.bytes(grade.bytes())?;
                 }
             }
-            // Grade strength follows the grade by format convention. An absent
-            // curve uses write_curve's zero count.
+            // After the grade, matching the order the motion takes after the
+            // transform. The first version of this comment went further and
+            // said the reader is then "holding both when it has to refuse a
+            // strength with no look" -- and the control for that swapped both
+            // the write and the read and broke nothing, because the refusal
+            // lives in `Clip::with_grade_strength` at the end of the builder
+            // chain and cannot see what order the bytes arrived in. The order
+            // is a convention, and saying so is better than leaving a reason
+            // nothing checks.
+            //
+            // A count of nought when there is none, which is what `write_curve`
+            // already writes for an absent lane -- four bytes, and no new tag
+            // to reserve.
             write_curve(writer, clip.grade_strength())?;
+            // And the notes on the shot, last, in the same shape a sequence's
+            // markers take a few hundred lines below: a count, then an instant
+            // and a length-prefixed run of bytes for each. The same shape
+            // because they are the same type -- what differs is what the
+            // instant is measured from, and the file does not have to know
+            // that any more than a trim does.
+            write_markers(writer, clip.markers())?;
         }
         Item::Gap(duration) => {
             writer.u8(TAG_GAP)?;
@@ -276,63 +316,54 @@ fn encode_payload(project: &Project) -> Result<Vec<u8>> {
     // position in this list. Generational identifiers are a runtime idea: they
     // describe which occupancy of a slot a reference meant, and a file has no
     // slots and no occupancies.
-    let media: Vec<(MediaId, &MediaAsset)> = project.media().iter().collect();
-    writer.u32(u32::try_from(media.len()).map_err(|_| IoStatus::TooMany)?)?;
-    for (_, asset) in &media {
-        writer.bytes(asset.digest().bytes())?;
-        write_timebase(&mut writer, asset.timebase())?;
-        writer.i64(asset.duration().ticks())?;
-        // A length and then the bytes, uninterpreted. A path is whatever the
-        // platform says it is, and this format does not know which platform
-        // wrote it -- so it carries the hint and declines to read it.
-        match asset.location() {
-            None => writer.u32(0)?,
-            Some(location) => {
-                writer
-                    .u32(u32::try_from(location.bytes().len()).map_err(|_| IoStatus::TooMany)?)?;
-                writer.bytes(location.bytes())?;
-            }
-        }
-        // Where its frames come from. A recording is a tag and nothing more --
-        // the digest above already says what it is -- and a title is the
-        // description the program draws.
-        match asset.title() {
-            None => writer.u8(SOURCE_RECORDED)?,
-            Some(title) => {
-                writer.u8(SOURCE_TITLE)?;
-                writer.u32(u32::try_from(title.lines().len()).map_err(|_| IoStatus::TooMany)?)?;
-                for line in title.lines() {
-                    let words = line.as_bytes();
-                    writer.u32(u32::try_from(words.len()).map_err(|_| IoStatus::TooMany)?)?;
-                    writer.bytes(words)?;
-                }
-                writer.u8(match title.alignment() {
-                    Alignment::Left => ALIGN_LEFT,
-                    Alignment::Centre => ALIGN_CENTRE,
-                    Alignment::Right => ALIGN_RIGHT,
-                })?;
-                write_rational(&mut writer, title.size())?;
-                write_rational(&mut writer, title.across())?;
-                write_rational(&mut writer, title.down())?;
-                // A tag before the three channels, so a card nobody coloured
-                // costs one byte to say so rather than forty-eight to say
-                // white three times.
-                if title.ink().is_white() {
-                    writer.u8(INK_WHITE)?;
-                } else {
-                    writer.u8(INK_PRESENT)?;
-                    for channel in title.ink().channels() {
-                        write_rational(&mut writer, channel)?;
-                    }
-                }
-            }
-        }
-    }
-
+    // The sequences' *headers* come first, before the media, and that is the
+    // ordering nested sequences forced.
+    //
+    // A clip names its media by position in the media list, and a nested
+    // asset names its sequence by position in the sequence list, so each table
+    // refers to the other and neither can simply come first. Reading media and
+    // then sequences leaves a nest with no sequence to point at; reading
+    // sequences and then media leaves a clip with no asset.
+    //
+    // What breaks the knot is that only a sequence's *timebase* is needed to
+    // create it. So the file states how many sequences there are and what each
+    // is counted in; the media table can then name any of them; and the
+    // sequence bodies -- tracks, items, transitions, markers -- come last,
+    // matched to the headers by position, with every media identifier already
+    // in hand.
+    //
+    // Three phases rather than two, for one field. The alternative was a
+    // reader that builds half an asset and patches it later, and a
+    // half-built value is a value some other code path can find.
     let sequences: Vec<_> = project.sequences().iter().collect();
     writer.u32(u32::try_from(sequences.len()).map_err(|_| IoStatus::TooMany)?)?;
     for (_, sequence) in &sequences {
         write_timebase(&mut writer, sequence.timebase())?;
+    }
+
+    let media = write_media(&mut writer, project, &sequences)?;
+
+    // And now the bodies — but **not** in the order their headers were
+    // written, and each one saying which header it belongs to.
+    //
+    // A reader builds a project by applying edits, and the model checks after
+    // every one that no clip reads past the end of its media. A nest's length
+    // is its sequence's length, so a body that places a nested clip while the
+    // nested sequence is still empty places a clip reading past the end of
+    // nothing — and is refused, correctly, halfway through loading a file that
+    // is perfectly valid.
+    //
+    // So the bodies are written innermost first. A sequence's body comes after
+    // the bodies of every sequence it nests, which is a topological order and
+    // exists because the model refuses a cycle. The index before each body is
+    // what lets the reader follow an order it could not have worked out for
+    // itself: which sequences nest which is a fact about the *bodies*, and the
+    // reader has not read them yet.
+    for place in body_order(project, &sequences)? {
+        let (_, sequence) = sequences
+            .get(place)
+            .ok_or(IoStatus::SequenceIndexOutOfRange)?;
+        writer.u32(u32::try_from(place).map_err(|_| IoStatus::TooMany)?)?;
         writer.u32(u32::try_from(sequence.track_count()).map_err(|_| IoStatus::TooMany)?)?;
         for track in sequence.tracks() {
             writer.u8(match track.kind() {
@@ -375,22 +406,226 @@ fn encode_payload(project: &Project) -> Result<Vec<u8>> {
         // unlike a transition, a reader needs nothing read first to check one.
         // Last rather than first only so that the file's order matches the
         // order somebody reading the two halves of this module would expect.
-        let notes = sequence.markers();
-        writer.u32(u32::try_from(notes.len()).map_err(|_| IoStatus::TooMany)?)?;
-        for marker in notes {
-            writer.i64(marker.at().ticks())?;
-            let text = marker.text().as_bytes();
-            writer.u32(u32::try_from(text.len()).map_err(|_| IoStatus::TooMany)?)?;
-            writer.bytes(text)?;
-        }
+        write_markers(&mut writer, sequence.markers())?;
     }
     Ok(writer.finish())
+}
+
+/// Write a list of notes: a count, then an instant and its text for each.
+///
+/// One helper for both lists, because they are the same shape and the same
+/// type -- a sequence's markers and a clip's differ in what their instants are
+/// measured from, which is a fact about the model rather than about the bytes.
+fn write_markers(writer: &mut Writer, notes: &[sapstudio_model::Marker]) -> Result<()> {
+    writer.u32(u32::try_from(notes.len()).map_err(|_| IoStatus::TooMany)?)?;
+    for marker in notes {
+        writer.i64(marker.at().ticks())?;
+        let text = marker.text().as_bytes();
+        writer.u32(u32::try_from(text.len()).map_err(|_| IoStatus::TooMany)?)?;
+        writer.bytes(text)?;
+    }
+    Ok(())
+}
+
+/// Read a list of notes, bounded by whatever holds them.
+///
+/// The bound is passed rather than assumed: a sequence may hold thousands and
+/// a clip may hold eight, and reading a clip's list against the sequence's
+/// bound would let a file talk its way past the smaller one (R-11.2).
+fn read_markers(
+    reader: &mut Reader<'_>,
+    timebase: Timebase,
+    bound: usize,
+) -> Result<Vec<sapstudio_model::Marker>> {
+    let count = bounded(reader.u32()?, bound)?;
+    let mut notes = Vec::new();
+    notes
+        .try_reserve(count)
+        .map_err(|_| IoStatus::OutOfMemory)?;
+    for _ in 0..count {
+        let at = Instant::new(reader.i64()?, timebase);
+        let words = bounded(reader.u32()?, MAX_MARKER_TEXT)?;
+        let text = alloc::string::String::from_utf8(reader.take(words)?.to_vec())
+            .map_err(|_| IoStatus::MarkerNotText)?;
+        notes.push(sapstudio_model::Marker::new(at, text).map_err(IoStatus::Model)?);
+    }
+    Ok(notes)
+}
+
+/// Write the media table.
+///
+/// Out of [`encode_payload`] because that function outgrew the length lint the
+/// moment the sequence headers moved above it, and because a table is a thing
+/// with a name.
+fn write_media<'a>(
+    writer: &mut Writer,
+    project: &'a Project,
+    sequences: &[(sapstudio_model::SequenceId, &sapstudio_model::Sequence)],
+) -> Result<Vec<(MediaId, &'a MediaAsset)>> {
+    let media: Vec<(MediaId, &MediaAsset)> = project.media().iter().collect();
+    writer.u32(u32::try_from(media.len()).map_err(|_| IoStatus::TooMany)?)?;
+    for (_, asset) in &media {
+        writer.bytes(asset.digest().bytes())?;
+        // The transcript, before the source tag. A count of nought is four
+        // bytes on every asset that has none, which is what every other
+        // optional lane in this format costs and for the same reason: a field
+        // that is sometimes absent is a field a reader has to guess at.
+        writer.u32(u32::try_from(asset.captions().len()).map_err(|_| IoStatus::TooMany)?)?;
+        for caption in asset.captions() {
+            writer.i64(caption.from())?;
+            writer.i64(caption.to())?;
+            writer.u8(caption.voice())?;
+            let words = caption.text().as_bytes();
+            writer.u32(u32::try_from(words.len()).map_err(|_| IoStatus::TooMany)?)?;
+            writer.bytes(words)?;
+        }
+        write_timebase(writer, asset.timebase())?;
+        writer.i64(asset.duration().ticks())?;
+        // A length and then the bytes, uninterpreted. A path is whatever the
+        // platform says it is, and this format does not know which platform
+        // wrote it -- so it carries the hint and declines to read it.
+        match asset.location() {
+            None => writer.u32(0)?,
+            Some(location) => {
+                writer
+                    .u32(u32::try_from(location.bytes().len()).map_err(|_| IoStatus::TooMany)?)?;
+                writer.bytes(location.bytes())?;
+            }
+        }
+        // Where its frames come from. A recording is a tag and nothing more --
+        // the digest above already says what it is -- and a title is the
+        // description the program draws.
+        if let Some(nested) = asset.nested() {
+            writer.u8(SOURCE_NESTED)?;
+            let place = sequences
+                .iter()
+                .position(|(id, _)| *id == nested)
+                .ok_or(IoStatus::SequenceIndexOutOfRange)?;
+            writer.u32(u32::try_from(place).map_err(|_| IoStatus::TooMany)?)?;
+        } else {
+            match asset.title() {
+                None => writer.u8(SOURCE_RECORDED)?,
+                Some(title) => {
+                    writer.u8(SOURCE_TITLE)?;
+                    writer
+                        .u32(u32::try_from(title.lines().len()).map_err(|_| IoStatus::TooMany)?)?;
+                    for line in title.lines() {
+                        let words = line.as_bytes();
+                        writer.u32(u32::try_from(words.len()).map_err(|_| IoStatus::TooMany)?)?;
+                        writer.bytes(words)?;
+                    }
+                    writer.u8(match title.alignment() {
+                        Alignment::Left => ALIGN_LEFT,
+                        Alignment::Centre => ALIGN_CENTRE,
+                        Alignment::Right => ALIGN_RIGHT,
+                    })?;
+                    write_rational(writer, title.size())?;
+                    write_rational(writer, title.across())?;
+                    write_rational(writer, title.down())?;
+                    // A tag before the three channels, so a card nobody coloured
+                    // costs one byte to say so rather than forty-eight to say
+                    // white three times.
+                    if title.ink().is_white() {
+                        writer.u8(INK_WHITE)?;
+                    } else {
+                        writer.u8(INK_PRESENT)?;
+                        for channel in title.ink().channels() {
+                            write_rational(writer, channel)?;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(media)
+}
+
+/// The order the sequence bodies are written in: innermost first.
+///
+/// Kahn's algorithm, with the graph read straight off the clips: a sequence
+/// depends on every sequence it nests. A cycle would leave sequences the loop
+/// can never emit, and the model refuses one long before a file can be
+/// written — so this refuses rather than looping, which is the difference
+/// between an invariant and a hope.
+fn body_order(
+    project: &Project,
+    sequences: &[(sapstudio_model::SequenceId, &sapstudio_model::Sequence)],
+) -> Result<Vec<usize>> {
+    let mut order = Vec::new();
+    order
+        .try_reserve(sequences.len())
+        .map_err(|_| IoStatus::OutOfMemory)?;
+    let mut done = alloc::vec![false; sequences.len()];
+    for _ in 0..sequences.len() {
+        let mut moved = false;
+        for (place, (_, sequence)) in sequences.iter().enumerate() {
+            if done[place] {
+                continue;
+            }
+            let ready = nests_of(project, sequence)?.into_iter().all(|named| {
+                sequences
+                    .iter()
+                    .position(|(id, _)| *id == named)
+                    .is_none_or(|found| done[found])
+            });
+            if ready {
+                order.push(place);
+                done[place] = true;
+                moved = true;
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
+    if order.len() != sequences.len() {
+        // Only a cycle can leave one behind, and the model refuses those.
+        return Err(IoStatus::SequenceIndexOutOfRange);
+    }
+    Ok(order)
+}
+
+/// Which sequences a sequence nests, in index order.
+fn nests_of(
+    project: &Project,
+    sequence: &sapstudio_model::Sequence,
+) -> Result<Vec<sapstudio_model::SequenceId>> {
+    let mut named = Vec::new();
+    for track in sequence.tracks() {
+        for item in track.items() {
+            let Item::Clip(clip) = item else {
+                continue;
+            };
+            let Ok(asset) = project.media().get(clip.media()) else {
+                continue;
+            };
+            if let Some(inner) = asset.nested() {
+                named.try_reserve(1).map_err(|_| IoStatus::OutOfMemory)?;
+                named.push(inner);
+            }
+        }
+    }
+    Ok(named)
 }
 
 /// Decode just the payload.
 fn decode_payload(payload: &[u8]) -> Result<Project> {
     let mut reader = Reader::new(payload);
     let mut project = Project::new();
+
+    // The sequences' headers first, and nothing but their timebases: enough to
+    // create each one and hand back an identifier, and not enough to need a
+    // single media asset. That is what lets the media table below name one.
+    // See the writer for why the knot needs three phases rather than two.
+    let sequence_count = bounded(reader.u32()?, MAX_SEQUENCES)?;
+    let mut sequences = Vec::new();
+    sequences
+        .try_reserve(sequence_count)
+        .map_err(|_| IoStatus::OutOfMemory)?;
+    for _ in 0..sequence_count {
+        let timebase = read_timebase(&mut reader)?;
+        sequences.push(project.add_sequence(timebase)?);
+    }
 
     let media_count = bounded(reader.u32()?, MAX_MEDIA)?;
     let mut media = Vec::new();
@@ -399,6 +634,7 @@ fn decode_payload(payload: &[u8]) -> Result<Project> {
         .map_err(|_| IoStatus::OutOfMemory)?;
     for _ in 0..media_count {
         let digest = Digest::new(reader.digest_bytes()?);
+        let captions = read_captions(&mut reader)?;
         let timebase = read_timebase(&mut reader)?;
         let ticks = reader.i64()?;
         let duration = Duration::new(ticks, timebase)?;
@@ -416,94 +652,36 @@ fn decode_payload(payload: &[u8]) -> Result<Project> {
         if project.find_media(digest).is_some() {
             return Err(IoStatus::DuplicateMedia);
         }
-        let asset = read_asset(&mut reader, digest, timebase, duration, location)?;
-        media.push(project.add_media(asset)?);
+        let asset = read_asset(
+            &mut reader,
+            digest,
+            timebase,
+            duration,
+            location,
+            &sequences,
+        )?;
+        media.push(project.add_media(asset.with_captions(captions)?)?);
     }
 
-    let sequence_count = bounded(reader.u32()?, MAX_SEQUENCES)?;
-    for _ in 0..sequence_count {
-        let timebase = read_timebase(&mut reader)?;
-        let id = project.add_sequence(timebase)?;
-        let track_count = bounded(reader.u32()?, MAX_TRACKS_PER_SEQUENCE)?;
-        for track in 0..track_count {
-            let tag = reader.u8()?;
-            let kind = match tag {
-                KIND_VIDEO => TrackKind::Video,
-                KIND_AUDIO => TrackKind::Audio,
-                other => return Err(IoStatus::UnknownTrackKind(other)),
-            };
-            project.apply(id, Edit::AddTrack { index: track, kind })?;
-            let fader = read_fader(&mut reader)?;
-            if fader != Fader::UNITY {
-                // Applied as an edit like everything else, so that loading a
-                // project uses the one way in and nothing can set a value the
-                // model would have refused.
-                project.apply(id, Edit::SetTrackFader { track, fader })?;
-            }
-            let item_count = bounded(reader.u32()?, MAX_ITEMS_PER_TRACK)?;
-            for index in 0..item_count {
-                let item = read_item(&mut reader, timebase, &media)?;
-                project.apply(id, Edit::InsertItem { track, index, item })?;
-            }
-            let transition_count = bounded(reader.u32()?, MAX_ITEMS_PER_TRACK)?;
-            for _ in 0..transition_count {
-                let boundary = bounded(reader.u32()?, MAX_ITEMS_PER_TRACK)?;
-                let duration = Duration::new(reader.i64()?, timebase).map_err(IoStatus::Time)?;
-                let tag = reader.u8()?;
-                let kind = match tag {
-                    KIND_DISSOLVE => TransitionKind::Dissolve,
-                    KIND_WIPE => {
-                        let across = read_rational(&mut reader)?;
-                        let down = read_rational(&mut reader)?;
-                        let softness = read_rational(&mut reader)?;
-                        TransitionKind::Wipe(
-                            Wipe::soft(across, down, softness).map_err(IoStatus::Model)?,
-                        )
-                    }
-                    other => return Err(IoStatus::UnknownTransitionTag(other)),
-                };
-                let transition =
-                    Transition::of(boundary, duration, kind).map_err(IoStatus::Model)?;
-                // Through the edit, like everything else, so a file cannot set
-                // a dissolve the model itself would have refused — one on a
-                // gap, one longer than its clips, or one whose incoming side
-                // has no room for handles.
-                project.apply(id, Edit::AddTransition { track, transition })?;
-            }
-            if let Some(opacity) = read_curve(&mut reader, timebase)? {
-                // Through the edit, like everything else, so a file cannot set
-                // a curve the model itself would have refused — one on the
-                // wrong kind of track, or one counted in another timebase.
-                project.apply(
-                    id,
-                    Edit::SetTrackOpacity {
-                        track,
-                        opacity: Some(opacity),
-                    },
-                )?;
-            }
-            if let Some(level) = read_curve(&mut reader, timebase)? {
-                project.apply(
-                    id,
-                    Edit::SetTrackLevel {
-                        track,
-                        level: Some(level),
-                    },
-                )?;
-            }
+    // And now the bodies, each saying which header it belongs to. Innermost
+    // first — see the writer for why the order is not the headers' own.
+    let mut built = alloc::vec![false; sequences.len()];
+    for _ in 0..sequences.len() {
+        let place = usize::try_from(reader.u32()?).map_err(|_| IoStatus::TooMany)?;
+        let id = *sequences
+            .get(place)
+            .ok_or(IoStatus::SequenceIndexOutOfRange)?;
+        // Once each, and every one. A file naming a body twice would leave
+        // another sequence empty while the first was built over the top of
+        // itself, and both halves of that are a project no editor produced.
+        let seen = built
+            .get_mut(place)
+            .ok_or(IoStatus::SequenceIndexOutOfRange)?;
+        if *seen {
+            return Err(IoStatus::SequenceBodyTwice);
         }
-        let marker_count = bounded(reader.u32()?, MAX_MARKERS_PER_SEQUENCE)?;
-        for _ in 0..marker_count {
-            let at = Instant::new(reader.i64()?, timebase);
-            let words = bounded(reader.u32()?, MAX_MARKER_TEXT)?;
-            let text = alloc::string::String::from_utf8(reader.take(words)?.to_vec())
-                .map_err(|_| IoStatus::MarkerNotText)?;
-            // Through the edit, like everything else, so a file cannot hold a
-            // marker the model would have refused -- two at one instant, one
-            // before the programme starts, or one carrying more text than the
-            // bound allows.
-            project.apply(id, Edit::AddMarker { at, text })?;
-        }
+        *seen = true;
+        read_body(&mut reader, &mut project, id, &media)?;
     }
 
     if !reader.is_finished() {
@@ -609,6 +787,104 @@ fn read_mask(reader: &mut Reader<'_>) -> Result<Option<Mask>> {
     }
 }
 
+/// Read one sequence's body: its tracks, their contents, and its markers.
+///
+/// Out of [`decode_payload`] because that function outgrew the length lint
+/// when the bodies gained an index, and because a body is a thing with a name.
+///
+/// Everything here goes through [`Project::apply`], like everything else the
+/// reader does, so a file cannot set a value the model itself would have
+/// refused.
+fn read_body(
+    reader: &mut Reader<'_>,
+    project: &mut Project,
+    id: sapstudio_model::SequenceId,
+    media: &[MediaId],
+) -> Result<()> {
+    let timebase = project.sequence(id)?.timebase();
+    let track_count = bounded(reader.u32()?, MAX_TRACKS_PER_SEQUENCE)?;
+    for track in 0..track_count {
+        let tag = reader.u8()?;
+        let kind = match tag {
+            KIND_VIDEO => TrackKind::Video,
+            KIND_AUDIO => TrackKind::Audio,
+            other => return Err(IoStatus::UnknownTrackKind(other)),
+        };
+        project.apply(id, Edit::AddTrack { index: track, kind })?;
+        let fader = read_fader(reader)?;
+        if fader != Fader::UNITY {
+            // Applied as an edit like everything else, so that loading a
+            // project uses the one way in and nothing can set a value the
+            // model would have refused.
+            project.apply(id, Edit::SetTrackFader { track, fader })?;
+        }
+        let item_count = bounded(reader.u32()?, MAX_ITEMS_PER_TRACK)?;
+        for index in 0..item_count {
+            let item = read_item(reader, timebase, media)?;
+            project.apply(id, Edit::InsertItem { track, index, item })?;
+        }
+        let transition_count = bounded(reader.u32()?, MAX_ITEMS_PER_TRACK)?;
+        for _ in 0..transition_count {
+            let boundary = bounded(reader.u32()?, MAX_ITEMS_PER_TRACK)?;
+            let duration = Duration::new(reader.i64()?, timebase).map_err(IoStatus::Time)?;
+            let tag = reader.u8()?;
+            let kind = match tag {
+                KIND_DISSOLVE => TransitionKind::Dissolve,
+                KIND_WIPE => {
+                    let across = read_rational(reader)?;
+                    let down = read_rational(reader)?;
+                    let softness = read_rational(reader)?;
+                    TransitionKind::Wipe(
+                        Wipe::soft(across, down, softness).map_err(IoStatus::Model)?,
+                    )
+                }
+                other => return Err(IoStatus::UnknownTransitionTag(other)),
+            };
+            let transition = Transition::of(boundary, duration, kind).map_err(IoStatus::Model)?;
+            // Through the edit, like everything else, so a file cannot set
+            // a dissolve the model itself would have refused — one on a
+            // gap, one longer than its clips, or one whose incoming side
+            // has no room for handles.
+            project.apply(id, Edit::AddTransition { track, transition })?;
+        }
+        if let Some(opacity) = read_curve(reader, timebase)? {
+            // Through the edit, like everything else, so a file cannot set
+            // a curve the model itself would have refused — one on the
+            // wrong kind of track, or one counted in another timebase.
+            project.apply(
+                id,
+                Edit::SetTrackOpacity {
+                    track,
+                    opacity: Some(opacity),
+                },
+            )?;
+        }
+        if let Some(level) = read_curve(reader, timebase)? {
+            project.apply(
+                id,
+                Edit::SetTrackLevel {
+                    track,
+                    level: Some(level),
+                },
+            )?;
+        }
+    }
+    for marker in read_markers(reader, timebase, MAX_MARKERS_PER_SEQUENCE)? {
+        // Through the edit, like everything else, so a file cannot hold a
+        // marker the model would have refused -- two at one instant, one
+        // before the programme starts, or one carrying more text than the
+        // bound allows.
+        project.apply(
+            id,
+            Edit::AddMarker {
+                at: marker.at(),
+                text: alloc::string::String::from(marker.text()),
+            },
+        )?;
+    }
+    Ok(())
+}
+
 /// One item.
 fn read_item(reader: &mut Reader<'_>, timebase: Timebase, media: &[MediaId]) -> Result<Item> {
     match reader.u8()? {
@@ -635,6 +911,9 @@ fn read_item(reader: &mut Reader<'_>, timebase: Timebase, media: &[MediaId]) -> 
                 SPEED_REAL_TIME => None,
                 SPEED_PRESENT => Some(Playback::At(read_rational(reader)?)),
                 SPEED_FROZEN => Some(Playback::Frozen),
+                SPEED_RAMP => Some(Playback::Ramp(
+                    read_curve(reader, timebase)?.ok_or(IoStatus::RampWithoutKeyframes)?,
+                )),
                 other => return Err(IoStatus::UnknownSpeedTag(other)),
             };
             let fades = match reader.u8()? {
@@ -652,6 +931,7 @@ fn read_item(reader: &mut Reader<'_>, timebase: Timebase, media: &[MediaId]) -> 
                 other => return Err(IoStatus::UnknownGradeTag(other)),
             };
             let grade_strength = read_curve(reader, timebase)?;
+            let notes = read_markers(reader, timebase, MAX_MARKERS_PER_CLIP)?;
             let clip = Clip::new(id, source_start, duration)?
                 .with_grade(grade)
                 .with_mask(mask)
@@ -678,6 +958,13 @@ fn read_item(reader: &mut Reader<'_>, timebase: Timebase, media: &[MediaId]) -> 
                 // be entitled to assume the strength meant something.
                 .with_grade_strength(grade_strength)
                 .map_err(IoStatus::Model)?;
+            // Through the model's own door, one at a time, so a file cannot
+            // hold two notes at one offset, a note before the clip begins, or
+            // more of them than the bound allows.
+            let mut clip = clip;
+            for marker in notes {
+                clip = clip.with_marker(marker).map_err(IoStatus::Model)?;
+            }
             let clip = match fades {
                 None => clip,
                 // Through the model's own constructor, so a file cannot hold a
@@ -690,10 +977,12 @@ fn read_item(reader: &mut Reader<'_>, timebase: Timebase, media: &[MediaId]) -> 
                 None => clip,
                 // Likewise: a file cannot hold a clip stopped at a speed of
                 // nought, or one reversed so far it reads before its media
-                // begins. A freeze goes through `Clip::frozen`, which refuses
-                // nothing -- it shrinks what the clip reads to one frame.
-                Some(Playback::At(held)) => clip.with_speed(held).map_err(IoStatus::Model)?,
-                Some(Playback::Frozen) => clip.frozen(),
+                // begins, or a ramp that turns around or eases. Through the
+                // model's own doors, so the file cannot hold a clip no
+                // sequence of edits could produce. A freeze goes through
+                // `Clip::frozen`, which refuses nothing -- it shrinks what the
+                // clip reads to one frame.
+                Some(held) => held.applied_to(&clip).map_err(IoStatus::Model)?,
             }))
         }
         TAG_GAP => {
@@ -702,6 +991,45 @@ fn read_item(reader: &mut Reader<'_>, timebase: Timebase, media: &[MediaId]) -> 
         }
         other => Err(IoStatus::UnknownItemTag(other)),
     }
+}
+
+/// Read an asset's transcript.
+///
+/// Through [`sapstudio_model::caption::Caption::new`] and the model's own
+/// check, so a file cannot hold a caption no editor could have made: not one
+/// that ends before it begins, not one longer than the bound, and not two of
+/// one voice over the same tick. A hostile file must not be able to talk its
+/// way past a bound (R-11.2), and the bound it must not pass is the model's.
+fn read_captions(reader: &mut Reader<'_>) -> Result<Vec<sapstudio_model::caption::Caption>> {
+    let count = bounded(
+        reader.u32()?,
+        sapstudio_model::caption::MAX_CAPTIONS_PER_ASSET,
+    )?;
+    let mut captions = Vec::new();
+    captions
+        .try_reserve(count)
+        .map_err(|_| IoStatus::OutOfMemory)?;
+    for _ in 0..count {
+        let from = reader.i64()?;
+        let to = reader.i64()?;
+        let voice = reader.u8()?;
+        let length = bounded(
+            reader.u32()?,
+            sapstudio_model::caption::MAX_CAPTION_TEXT * 4,
+        )?;
+        let words =
+            core::str::from_utf8(reader.take(length)?).map_err(|_| IoStatus::CaptionNotText)?;
+        captions.push(
+            sapstudio_model::caption::Caption::new(from, to, voice, words)
+                .map_err(IoStatus::Model)?,
+        );
+    }
+    // There was a call to `caption::checked` here and its control could not be
+    // made to fail: the caller hands these to `MediaAsset::with_captions`,
+    // which performs exactly this check, so a file holding two captions of one
+    // voice over one tick is refused either way. Sixth guard this project has
+    // found that changes no answer, and the second in this milestone.
+    Ok(captions)
 }
 
 /// Read one media asset's source, and build the asset.
@@ -715,10 +1043,32 @@ fn read_asset(
     timebase: Timebase,
     duration: Duration,
     location: Option<Location>,
+    sequences: &[sapstudio_model::SequenceId],
 ) -> Result<MediaAsset> {
     match reader.u8()? {
         SOURCE_RECORDED => {
             Ok(MediaAsset::new(digest, timebase, duration)?.with_location(location)?)
+        }
+        SOURCE_NESTED => {
+            let place = usize::try_from(reader.u32()?).map_err(|_| IoStatus::TooMany)?;
+            let named = *sequences
+                .get(place)
+                .ok_or(IoStatus::SequenceIndexOutOfRange)?;
+            // Through the model's own constructor, which computes the digest
+            // from the identifier -- so a file that carried a *different*
+            // digest for a nest is refused below rather than believed. A nest
+            // is named by what it is, and what it is, is which sequence.
+            let asset = MediaAsset::nesting(named, timebase, duration)?;
+            if asset.digest() != digest {
+                return Err(IoStatus::NestDigestMismatch);
+            }
+            if location.is_some() {
+                // A nest has nowhere to be, for the reason a title has
+                // nowhere to be: it is made rather than found, and a location
+                // would invite somebody to relink it to a file.
+                return Err(IoStatus::NestHasLocation);
+            }
+            Ok(asset)
         }
         SOURCE_TITLE => {
             let count = bounded(reader.u32()?, MAX_TITLE_LINES)?;
@@ -804,6 +1154,9 @@ const SOURCE_RECORDED: u8 = 0;
 /// An asset the program draws from a description that follows.
 const SOURCE_TITLE: u8 = 1;
 
+/// A media asset that is another sequence of this project.
+const SOURCE_NESTED: u8 = 2;
+
 /// A title nobody has coloured, which is white.
 const INK_WHITE: u8 = 0;
 
@@ -818,6 +1171,9 @@ const SPEED_PRESENT: u8 = 1;
 
 /// A clip held on the one frame at its in point.
 const SPEED_FROZEN: u8 = 2;
+
+/// A clip whose speed is a curve, which follows.
+const SPEED_RAMP: u8 = 3;
 
 /// A clip nobody has faded.
 const FADES_NONE: u8 = 0;

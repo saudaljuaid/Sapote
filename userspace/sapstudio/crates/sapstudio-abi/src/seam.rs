@@ -99,25 +99,48 @@ impl<C: Console + ?Sized> Write for ConsoleWriter<'_, C> {
     }
 }
 
-/// Which of the two fixed storage slots an operation names.
+/// Which fixed storage slot an operation names.
 ///
-/// Sapote has no paths, no directories, and no rename (`SAP-08`), so the
-/// smallest storage that can hold a project safely is two fixed extents and an
-/// operation that swaps them. That is deliberately less than a filesystem: it
-/// is exactly enough to save a file without ever being able to lose the
-/// previous one.
+/// This enum's first version said "Sapote has no paths, no directories, and no
+/// rename (`SAP-08`)", which was true at v1.1.0 and is not true now: Sapote
+/// 2.1.0 has a read-write FAT32 volume with nested directories, rename and
+/// sync. The shape below survived the correction anyway, and it is worth
+/// saying why rather than leaving it looking like an accident.
+///
+/// A named slot is **less** than a path on purpose. An application that could
+/// name any file could lose any file, and the property R-9.4 asks for — that
+/// an interrupted save leaves the previous file exactly where it was — is a
+/// property of a *protocol*, not of a filesystem. Sapote's own SapStudio
+/// workspace performs that protocol by hand in five steps with three names and
+/// four syncs; [`Storage::commit`] is the name for the one step in it that
+/// must be indivisible.
+///
+/// Three slots rather than two, because a project and the material it refers
+/// to are two files. They are committed separately and neither can damage the
+/// other, which is what makes "the vault is being written" survivable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Slot {
     /// The project as it was last committed. Never written directly.
     Project,
+    /// The media vault as it was last committed. Never written directly.
+    ///
+    /// Separate from the project deliberately. Material is large and changes
+    /// rarely; a project is small and changes constantly, and writing sixteen
+    /// mebibytes of photographs every time somebody trims a clip would be a
+    /// save protocol nobody could afford to run.
+    Vault,
     /// Where a save is assembled and verified before it is committed.
+    ///
+    /// One scratch for both, because a save is a sequence and there is never
+    /// more than one in flight — which is also why Sapote's workspace uses one
+    /// `STUTEMP.SAP` for its own.
     Scratch,
 }
 
-/// Two fixed extents and an atomic swap between them.
+/// Fixed extents, ranged reads, and an atomic swap between them.
 ///
 /// The contract that matters is [`Storage::commit`]: until it returns, the
-/// `Project` slot holds exactly what it held before, whatever happened to the
+/// committed slot holds exactly what it held before, whatever happened to the
 /// scratch slot. That is what makes R-9.4 provable rather than hoped for.
 pub trait Storage {
     /// The most bytes a slot can hold.
@@ -141,6 +164,32 @@ pub trait Storage {
     /// smaller than the stored length.
     fn read(&self, slot: Slot, into: &mut [u8]) -> Result<usize>;
 
+    /// Copy a run of bytes beginning at `offset`, and say how many that was.
+    ///
+    /// **This is the method a vault needs and a project does not.** One of
+    /// Sapote's files holds sixteen mebibytes and a Sapote program is mapped
+    /// seventy-six kilobytes, so [`Storage::read`] — which fills a buffer the
+    /// size of the whole slot — cannot read a full vault on the target by
+    /// three orders of magnitude. A store that is read an entry at a time can
+    /// be, and this is what makes that possible.
+    ///
+    /// It is also what Sapote itself does. Its bitmap importer "issues random
+    /// row reads through the normal filesystem and NVMe paths" rather than
+    /// holding a picture, which is `sapfs_seek` followed by `sapfs_read` —
+    /// exactly the shape below.
+    ///
+    /// Short at the end, like every read of a file: a run that begins inside
+    /// the slot and reaches past it fills what there is and says how much.
+    /// A run beginning **at or past** the end fills nothing and says nought,
+    /// which is what Sapote's `sapfs_read` does at end of file and is a
+    /// different thing from a refusal.
+    ///
+    /// # Errors
+    ///
+    /// [`SeamStatus::Empty`] if the slot holds nothing, or
+    /// [`SeamStatus::Refused`].
+    fn read_at(&self, slot: Slot, offset: usize, into: &mut [u8]) -> Result<usize>;
+
     /// Replace a slot's contents.
     ///
     /// # Errors
@@ -149,14 +198,56 @@ pub trait Storage {
     /// [`SeamStatus::Refused`].
     fn write(&mut self, slot: Slot, bytes: &[u8]) -> Result<()>;
 
-    /// Make the scratch slot the project, in one step that either happens or
-    /// does not.
+    /// Extend the scratch slot by these bytes, starting it if it is empty.
+    ///
+    /// **This is the method a recorder needs and a project does not**, and it
+    /// is the mirror of [`Storage::read_at`] one milestone later. A reel this
+    /// build writes is bounded at five hundred and twelve mebibytes against
+    /// the seventy-six kilobytes a Sapote program is mapped, so
+    /// [`Storage::write`] — which takes the whole file in one slice — cannot
+    /// write a full reel on the target by four orders of magnitude. A file
+    /// that is extended a row at a time can be.
+    ///
+    /// ## Why it takes no slot
+    ///
+    /// Because there is exactly one place a save is assembled, and an
+    /// operation that could name the committed project or the committed vault
+    /// would be an operation that could write a live file in place. That is
+    /// the one thing this whole protocol exists to prevent, and refusing it at
+    /// run time would be strictly worse than not being able to ask: the rest
+    /// of this program makes overlapping items unrepresentable rather than
+    /// merely rejected, and this is the same choice.
+    ///
+    /// ## Why appending rather than writing at an offset
+    ///
+    /// Sapote's FAT32 offers both — it has random access as well as file
+    /// growth — so this is a choice rather than a limitation. Appending is
+    /// **strictly weaker**, and a writer that cannot seek backwards is a
+    /// writer that cannot damage what it has already written. It is why
+    /// `SPRW` version three moved its digest to a trailer: a format that has
+    /// to patch its own header is a format that needs the stronger
+    /// capability, and it needed it for no reason.
+    ///
+    /// # Errors
+    ///
+    /// [`SeamStatus::TooLarge`] if the slot would grow past its capacity, or
+    /// [`SeamStatus::Refused`].
+    fn append(&mut self, bytes: &[u8]) -> Result<()>;
+
+    /// Make the scratch slot the named one, in one step that either happens
+    /// or does not.
+    ///
+    /// The destination is named because there are two committed slots now.
+    /// Committing *into* the scratch slot is refused: it is where a save is
+    /// assembled, and an operation that made it its own destination would be
+    /// an operation with nothing to say about what happened.
     ///
     /// # Errors
     ///
     /// [`SeamStatus::Empty`] if nothing has been written to the scratch slot,
-    /// or [`SeamStatus::Refused`].
-    fn commit(&mut self) -> Result<()>;
+    /// or [`SeamStatus::Refused`] — including for a commit into
+    /// [`Slot::Scratch`].
+    fn commit(&mut self, into: Slot) -> Result<()>;
 }
 
 /// The kernel's one monotonic clock.

@@ -59,6 +59,64 @@ fn a_reel_survives_a_round_trip() {
 }
 
 #[test]
+fn the_file_is_the_layout_the_module_comment_states() {
+    // The format written out by hand, field by field, from the table in
+    // `sprw`'s own module comment -- not read back out of the encoder. A test
+    // that asked the code what the code produced would agree with any layout
+    // at all, which is exactly what a format version bump must not be checked
+    // by.
+    let reel = sample();
+    let file = sprw::encode(&reel).expect("an encoding");
+
+    let mut expected = std::vec::Vec::new();
+    expected.extend_from_slice(b"SPRW"); //  0  magic
+    expected.extend_from_slice(&5_u16.to_le_bytes()); //  4  version
+    expected.extend_from_slice(&0_u16.to_le_bytes()); //  6  reserved
+    expected.extend_from_slice(&16_u32.to_le_bytes()); //  8  width
+    expected.extend_from_slice(&9_u32.to_le_bytes()); // 12  height
+    // The tags, from `sprw`'s own tables, for the `srgb_full` description the
+    // fixture is built with. Written out rather than fetched: the first draft
+    // of this test guessed two of them from their names and was wrong about
+    // both -- sRGB's matrix is *Identity*, because sRGB is already red, green
+    // and blue and there is nothing to un-mix.
+    expected.push(2); // 16  format: Rgb8
+    expected.push(1); // 17  primaries: BT.709
+    expected.push(2); // 18  transfer: sRGB
+    expected.push(1); // 19  matrix: identity
+    expected.push(2); // 20  range: full
+    expected.push(0); // 21  siting: none
+    expected.push(0); // 22  alpha: a format that carries none
+    expected.push(0); // 23  reserved
+    expected.extend_from_slice(&1_i64.to_le_bytes()); // 24  aspect numerator
+    expected.extend_from_slice(&1_i64.to_le_bytes()); // 32  aspect denominator
+    expected.extend_from_slice(&24_000_i64.to_le_bytes()); // 40  rate numerator
+    expected.extend_from_slice(&1001_i64.to_le_bytes()); // 48  rate denominator
+    expected.extend_from_slice(&3_u64.to_le_bytes()); // 56  frame count
+    expected.push(0); // 64  sample rate: a reel with no sound
+    expected.push(0); // 65  channel count: the same
+    expected.extend_from_slice(&[0; 6]); // 66  reserved
+    expected.extend_from_slice(&0_u64.to_le_bytes()); // 72  sample count
+    expected.extend_from_slice(&0_u32.to_le_bytes()); // 80  caption count
+    expected.extend_from_slice(&0_u32.to_le_bytes()); // 84  caption bytes
+    assert_eq!(expected.len(), HEADER_BYTES, "the header is eighty-eight");
+
+    // 88  the frames, tightly packed, in order.
+    for frame in reel.frames() {
+        expected.extend_from_slice(&frame.to_packed().expect("bytes"));
+    }
+    let payload_end = expected.len();
+    assert_eq!(payload_end, HEADER_BYTES + 3 * 16 * 9 * 3);
+
+    // 88+N  SHA-256 of bytes 0..88 followed by the payload. Hashed here in one
+    // pass over one slice, where the encoder hashes a header and a payload
+    // separately -- so the two agree about what "followed by" means.
+    expected.extend_from_slice(sapstudio_core::Digest::of(&expected).bytes());
+    assert_eq!(expected.len(), payload_end + sprw::TRAILER_BYTES);
+
+    assert_eq!(file, expected, "the encoder and the stated layout disagree");
+}
+
+#[test]
 fn the_encoding_is_canonical() {
     let first = sprw::encode(&sample()).expect("an encoding");
     let second = sprw::encode(&sprw::decode(&first).expect("a decoding")).expect("an encoding");
@@ -70,8 +128,21 @@ fn the_file_is_exactly_as_large_as_it_should_be() {
     let reel = sample();
     let file = sprw::encode(&reel).expect("an encoding");
     let frame_bytes = reel.description().packed_bytes().expect("a size");
-    assert_eq!(file.len(), HEADER_BYTES + frame_bytes * reel.len());
+    assert_eq!(
+        file.len(),
+        HEADER_BYTES + frame_bytes * reel.len() + sprw::TRAILER_BYTES
+    );
     assert_eq!(&file[..4], &MAGIC);
+    // The header is eighty-eight and the trailer is thirty-two, worked out
+    // from the layout in the module comment rather than read back out of the
+    // code: 4 + 2 + 2 + 4 + 4 + 7 + 1 + 8 + 8 + 8 + 8 + 8 = 64 for the
+    // picture, 1 + 1 + 6 + 8 = 16 for the sound, 4 + 4 = 8 for the transcript,
+    // and one SHA-256 is 32. Version two was 96 + N with the digest at offset
+    // 64; version three was 64 + N + 32, the same length; version four added
+    // sixteen and version five eight more, and every reel pays for both
+    // whether it has sound or words or neither.
+    assert_eq!(HEADER_BYTES, 88);
+    assert_eq!(sprw::TRAILER_BYTES, 32);
 }
 
 #[test]
@@ -133,11 +204,39 @@ fn a_reel_with_no_frames_cannot_be_built_or_read() {
 #[test]
 fn a_file_that_is_not_a_reel_is_refused() {
     assert_eq!(sprw::decode(b""), Err(IoStatus::TruncatedHeader));
-    assert_eq!(sprw::decode(&[0; 95]), Err(IoStatus::TruncatedHeader));
+    assert_eq!(
+        sprw::decode(&[0; HEADER_BYTES - 1]),
+        Err(IoStatus::TruncatedHeader)
+    );
 
     let mut file = sprw::encode(&sample()).expect("an encoding");
     file[1] = b'X';
     assert_eq!(sprw::decode(&file), Err(IoStatus::NotAReel));
+}
+
+#[test]
+fn a_reel_that_ends_before_its_digest_is_refused_without_hashing_anything() {
+    // The case version three exists to make cheap. A write interrupted after
+    // the last sample and before the trailer leaves a file whose header is
+    // sound, whose payload is complete, and which is thirty-two bytes short --
+    // and the refusal is a subtraction rather than a rehash of everything that
+    // did arrive.
+    let file = sprw::encode(&sample()).expect("an encoding");
+    let cut = &file[..file.len() - sprw::TRAILER_BYTES];
+    assert_eq!(sprw::decode(cut), Err(IoStatus::TruncatedPayload));
+    // One byte of the trailer is missing rather than all of it: the same
+    // answer, because a partial digest is not a digest.
+    assert_eq!(
+        sprw::decode(&file[..file.len() - 1]),
+        Err(IoStatus::TruncatedPayload)
+    );
+    // And the streaming reader agrees, in sixty-four bytes, having read
+    // neither the payload nor the trailer.
+    assert_eq!(
+        sprw::Spool::open(&cut),
+        Err(IoStatus::TruncatedPayload),
+        "the cheap door and the expensive one give the same answer"
+    );
 }
 
 #[test]
@@ -344,11 +443,12 @@ fn an_alpha_tag_a_format_cannot_carry_is_refused_even_with_a_sound_digest() {
     let mut forged = file.clone();
     assert_eq!(forged[16], 2, "the sample reel is Rgb8, which has no alpha");
     forged[22] = 1;
+    let end = forged.len() - sprw::TRAILER_BYTES;
     let mut hasher = sapstudio_core::Sha256::new();
-    hasher.update(&forged[..sprw::DESCRIBED_BYTES]);
-    hasher.update(&forged[HEADER_BYTES..]);
+    hasher.update(&forged[..HEADER_BYTES]);
+    hasher.update(&forged[HEADER_BYTES..end]);
     let digest = hasher.finish();
-    forged[sprw::DESCRIBED_BYTES..HEADER_BYTES].copy_from_slice(digest.bytes());
+    forged[end..].copy_from_slice(digest.bytes());
 
     assert_ne!(forged, file, "the forgery must differ from the original");
     assert_eq!(
@@ -356,4 +456,81 @@ fn an_alpha_tag_a_format_cannot_carry_is_refused_even_with_a_sound_digest() {
         Err(IoStatus::Media(sapstudio_media::MediaStatus::AlphaMismatch)),
         "a sound digest over a description that cannot exist is still refused"
     );
+}
+
+/// A file with a byte changed and its digest made to agree again.
+///
+/// So that the refusal under test is the one being tested rather than the
+/// digest. Six controls in this project's history passed because no test built
+/// a hostile *file* — only round trips — and this is the shape that answer
+/// took.
+fn resealed(file: &[u8], edit: impl FnOnce(&mut std::vec::Vec<u8>)) -> std::vec::Vec<u8> {
+    let mut forged = file.to_vec();
+    edit(&mut forged);
+    let end = forged.len() - sprw::TRAILER_BYTES;
+    let mut hasher = sapstudio_core::Sha256::new();
+    hasher.update(&forged[..end]);
+    let digest = hasher.finish();
+    forged[end..].copy_from_slice(digest.bytes());
+    forged
+}
+
+#[test]
+fn a_header_that_half_declares_sound_is_refused() {
+    // A rate with no channels, or channels at no rate, is a header that
+    // disagrees with itself — and it is *not* caught by the digest, because a
+    // file can be internally consistent and still describe something that is
+    // not a reel. The forgery is resealed so that the digest cannot be what
+    // does the refusing.
+    let file = sprw::encode(&sample()).expect("an encoding");
+    assert_eq!(file[64], 0, "the sample reel has no sound");
+    assert_eq!(file[65], 0);
+
+    // A rate, and nothing to play it in.
+    let rate_only = resealed(&file, |forged| forged[64] = 2);
+    assert_eq!(sprw::decode(&rate_only), Err(IoStatus::SoundNotDeclared));
+    // Channels, at no rate.
+    let channels_only = resealed(&file, |forged| forged[65] = 2);
+    assert_eq!(
+        sprw::decode(&channels_only),
+        Err(IoStatus::SoundNotDeclared)
+    );
+    // And the streaming reader agrees, which is what keeps it from being a
+    // second, weaker door.
+    assert_eq!(
+        sprw::Spool::open(&rate_only.as_slice()),
+        Err(IoStatus::SoundNotDeclared)
+    );
+}
+
+#[test]
+fn a_reel_with_no_sound_that_declares_samples_is_refused() {
+    // Nought channels and ten thousand samples: a header claiming a length for
+    // sound it says it does not have. Nothing in the payload contradicts it —
+    // the file is exactly as long as its pictures — so only the header's own
+    // consistency catches it.
+    let file = sprw::encode(&sample()).expect("an encoding");
+    let lying = resealed(&file, |forged| {
+        forged[72..80].copy_from_slice(&10_000_u64.to_le_bytes());
+    });
+    assert_eq!(sprw::decode(&lying), Err(IoStatus::SoundNotDeclared));
+    assert_eq!(
+        sprw::Spool::open(&lying.as_slice()),
+        Err(IoStatus::SoundNotDeclared)
+    );
+}
+
+#[test]
+fn a_reserved_byte_of_the_sound_description_is_refused() {
+    // The six bytes between the channel count and the sample count. A reader
+    // that ignored them would read a future version's field as nothing.
+    let file = sprw::encode(&sample()).expect("an encoding");
+    for index in 66..72 {
+        let set = resealed(&file, |forged| forged[index] = 1);
+        assert_eq!(
+            sprw::decode(&set),
+            Err(IoStatus::ReservedFieldSet),
+            "byte {index} was ignored"
+        );
+    }
 }

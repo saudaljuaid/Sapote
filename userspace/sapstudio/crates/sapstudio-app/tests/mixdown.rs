@@ -4,7 +4,7 @@
 use sapstudio_app::SlateStatus;
 use sapstudio_app::mixdown::{self, SampleSource};
 use sapstudio_audio::{AudioBuffer, SampleRate};
-use sapstudio_core::{Duration, Instant, Rational, TimeRange, Timebase};
+use sapstudio_core::{Digest, Duration, Instant, Rational, TimeRange, Timebase};
 use sapstudio_model::curve::{Curve, Interpolation, Keyframe};
 use sapstudio_model::{Clip, Edit, Item, MediaAsset, MediaId, Project, SequenceId, TrackKind};
 
@@ -14,19 +14,19 @@ use sapstudio_model::{Clip, Edit, Item, MediaAsset, MediaId, Project, SequenceId
 /// test can check *which* samples were asked for, which is the part that goes
 /// wrong.
 struct Flat {
-    levels: std::vec::Vec<(MediaId, i32)>,
+    levels: std::vec::Vec<(Digest, i32)>,
     rate: SampleRate,
     channels: usize,
-    asked: std::vec::Vec<(MediaId, i64, usize)>,
+    asked: std::vec::Vec<(Digest, i64, usize)>,
 }
 
 impl SampleSource for Flat {
     fn samples(
         &mut self,
-        media: MediaId,
+        media: Digest,
         start: i64,
         count: usize,
-    ) -> Result<AudioBuffer, SlateStatus> {
+    ) -> Result<AudioBuffer, sapstudio_audio::AudioStatus> {
         self.asked.push((media, start, count));
         let level = self
             .levels
@@ -36,8 +36,17 @@ impl SampleSource for Flat {
         let held: std::vec::Vec<std::vec::Vec<i32>> = (0..self.channels)
             .map(|_| std::vec![level; count])
             .collect();
-        AudioBuffer::new(self.rate, held).map_err(SlateStatus::Audio)
+        AudioBuffer::new(self.rate, held)
     }
+}
+
+/// What the vault would call this asset: its content digest.
+///
+/// A sound source is asked for a digest now rather than for a position in this
+/// project's table, because a vault is shared between projects and a position
+/// means something different in each. These fixtures follow.
+fn digest_of(project: &Project, id: MediaId) -> Digest {
+    project.media().get(id).expect("an asset").digest()
 }
 
 fn media(project: &mut Project, tag: u8, rate: Timebase) -> MediaId {
@@ -116,13 +125,14 @@ fn a_whole_rate_gives_a_whole_number_of_samples_per_frame() {
         )],
     );
     let mut source = Flat {
-        levels: std::vec![(id, 1000)],
+        levels: std::vec![(digest_of(&project, id), 1000)],
         rate: SampleRate::Hz48000,
         channels: 2,
         asked: std::vec::Vec::new(),
     };
     let (mixed, report) = mixdown::mix(
-        project.sequence(sequence).expect("a sequence"),
+        &project,
+        sequence,
         span(Timebase::FILM_24, 0, 10),
         SampleRate::Hz48000,
         2,
@@ -169,13 +179,14 @@ fn no_frame_at_ntsc_is_a_whole_number_of_samples_and_none_are_lost() {
         )],
     );
     let mut source = Flat {
-        levels: std::vec![(id, 7)],
+        levels: std::vec![(digest_of(&project, id), 7)],
         rate: SampleRate::Hz48000,
         channels: 1,
         asked: std::vec::Vec::new(),
     };
     let (mixed, _) = mixdown::mix(
-        project.sequence(sequence).expect("a sequence"),
+        &project,
+        sequence,
         span(Timebase::NTSC_30, 0, 300),
         SampleRate::Hz48000,
         1,
@@ -226,13 +237,14 @@ fn the_blocks_are_contiguous_with_no_gap_and_no_overlap() {
         )],
     );
     let mut source = Flat {
-        levels: std::vec![(id, 1)],
+        levels: std::vec![(digest_of(&project, id), 1)],
         rate: SampleRate::Hz48000,
         channels: 1,
         asked: std::vec::Vec::new(),
     };
     mixdown::mix(
-        project.sequence(sequence).expect("a sequence"),
+        &project,
+        sequence,
         span(Timebase::NTSC_30, 0, 120),
         SampleRate::Hz48000,
         1,
@@ -269,13 +281,17 @@ fn two_tracks_sum() {
         );
     }
     let mut source = Flat {
-        levels: std::vec![(one, 100), (two, 250)],
+        levels: std::vec![
+            (digest_of(&project, one), 100),
+            (digest_of(&project, two), 250)
+        ],
         rate: SampleRate::Hz48000,
         channels: 1,
         asked: std::vec::Vec::new(),
     };
     let (mixed, report) = mixdown::mix(
-        project.sequence(sequence).expect("a sequence"),
+        &project,
+        sequence,
         span(Timebase::FILM_24, 0, 2),
         SampleRate::Hz48000,
         1,
@@ -316,13 +332,14 @@ fn a_gap_and_an_empty_sequence_are_silence_rather_than_a_hole() {
         ],
     );
     let mut source = Flat {
-        levels: std::vec![(id, 500)],
+        levels: std::vec![(digest_of(&project, id), 500)],
         rate: SampleRate::Hz48000,
         channels: 1,
         asked: std::vec::Vec::new(),
     };
     let (mixed, _) = mixdown::mix(
-        project.sequence(sequence).expect("a sequence"),
+        &project,
+        sequence,
         span(Timebase::FILM_24, 0, 4),
         SampleRate::Hz48000,
         1,
@@ -345,7 +362,8 @@ fn a_gap_and_an_empty_sequence_are_silence_rather_than_a_hole() {
     // An empty sequence is the same statement, at full length.
     let empty = project.add_sequence(Timebase::FILM_24).expect("a sequence");
     let (silence, _) = mixdown::mix(
-        project.sequence(empty).expect("a sequence"),
+        &project,
+        empty,
         span(Timebase::FILM_24, 0, 3),
         SampleRate::Hz48000,
         2,
@@ -379,13 +397,14 @@ fn the_source_position_is_the_clips_start_plus_how_far_in() {
         )],
     );
     let mut source = Flat {
-        levels: std::vec![(id, 1)],
+        levels: std::vec![(digest_of(&project, id), 1)],
         rate: SampleRate::Hz48000,
         channels: 1,
         asked: std::vec::Vec::new(),
     };
     mixdown::mix(
-        project.sequence(sequence).expect("a sequence"),
+        &project,
+        sequence,
         span(Timebase::FILM_24, 0, 3),
         SampleRate::Hz48000,
         1,
@@ -397,7 +416,11 @@ fn the_source_position_is_the_clips_start_plus_how_far_in() {
     // 96,000; each following frame advances by 2000.
     assert_eq!(
         source.asked,
-        std::vec![(id, 96_000, 2000), (id, 98_000, 2000), (id, 100_000, 2000)]
+        std::vec![
+            (digest_of(&project, id), 96_000, 2000),
+            (digest_of(&project, id), 98_000, 2000),
+            (digest_of(&project, id), 100_000, 2000)
+        ]
     );
 }
 
@@ -409,12 +432,11 @@ fn a_source_that_answers_with_a_different_span_is_refused() {
     impl SampleSource for Short {
         fn samples(
             &mut self,
-            _media: MediaId,
+            _media: Digest,
             _start: i64,
             count: usize,
-        ) -> Result<AudioBuffer, SlateStatus> {
+        ) -> Result<AudioBuffer, sapstudio_audio::AudioStatus> {
             AudioBuffer::silence(SampleRate::Hz48000, 1, count.saturating_sub(1))
-                .map_err(SlateStatus::Audio)
         }
     }
 
@@ -436,7 +458,8 @@ fn a_source_that_answers_with_a_different_span_is_refused() {
     );
     assert_eq!(
         mixdown::mix(
-            project.sequence(sequence).expect("a sequence"),
+            &project,
+            sequence,
             span(Timebase::FILM_24, 0, 1),
             SampleRate::Hz48000,
             1,
@@ -465,14 +488,14 @@ fn a_mixdown_is_the_same_mixdown_every_time() {
         )],
     );
     let mut source = Flat {
-        levels: std::vec![(id, 123)],
+        levels: std::vec![(digest_of(&project, id), 123)],
         rate: SampleRate::Hz48000,
         channels: 2,
         asked: std::vec::Vec::new(),
     };
-    let held = project.sequence(sequence).expect("a sequence");
     let first = mixdown::mix(
-        held,
+        &project,
+        sequence,
         span(Timebase::NTSC_30, 0, 30),
         SampleRate::Hz48000,
         2,
@@ -480,7 +503,8 @@ fn a_mixdown_is_the_same_mixdown_every_time() {
     )
     .expect("a mix");
     let second = mixdown::mix(
-        held,
+        &project,
+        sequence,
         span(Timebase::NTSC_30, 0, 30),
         SampleRate::Hz48000,
         2,
@@ -529,13 +553,14 @@ fn a_fader_at_unity_changes_nothing_at_all() {
         )],
     );
     let mut source = Flat {
-        levels: std::vec![(id, 12_345)],
+        levels: std::vec![(digest_of(&project, id), 12_345)],
         rate: SampleRate::Hz48000,
         channels: 1,
         asked: std::vec::Vec::new(),
     };
     let (mixed, _) = mixdown::mix(
-        project.sequence(sequence).expect("a sequence"),
+        &project,
+        sequence,
         span(Timebase::FILM_24, 0, 2),
         SampleRate::Hz48000,
         1,
@@ -586,13 +611,14 @@ fn a_fader_move_reaches_the_mix() {
         .expect("a fader move");
 
     let mut source = Flat {
-        levels: std::vec![(id, 10_000)],
+        levels: std::vec![(digest_of(&project, id), 10_000)],
         rate: SampleRate::Hz48000,
         channels: 1,
         asked: std::vec::Vec::new(),
     };
     let (mixed, _) = mixdown::mix(
-        project.sequence(sequence).expect("a sequence"),
+        &project,
+        sequence,
         span(Timebase::FILM_24, 0, 1),
         SampleRate::Hz48000,
         1,
@@ -647,13 +673,17 @@ fn a_muted_track_is_neither_heard_nor_decoded() {
         .expect("a mute");
 
     let mut source = Flat {
-        levels: std::vec![(heard, 500), (silenced, 9_000)],
+        levels: std::vec![
+            (digest_of(&project, heard), 500),
+            (digest_of(&project, silenced), 9_000)
+        ],
         rate: SampleRate::Hz48000,
         channels: 1,
         asked: std::vec::Vec::new(),
     };
     let (mixed, _) = mixdown::mix(
-        project.sequence(sequence).expect("a sequence"),
+        &project,
+        sequence,
         span(Timebase::FILM_24, 0, 1),
         SampleRate::Hz48000,
         1,
@@ -669,7 +699,10 @@ fn a_muted_track_is_neither_heard_nor_decoded() {
         "only the unmuted track is heard"
     );
     assert!(
-        source.asked.iter().all(|(id, _, _)| *id == heard),
+        source
+            .asked
+            .iter()
+            .all(|(id, _, _)| *id == digest_of(&project, heard)),
         "and the muted one was never read"
     );
 }
@@ -705,13 +738,14 @@ fn muting_every_track_is_silence_of_the_right_length() {
         .expect("a mute");
 
     let mut source = Flat {
-        levels: std::vec![(id, 8_000)],
+        levels: std::vec![(digest_of(&project, id), 8_000)],
         rate: SampleRate::Hz48000,
         channels: 2,
         asked: std::vec::Vec::new(),
     };
     let (mixed, _) = mixdown::mix(
-        project.sequence(sequence).expect("a sequence"),
+        &project,
+        sequence,
         span(Timebase::FILM_24, 0, 3),
         SampleRate::Hz48000,
         2,
@@ -776,13 +810,14 @@ fn mixed_with(
             .expect("an automation");
     }
     let mut source = Flat {
-        levels: std::vec![(id, sample)],
+        levels: std::vec![(digest_of(&project, id), sample)],
         rate: SampleRate::Hz48000,
         channels: 1,
         asked: std::vec::Vec::new(),
     };
     mixdown::mix(
-        project.sequence(sequence).expect("a sequence"),
+        &project,
+        sequence,
         span(rate, 0, frames),
         SampleRate::Hz48000,
         1,
@@ -891,13 +926,14 @@ fn a_track_with_no_automation_still_reads_its_static_fader() {
         )
         .expect("a fader");
     let mut source = Flat {
-        levels: std::vec![(id, 1_000_000)],
+        levels: std::vec![(digest_of(&project, id), 1_000_000)],
         rate: SampleRate::Hz48000,
         channels: 1,
         asked: std::vec::Vec::new(),
     };
     let (buffer, _) = mixdown::mix(
-        project.sequence(sequence).expect("a sequence"),
+        &project,
+        sequence,
         span(rate, 0, 2),
         SampleRate::Hz48000,
         1,
@@ -913,8 +949,15 @@ fn a_track_with_no_automation_still_reads_its_static_fader() {
 
 #[test]
 fn a_muted_track_stays_muted_under_automation() {
-    // Mute remains authoritative over fader automation. The automation curve
-    // contains levels and cannot represent the mute switch.
+    // Mute is a switch, not a fader position, and automation drives the
+    // fader. A curve holds decibels and cannot reach the off detent at all —
+    // its floor is very quiet and is still a level. So a track turned off at
+    // the surface must not come back on because somebody drew a fade on it.
+    //
+    // This test exists because the first version did exactly that: `fader_at`
+    // read the curve and never looked at the static fader, so automation
+    // silently overrode mute. The name of a test written honestly is what
+    // found it.
     let rate = Timebase::FILM_24;
     let mut project = Project::new();
     let sequence = project.add_sequence(rate).expect("a sequence");
@@ -947,13 +990,14 @@ fn a_muted_track_stays_muted_under_automation() {
         .expect("a mute");
 
     let mut source = Flat {
-        levels: std::vec![(id, 8_000_000)],
+        levels: std::vec![(digest_of(&project, id), 8_000_000)],
         rate: SampleRate::Hz48000,
         channels: 1,
         asked: std::vec::Vec::new(),
     };
     let (buffer, _) = mixdown::mix(
-        project.sequence(sequence).expect("a sequence"),
+        &project,
+        sequence,
         span(rate, 0, 2),
         SampleRate::Hz48000,
         1,
@@ -1061,13 +1105,14 @@ fn a_sound_clip_fades_up_from_silence() {
         )
         .expect("a fade in");
     let mut source = Flat {
-        levels: std::vec![(id, 10_000)],
+        levels: std::vec![(digest_of(&project, id), 10_000)],
         rate: SampleRate::Hz48000,
         channels: 1,
         asked: std::vec::Vec::new(),
     };
     let (mixed, _) = mixdown::mix(
-        project.sequence(sequence).expect("a sequence"),
+        &project,
+        sequence,
         span(Timebase::FILM_24, 0, 4),
         SampleRate::Hz48000,
         1,
@@ -1124,13 +1169,14 @@ fn a_clip_nobody_faded_arrives_at_the_bus_bit_for_bit() {
         )],
     );
     let mut source = Flat {
-        levels: std::vec![(id, 12_345)],
+        levels: std::vec![(digest_of(&project, id), 12_345)],
         rate: SampleRate::Hz48000,
         channels: 1,
         asked: std::vec::Vec::new(),
     };
     let (mixed, _) = mixdown::mix(
-        project.sequence(sequence).expect("a sequence"),
+        &project,
+        sequence,
         span(Timebase::FILM_24, 0, 3),
         SampleRate::Hz48000,
         1,

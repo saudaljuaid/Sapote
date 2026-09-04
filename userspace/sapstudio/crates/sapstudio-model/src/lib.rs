@@ -24,6 +24,7 @@ extern crate alloc;
 
 mod bounded;
 
+pub mod caption;
 pub mod curve;
 pub mod edit;
 pub mod item;
@@ -44,7 +45,22 @@ pub use curve::{Automation, Curve, Interpolation, Keyframe, KeyframeEdit, MAX_KE
 pub use edit::Edit;
 pub use item::{Clip, Item, Playback};
 pub use journal::EditJournal;
-pub use marker::{MAX_MARKER_TEXT, MAX_MARKERS_PER_SEQUENCE, Marker};
+/// How deeply sequences may nest inside one another.
+///
+/// Eight. A policy bound, and a small one on purpose: nesting is a way of
+/// naming a piece of work so it can be reused, and a chain eight deep is
+/// already a structure nobody can hold in their head. It is also what bounds
+/// the renderer, which walks the chain with an explicit stack — R-5.5 names
+/// nested sequences among the places recursion is forbidden.
+///
+/// `sapstudio-render` carries the same number, because the two crates are
+/// siblings and neither may depend on the other. `the_two_nesting_bounds_agree`
+/// in the application's tests asserts they are one number, exactly as the
+/// fader's two bounds are — a duplication that cannot drift without something
+/// failing.
+pub const MAX_NESTING_DEPTH: usize = 8;
+
+pub use marker::{MAX_MARKER_TEXT, MAX_MARKERS_PER_CLIP, MAX_MARKERS_PER_SEQUENCE, Marker};
 pub use mask::{MAX_CORNERS, Mask};
 pub use media::{Digest, Location, MAX_LOCATION_BYTES, MediaAsset, MediaId, MediaSource};
 pub use project::Project;

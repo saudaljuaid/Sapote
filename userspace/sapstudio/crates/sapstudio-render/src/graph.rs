@@ -1,9 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Typed render tasks with content-addressed identities.
+//! The render graph.
 //!
-//! Nodes may refer only to earlier nodes, which prevents cycles. Each identity
-//! includes the node kind, parameters, and input identities (R-8.5). Evaluation
-//! order does not affect the result (R-6.2).
+//! A render is a pure function of a project and an instant (R-4.1), and this
+//! is the shape that makes it one: a graph of tasks with typed inputs, no
+//! ambient state, and no way to observe when anything ran.
+//!
+//! Two invariants are structural rather than checked. A node may only refer to
+//! nodes added before it, so **a cycle is unrepresentable** — there is no
+//! `add_edge` to get wrong and no validation pass to forget. And every node's
+//! identity is a digest over its kind, its parameters and its inputs'
+//! identities, so two nodes that would compute the same picture *are* the same
+//! node as far as the cache is concerned (R-8.5).
+//!
+//! Sapote is single-core, so this evaluates serially today. It is written as
+//! though it did not: nothing here depends on evaluation order, and the tests
+//! prove that by evaluating the same graph in every order a scheduler could
+//! choose and comparing the results (R-6.2). The day cores arrive, nothing in
+//! this model changes.
 
 use alloc::vec::Vec;
 
@@ -64,6 +77,19 @@ pub enum Node {
         /// What the result is.
         description: FrameDescription,
     },
+    /// A frame of nothing at all: no light, and no coverage either.
+    ///
+    /// The other kind of nothing, and the two are not interchangeable.
+    /// [`Node::Blank`] is an opaque black slug, which is what a *programme*
+    /// shows where it has nothing — a viewer displays black leader and an
+    /// export writes black frames. This is what *material* looks like where it
+    /// has nothing, and a nested sequence composited onto black would blank
+    /// out every track beneath it wherever it happened to be empty.
+    Empty {
+        /// What the result is. Must carry coverage: a format without it cannot
+        /// express absence at all.
+        description: FrameDescription,
+    },
     /// A frame of media, named by what that media *is*.
     ///
     /// By content digest rather than by any project's identifier for it,
@@ -72,7 +98,7 @@ pub enum Node {
     /// project-local index would cache it twice and could never tell that the
     /// file had been swapped underneath.
     ///
-    /// Where the frame comes from is a [`Library`], because a graph knows how to
+    /// Where the frame comes from is a [`Media`], because a graph knows how to
     /// combine frames and nothing about where they live.
     Source {
         /// Which media.
@@ -296,6 +322,7 @@ impl Node {
         match self {
             Self::Pattern { description, .. }
             | Self::Blank { description }
+            | Self::Empty { description }
             | Self::Type { description, .. }
             | Self::Source { description, .. } => Some(*description),
             Self::Convert { target, .. } | Self::Associate { target, .. } => Some(*target),
@@ -313,9 +340,11 @@ impl Node {
     #[must_use]
     pub fn inputs(&self) -> &[NodeId] {
         match self {
-            Self::Pattern { .. } | Self::Blank { .. } | Self::Source { .. } | Self::Type { .. } => {
-                &[]
-            }
+            Self::Pattern { .. }
+            | Self::Blank { .. }
+            | Self::Empty { .. }
+            | Self::Source { .. }
+            | Self::Type { .. } => &[],
             Self::Convert { input, .. }
             | Self::Fade { input, .. }
             | Self::Wipe { input, .. }
@@ -348,21 +377,67 @@ pub trait Library {
     /// Whatever the source cannot do.
     fn frame(&mut self, media: Digest, tick: i64, description: FrameDescription) -> Result<Frame>;
 
-    /// Whether the media is available while planning the graph.
+    /// Whether this media can be read at all.
     ///
-    /// The default attempts the read. Implementations may return `false` to
-    /// avoid caching fallback output under the source-media identity.
+    /// Asked *before* a graph is built rather than discovered while evaluating
+    /// one, and that is the whole reason it exists as a separate question.
+    ///
+    /// A source node's identity is a digest over the media, the tick and the
+    /// description — and **not** over whether the bytes happened to be
+    /// reachable. So a node that quietly fell back to a slate when a file was
+    /// missing would put that slate in the cache under the key of the real
+    /// picture, and hand it back after the drive was plugged in again. That is
+    /// exactly the staleness a content-addressed cache exists to prevent, and
+    /// it is why the decision belongs to whatever plans the graph.
+    ///
+    /// The default is `true`: a library that cannot tell is a library that
+    /// should try, and failing at `frame` is a worse answer than refusing to
+    /// plan.
     fn available(&mut self, media: Digest) -> bool {
         let _ = media;
         true
     }
 
-    /// Load the look identified by `look`.
+    /// The look with this digest.
+    ///
+    /// A cube is 35,937 triples and a graph is rebuilt for every instant, so a
+    /// node names a look by what it *is* and fetches it from here — the same
+    /// bargain as media, for the same reasons. A default is deliberately not
+    /// provided: an implementor that renders graded material and forgot to
+    /// write this should fail to compile rather than refuse at run time.
     ///
     /// # Errors
     ///
     /// Whatever the library cannot do.
     fn look(&mut self, look: Digest) -> Result<crate::look::Look>;
+
+    /// One row of a frame of media, as a frame one row high.
+    ///
+    /// What a library needs to serve [`Graph::row`]. The default **refuses**
+    /// rather than fetching the whole frame and slicing it, and that is the
+    /// decision worth arguing for: a default that quietly loaded eight
+    /// megabytes to hand back six thousand bytes would make a row-at-a-time
+    /// renderer look like it was working while doing exactly the thing it
+    /// exists to avoid. A library that can serve rows says so by writing this;
+    /// one that cannot says so by not.
+    ///
+    /// The frame handed back is `width × 1` in the same format and colour as
+    /// the description asked for.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderStatus::NoRowForm`] by default, or whatever the library cannot
+    /// do.
+    fn row(
+        &mut self,
+        media: Digest,
+        tick: i64,
+        description: FrameDescription,
+        row: usize,
+    ) -> Result<Frame> {
+        let _ = (media, tick, description, row);
+        Err(RenderStatus::NoRowForm)
+    }
 }
 
 /// A graph of render steps.
@@ -407,8 +482,9 @@ impl Graph {
     ///
     /// # Errors
     ///
-    /// [`RenderStatus::UnknownNode`] if an input does not refer to an earlier
-    /// node.
+    /// [`RenderStatus::UnknownNode`] if the node refers to one that does not
+    /// exist yet — which is the only way a cycle could be written, and it is
+    /// refused here rather than found by a validation pass later.
     /// [`RenderStatus::GraphTooLarge`] past the policy bound.
     pub fn add(&mut self, node: Node) -> Result<NodeId> {
         for input in node.inputs() {
@@ -551,7 +627,11 @@ impl Graph {
                     hasher.update(self.identity(*layer)?.bytes());
                 }
             }
-            Node::Pattern { .. } | Node::Blank { .. } | Node::Source { .. } | Node::Type { .. } => {
+            Node::Pattern { .. }
+            | Node::Blank { .. }
+            | Node::Empty { .. }
+            | Node::Source { .. }
+            | Node::Type { .. } => {
                 unreachable();
             }
         }
@@ -609,6 +689,7 @@ impl Graph {
             Node::Blank { description } => {
                 Frame::blank(description).map_err(RenderStatus::Media)?
             }
+            Node::Empty { description } => nothing(description)?,
             Node::Convert { input, target } => {
                 let source = self.evaluate(input, pool, library)?;
                 convert::convert(&source, target)?
@@ -665,18 +746,11 @@ impl Graph {
                 let coverage = crate::shape::masking(&corners, inverted, width, height)?;
                 composite::masked(&source, &coverage)?
             }
-            Node::Type {
-                description,
-                lines,
-                size,
-                across,
-                down,
-                alignment,
-                ink,
-            } => typeset(description, &lines, size, across, down, alignment, ink)?,
+            Node::Type { .. } => carded(&node, None)?,
             Node::Legend { input, text, brief } => {
                 let source = self.evaluate(input, pool, library)?;
-                lettered(&source, &text, &brief)?
+                let placed = extent(&source)?;
+                lettered(&source, &text, &brief, placed, None)?
             }
             Node::Associate { input, target } => {
                 associated(&self.evaluate(input, pool, library)?, target)?
@@ -703,6 +777,431 @@ impl Graph {
             Err(status) => Err(RenderStatus::Media(status)),
         }
     }
+
+    /// Evaluate **one row** of a node, as a frame one row high.
+    ///
+    /// The same picture as the corresponding row of [`Graph::evaluate`], byte
+    /// for byte, computed without ever holding a whole frame. That equality is
+    /// the property this exists to have and the thing its tests check for
+    /// every node kind at every row.
+    ///
+    /// ## Why
+    ///
+    /// A 1920×1080 eight-bit RGBA frame is 8,294,400 bytes and a Sapote
+    /// program is mapped 76 KiB, so `evaluate` allocates a hundred and six
+    /// times the program's whole address space **per node**. One row of that
+    /// frame is 7,680 bytes. The chain below a compositing node is a handful
+    /// of rows rather than a handful of frames, which is the difference
+    /// between a renderer that cannot run on the target and one that can.
+    ///
+    /// ## No cache, and that is deliberate
+    ///
+    /// [`Graph::evaluate`] caches whole frames by node identity. A row
+    /// evaluator that did the same would need one entry per node **per row**,
+    /// which is the frame it is avoiding, spelled differently. So a row is
+    /// computed from its inputs' rows every time.
+    ///
+    /// That repeats work wherever a node feeds two consumers. In the graphs
+    /// this program builds it never does: the planner chains decorations
+    /// linearly and combines with `Over`, so the graph is a tree. A future
+    /// graph with sharing would pay for it, and would be right to — the
+    /// alternative is not paying and not fitting.
+    ///
+    /// ## What it refuses, and why the two refusals are different
+    ///
+    /// [`RenderStatus::NotRowLocal`] is about the *operation*:
+    /// [`Node::Transform`] resamples, and an output row's preimage is a line
+    /// in the source rather than a row. Only a linear map that takes
+    /// horizontals to horizontals makes that line one row, and a rotation
+    /// never does. A subsampled format is refused the same way and for a
+    /// sharper reason: one chroma row serves two luma rows, so a luma row is
+    /// not independent of its neighbour.
+    ///
+    /// [`RenderStatus::NoRowForm`] is about this *build*:
+    /// [`Node::Pattern`], [`Node::Type`] and [`Node::Legend`] are generators
+    /// whose row form is not written. Somebody reading a refusal needs to know
+    /// whether to wait for a later version or to change what they are asking
+    /// for, and one status for both would not tell them.
+    ///
+    /// # Errors
+    ///
+    /// The two above, [`RenderStatus::OutsideDomain`] for a row outside the
+    /// frame, and whatever the operation itself refuses.
+    pub fn row(&self, id: NodeId, row: usize, library: &mut dyn Library) -> Result<Frame> {
+        let node = self.node(id)?.clone();
+        match node {
+            Node::Blank { description } => {
+                Frame::blank(row_description(description, row)?).map_err(RenderStatus::Media)
+            }
+            Node::Empty { description } => nothing(row_description(description, row)?),
+            Node::Source {
+                media: which,
+                tick,
+                description,
+            } => {
+                let wanted = row_description(description, row)?;
+                let held = library.row(which, tick, description, row)?;
+                if *held.description() != wanted {
+                    // The same check `evaluate` makes, and for the same
+                    // reason: a source that answered a different question has
+                    // answered a different question.
+                    return Err(RenderStatus::SourceDescriptionMismatch);
+                }
+                Ok(held)
+            }
+            Node::Convert { input, target } => {
+                let source = self.row(input, row, library)?;
+                convert::convert(&source, row_description(target, row)?)
+            }
+            Node::Fade { input, opacity } => {
+                composite::faded(&self.row(input, row, library)?, opacity)
+            }
+            Node::Associate { input, target } => associated(
+                &self.row(input, row, library)?,
+                row_description(target, row)?,
+            ),
+            Node::Look {
+                input,
+                look,
+                strength,
+            } => {
+                let source = self.row(input, row, library)?;
+                library.look(look)?.apply(&source, strength)
+            }
+            Node::Over { layers } => {
+                let bottom = self.row(layers[0], row, library)?;
+                let top = self.row(layers[1], row, library)?;
+                composite::over(&top, &bottom)
+            }
+            Node::Mask {
+                input,
+                corners,
+                inverted,
+            } => {
+                // The geometry first, and the source afterwards. A shape is
+                // placed against the whole frame, so a mask over something
+                // whose height this cannot know is refused before a row of it
+                // is computed -- which is both the cheaper order and the one
+                // that gives `described` a reachable answer.
+                let (width, height) = self.extent_of(id)?;
+                let source = self.row(input, row, library)?;
+                let coverage = crate::shape::masking_row(&corners, inverted, width, height, row)?;
+                composite::masked(&source, &coverage)
+            }
+            Node::Wipe {
+                input,
+                across,
+                down,
+                fraction,
+                softness,
+            } => {
+                let (width, height) = self.extent_of(id)?;
+                let source = self.row(input, row, library)?;
+                let coverage = crate::shape::feathered_row(
+                    across, down, fraction, softness, width, height, row,
+                )?;
+                composite::masked(&source, &coverage)
+            }
+            Node::Transform { .. } => self.banded(&node, row, library),
+            Node::Pattern {
+                pattern,
+                description,
+            } => {
+                // Placed against the whole picture, one row drawn -- the same
+                // discipline a mask takes, because bars are eighths of the
+                // width and a checkerboard is counted from the top.
+                let _ = row_description(description, row)?;
+                let at = u32::try_from(row).map_err(|_| RenderStatus::OutsideDomain)?;
+                pattern
+                    .render_row(description, at)
+                    .map_err(RenderStatus::Media)
+            }
+            Node::Type { .. } => carded(&node, Some(row)),
+            Node::Legend { input, text, brief } => {
+                // The geometry before the source, as a mask does: a legend is
+                // laid out against the frame it sits on, and one row of that
+                // frame cannot say how tall it is.
+                let placed = self.extent_of(id)?;
+                let source = self.row(input, row, library)?;
+                lettered(&source, &text, &brief, placed, Some(row))
+            }
+        }
+    }
+
+    /// Whether every node under this one can be evaluated a row at a time.
+    ///
+    /// Asked **before** a scan starts rather than discovered during one, which
+    /// is the same decision [`Library::available`] makes and for the same
+    /// reason: a refusal that arrives at row four hundred has already spent
+    /// four hundred rows of work, and a caller that wanted to know whether to
+    /// scan or to render whole frames wanted to know *first*.
+    ///
+    /// The refusal it hands back is the one [`Graph::row`] would have given,
+    /// so a caller can tell a transform (which will never scan) from a
+    /// generator this build has not written a row form for (which may).
+    ///
+    /// # Errors
+    ///
+    /// [`RenderStatus::NotRowLocal`], [`RenderStatus::NoRowForm`], or
+    /// [`RenderStatus::UnknownNode`].
+    pub fn row_local(&self, id: NodeId) -> Result<()> {
+        match self.node(id)? {
+            // A description that cannot be cut into rows refuses here as well
+            // as at the row itself, so a subsampled programme is turned away
+            // before a scan begins rather than at its first row.
+            Node::Blank { description } | Node::Empty { description } => {
+                row_description(*description, 0).map(|_| ())
+            }
+            Node::Source { description, .. } => row_description(*description, 0).map(|_| ()),
+            Node::Convert { input, target } | Node::Associate { input, target } => {
+                row_description(*target, 0)?;
+                self.row_local(*input)
+            }
+            Node::Fade { input, .. }
+            | Node::Look { input, .. }
+            | Node::Mask { input, .. }
+            | Node::Wipe { input, .. }
+            | Node::Legend { input, .. } => self.row_local(*input),
+            Node::Over { layers } => {
+                self.row_local(layers[0])?;
+                self.row_local(layers[1])
+            }
+            Node::Transform {
+                input,
+                linear,
+                offset,
+                anchor,
+                ..
+            } => {
+                // The map decides, and it decides before a row is spent: a
+                // scale scans and a rotation never will.
+                let described = self.described(*input)?;
+                let geometry = described.geometry();
+                let mapping = crate::resample::Mapping::about(
+                    *linear,
+                    *offset,
+                    *anchor,
+                    geometry.width(),
+                    geometry.height(),
+                )?;
+                if !mapping.horizontal() {
+                    return Err(RenderStatus::NotRowLocal);
+                }
+                row_description(described, 0)?;
+                self.row_local(*input)
+            }
+            // Every generator has a row form now. The description is still
+            // checked, because a subsampled card has no rows however well the
+            // letters are drawn.
+            Node::Pattern { description, .. } | Node::Type { description, .. } => {
+                row_description(*description, 0).map(|_| ())
+            }
+        }
+    }
+
+    /// One row of a resampled node, drawn from a band of its input's rows.
+    ///
+    /// The band is asked for **first** and fetched second, so a row that
+    /// cannot be scanned costs nothing and a row that can costs exactly the
+    /// rows it reads. That is the whole of what this milestone buys: a
+    /// scaled-down programme used to force a whole frame through the graph,
+    /// and now it forces a band whose height [`crate::resample::MAX_BAND_ROWS`]
+    /// bounds.
+    ///
+    /// The rows are stitched into one frame rather than handed over one at a
+    /// time because a resampled pixel reads from two of them at once, and a
+    /// sampler that took a slice of rows would be a second sampler.
+    ///
+    /// It takes the node rather than its five fields, which is what `carded`
+    /// settled on for the same reason: five parameters in a fixed order are
+    /// five chances to hand a transform somebody else's anchor.
+    fn banded(&self, node: &Node, row: usize, library: &mut dyn Library) -> Result<Frame> {
+        let Node::Transform {
+            input,
+            linear,
+            offset,
+            anchor,
+            bilinear,
+        } = *node
+        else {
+            return Err(RenderStatus::NotRowLocal);
+        };
+        let described = self.described(input)?;
+        let geometry = described.geometry();
+        let mapping = crate::resample::Mapping::about(
+            linear,
+            offset,
+            anchor,
+            geometry.width(),
+            geometry.height(),
+        )?;
+        let filter = if bilinear {
+            crate::resample::Filter::Bilinear
+        } else {
+            crate::resample::Filter::Area
+        };
+        let height = usize::try_from(geometry.height()).map_err(|_| RenderStatus::OutsideDomain)?;
+        let (from, to) = crate::resample::band(mapping, filter, row, height)?;
+        let band = self.gathered(input, from, to, library)?;
+        crate::resample::resample_row(
+            band.as_ref(),
+            described,
+            from,
+            described,
+            mapping,
+            filter,
+            row,
+        )
+    }
+
+    /// Rows `from..to` of a node, as one frame that many rows tall.
+    ///
+    /// Nothing at all for an empty range, which is what a destination row
+    /// whose preimage misses the picture asks for.
+    fn gathered(
+        &self,
+        input: NodeId,
+        from: usize,
+        to: usize,
+        library: &mut dyn Library,
+    ) -> Result<Option<Frame>> {
+        if from >= to {
+            return Ok(None);
+        }
+        let described = row_description(self.described(input)?, from)?;
+        let mut packed = Vec::new();
+        packed
+            .try_reserve(
+                (to - from)
+                    .checked_mul(described.packed_bytes().map_err(RenderStatus::Media)?)
+                    .ok_or(RenderStatus::OutsideDomain)?,
+            )
+            .map_err(|_| RenderStatus::OutOfMemory)?;
+        for at in from..to {
+            // No check that each row is described the way the band expects,
+            // and that absence is deliberate: `row_description` is a function
+            // of the node's description and not of the row, so every row of
+            // one node carries the same one. A guard here would be a guard
+            // whose absence changes no answer, and this project has deleted
+            // seven of those. What a row of the wrong *size* would do is
+            // refuse at `from_packed` below, on the byte count.
+            packed.extend_from_slice(&self.row(input, at, library)?.to_packed()?);
+        }
+        let stacked = FrameDescription::new(
+            sapstudio_media::Geometry::new(
+                described.geometry().width(),
+                u32::try_from(to - from).map_err(|_| RenderStatus::OutsideDomain)?,
+            )
+            .map_err(RenderStatus::Media)?,
+            described.format(),
+            described.colour(),
+            described.siting(),
+            described.alpha(),
+            described.pixel_aspect(),
+        )
+        .map_err(RenderStatus::Media)?;
+        Ok(Some(Frame::from_owned(stacked, packed)?))
+    }
+
+    /// The full geometry a node produces, without producing it.
+    ///
+    /// A mask and a wipe are placed against the **whole** frame — a shape
+    /// stretched over one row is a different shape — so a row of one has to
+    /// know how tall the picture it belongs to is. Walking to the description
+    /// that decides it is cheaper than rendering the frame to measure it, and
+    /// it is the only reason this function exists.
+    fn extent_of(&self, id: NodeId) -> Result<(usize, usize)> {
+        let geometry = self.described(id)?.geometry();
+        Ok((
+            usize::try_from(geometry.width()).map_err(|_| RenderStatus::OutsideDomain)?,
+            usize::try_from(geometry.height()).map_err(|_| RenderStatus::OutsideDomain)?,
+        ))
+    }
+
+    /// What a node's frames are described as, found by walking to whatever
+    /// says so.
+    ///
+    /// Every node either carries a description or passes its input's along —
+    /// [`Node::Transform`] included, and that is worth a sentence because it
+    /// looks like the exception and is not. A transform **resamples into its
+    /// source's own description**, so it changes what the picture looks like
+    /// and not how large it is, and walking through one gives the right
+    /// answer.
+    ///
+    /// There was a refusal here instead, on the grounds that a transform is
+    /// not row-local. Its control could not be made to fail: [`Graph::row`]
+    /// refuses the transform itself a moment later with the same status, and
+    /// the geometry this returns was correct in the meantime. A guard whose
+    /// absence changes no answer is a guard no test can hold — the third time
+    /// this project has found one and the third time it has gone.
+    fn described(&self, id: NodeId) -> Result<FrameDescription> {
+        match self.node(id)? {
+            Node::Pattern { description, .. }
+            | Node::Blank { description }
+            | Node::Empty { description }
+            | Node::Source { description, .. }
+            | Node::Type { description, .. } => Ok(*description),
+            Node::Convert { target, .. } | Node::Associate { target, .. } => Ok(*target),
+            // A transform belongs in this arm rather than in one of its own,
+            // and clippy is right to say so: it resamples into its source's
+            // description, which is the same statement every node here makes.
+            Node::Fade { input, .. }
+            | Node::Mask { input, .. }
+            | Node::Wipe { input, .. }
+            | Node::Legend { input, .. }
+            | Node::Transform { input, .. }
+            | Node::Look { input, .. } => self.described(*input),
+            Node::Over { layers } => self.described(layers[0]),
+        }
+    }
+}
+
+/// One row of a description: the same picture, one row high.
+///
+/// Public because a caller that renders rows has to describe them — an export
+/// writing a picture a row at a time needs to know what a row *is* before it
+/// asks for one.
+///
+/// # Errors
+///
+/// [`RenderStatus::NotRowLocal`] for a subsampled format, where one chroma row
+/// serves two luma rows and a luma row is therefore not independent of its
+/// neighbour, and [`RenderStatus::OutsideDomain`] for a row outside the frame.
+pub fn row_description(description: FrameDescription, row: usize) -> Result<FrameDescription> {
+    let geometry = description.geometry();
+    if row >= usize::try_from(geometry.height()).map_err(|_| RenderStatus::OutsideDomain)? {
+        return Err(RenderStatus::OutsideDomain);
+    }
+    if description.format().is_subsampled() {
+        return Err(RenderStatus::NotRowLocal);
+    }
+    FrameDescription::new(
+        sapstudio_media::Geometry::new(geometry.width(), 1).map_err(RenderStatus::Media)?,
+        description.format(),
+        description.colour(),
+        description.siting(),
+        description.alpha(),
+        description.pixel_aspect(),
+    )
+    .map_err(RenderStatus::Media)
+}
+
+/// A frame of no light and no coverage.
+///
+/// The other nothing, and which one a graph asks for is the whole of the
+/// difference. [`Node::Blank`] is the opaque black a *programme* shows where
+/// it has nothing — a viewer displays black leader and an export writes black
+/// frames. This is what *material* looks like where it has nothing, and a
+/// nested sequence composited onto black would blank out every track beneath
+/// it wherever it happened to be empty.
+///
+/// # Errors
+///
+/// [`RenderStatus::Media`] wrapping whatever the frame types refuse — which
+/// includes a format with no coverage, since absence needs somewhere to be
+/// said.
+fn nothing(description: FrameDescription) -> Result<Frame> {
+    Frame::clear(description).map_err(RenderStatus::Media)
 }
 
 /// A frame with its coverage associated the other way.
@@ -719,63 +1218,6 @@ fn associated(source: &Frame, target: FrameDescription) -> Result<Frame> {
             composite::unpremultiply(source)
         }
         _ => Err(RenderStatus::WrongAlphaState),
-    }
-}
-
-/// A frame of coloured type on nothing.
-///
-/// Premultiplied by the same conversion every other layer goes through, for
-/// the reason [`lettered`] gives: a premultiplied sample is the colour times
-/// the coverage *in light*, and code values are not light.
-///
-/// The ink arrives as three fractions of full light and leaves as three code
-/// values, and the table that converts it is built from *this frame's* colour
-/// description. That is the whole argument for naming a colour in light: the
-/// same ink is 255 in a full-range frame and 235 in a limited-range one, and
-/// neither number had to be written down anywhere.
-fn typeset(
-    description: FrameDescription,
-    lines: &[alloc::string::String],
-    size: Rational,
-    across: Rational,
-    down: Rational,
-    alignment: crate::font::Alignment,
-    ink: [Rational; 3],
-) -> Result<Frame> {
-    let geometry = description.geometry();
-    let width = usize::try_from(geometry.width()).map_err(|_| RenderStatus::OutsideDomain)?;
-    let height = usize::try_from(geometry.height()).map_err(|_| RenderStatus::OutsideDomain)?;
-    let borrowed: alloc::vec::Vec<&str> = lines.iter().map(alloc::string::String::as_str).collect();
-    let coverage = crate::font::title(&borrowed, size, across, down, alignment, width, height)?
-        .plane(width, height)?;
-    let straight = description
-        .with_alpha(AlphaState::Straight)
-        .map_err(RenderStatus::Media)?;
-    let mut packed = alloc::vec::Vec::new();
-    packed
-        .try_reserve(
-            coverage
-                .len()
-                .checked_mul(4)
-                .ok_or(RenderStatus::OutOfMemory)?,
-        )
-        .map_err(|_| RenderStatus::OutOfMemory)?;
-    let table = crate::convert::TransferTable::build(straight.colour())?;
-    let mut colour = [0_u8; 3];
-    for (slot, channel) in colour.iter_mut().zip(ink) {
-        *slot = table.encode(Fixed::from_rational(channel)?);
-    }
-    for alpha in &coverage {
-        packed.extend_from_slice(&[colour[0], colour[1], colour[2], *alpha]);
-    }
-    let letters = Frame::from_packed(straight, &packed).map_err(RenderStatus::Media)?;
-    let associated = composite::premultiply(&letters)?;
-    if description.alpha() == Some(AlphaState::Premultiplied) {
-        Ok(associated)
-    } else {
-        // A description that asks for straight coverage gets it, rather than a
-        // frame labelled one way and holding the other.
-        composite::unpremultiply(&associated)
     }
 }
 
@@ -821,8 +1263,16 @@ fn moved(
 /// Writing the coverage byte into the colour would draw type that is too dark
 /// at every edge, everywhere, by exactly the amount the transfer curve bends —
 /// which is the same mistake the compositor was built to stop making.
-fn lettered(source: &Frame, text: &str, brief: &str) -> Result<Frame> {
-    let (width, height) = extent(source)?;
+fn lettered(
+    source: &Frame,
+    text: &str,
+    brief: &str,
+    placed: (usize, usize),
+    row: Option<usize>,
+) -> Result<Frame> {
+    // The extent the *legend* is placed against, which is the whole frame even
+    // when the source handed over is one row of it.
+    let (width, height) = placed;
     let mut chosen = crate::font::caption(text, width, height)?;
     if chosen.is_none() {
         chosen = crate::font::caption(brief, width, height)?;
@@ -832,7 +1282,10 @@ fn lettered(source: &Frame, text: &str, brief: &str) -> Result<Frame> {
         // the one thing that matters, and a grey smear would say it less well.
         return Ok(source.clone());
     };
-    let coverage = run.plane(width, height)?;
+    let coverage = match row {
+        None => run.plane(width, height)?,
+        Some(row) => run.plane_row(width, height, row)?,
+    };
     let described = source.description();
     let straight = described
         .with_alpha(AlphaState::Straight)
@@ -854,8 +1307,79 @@ fn lettered(source: &Frame, text: &str, brief: &str) -> Result<Frame> {
     for alpha in &coverage {
         packed.extend_from_slice(&[white, white, white, *alpha]);
     }
-    let letters = Frame::from_packed(straight, &packed).map_err(RenderStatus::Media)?;
+    let letters = Frame::from_owned(straight, packed).map_err(RenderStatus::Media)?;
     composite::over(&composite::premultiply(&letters)?, source)
+}
+
+/// Set a card, whole or one row of it.
+///
+/// One door for both forms, so a card and a row of a card cannot disagree
+/// about where a letter falls. The node is matched here rather than at each
+/// call site because a card carries seven fields and naming them twice is
+/// seven chances to name one wrongly.
+///
+/// # Errors
+///
+/// [`RenderStatus::UnknownNode`] for a node that is not a card, and whatever
+/// setting one refuses.
+fn carded(node: &Node, row: Option<usize>) -> Result<Frame> {
+    let Node::Type {
+        description,
+        lines,
+        size,
+        across,
+        down,
+        alignment,
+        ink,
+    } = node
+    else {
+        return Err(RenderStatus::UnknownNode);
+    };
+    let geometry = description.geometry();
+    let width = usize::try_from(geometry.width()).map_err(|_| RenderStatus::OutsideDomain)?;
+    let height = usize::try_from(geometry.height()).map_err(|_| RenderStatus::OutsideDomain)?;
+    let borrowed: alloc::vec::Vec<&str> = lines.iter().map(alloc::string::String::as_str).collect();
+    // Placed against the **whole** frame either way: the em is a fraction of
+    // the height and the pen starts at a fraction of the width, so a card
+    // typeset into one row would be a different card.
+    let run = crate::font::title(&borrowed, *size, *across, *down, *alignment, width, height)?;
+    let coverage = match row {
+        None => run.plane(width, height)?,
+        Some(row) => run.plane_row(width, height, row)?,
+    };
+    let out = match row {
+        None => *description,
+        Some(row) => row_description(*description, row)?,
+    };
+    let straight = out
+        .with_alpha(AlphaState::Straight)
+        .map_err(RenderStatus::Media)?;
+    let mut packed = alloc::vec::Vec::new();
+    packed
+        .try_reserve(
+            coverage
+                .len()
+                .checked_mul(4)
+                .ok_or(RenderStatus::OutOfMemory)?,
+        )
+        .map_err(|_| RenderStatus::OutOfMemory)?;
+    let table = crate::convert::TransferTable::build(straight.colour())?;
+    let mut colour = [0_u8; 3];
+    for (slot, channel) in colour.iter_mut().zip(*ink) {
+        *slot = table.encode(Fixed::from_rational(channel)?);
+    }
+    for alpha in &coverage {
+        packed.extend_from_slice(&[colour[0], colour[1], colour[2], *alpha]);
+    }
+    let letters = Frame::from_owned(straight, packed).map_err(RenderStatus::Media)?;
+    let associated = composite::premultiply(&letters)?;
+    if out.alpha() == Some(AlphaState::Premultiplied) {
+        Ok(associated)
+    } else {
+        // A description that asks for straight coverage gets it, rather than a
+        // frame labelled one way and holding the other.
+        composite::unpremultiply(&associated)
+    }
 }
 
 /// A frame's size, as the counts a rasteriser wants.
@@ -884,6 +1408,13 @@ fn absorb_source(hasher: &mut Sha256, node: &Node) -> Result<bool> {
         }
         Node::Blank { description } => {
             hasher.update(&[2]);
+            absorb_description(hasher, *description);
+        }
+        Node::Empty { description } => {
+            // Its own tag, and not a variation on the blank's. Two nodes that
+            // draw different pictures must be two keys, and black and absence
+            // are as different as two pictures get.
+            hasher.update(&[13]);
             absorb_description(hasher, *description);
         }
         Node::Source {

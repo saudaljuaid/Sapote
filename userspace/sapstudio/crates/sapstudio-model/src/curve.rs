@@ -1,11 +1,45 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Time-varying parameters represented by keyframes.
+//! A parameter that changes over time.
 //!
-//! Values hold before the first keyframe and after the last. Hold and linear
-//! interpolation use exact rational arithmetic. Ease interpolation evaluates a
-//! cubic Bézier after finding its monotone time parameter with [`EASE_BITS`]
-//! rounds of integer bisection. Horizontal handles remain inside the keyframe
-//! span so each instant has one result.
+//! Opacity that fades, a scale that pushes in, a volume that ducks under
+//! dialogue. Each is one number with a different value at different instants,
+//! and a *curve* is the shape it takes between the moments somebody actually
+//! set it.
+//!
+//! # Held, not extrapolated
+//!
+//! Before the first keyframe a curve holds the first value; after the last it
+//! holds the last. It does not continue the slope. That is not conservatism:
+//! extrapolating an animation past its last key is how a parameter set to
+//! reach 100% at the end of a shot arrives at 340% two shots later, and the
+//! editor who set two keyframes did not describe anything outside them.
+//!
+//! # Hold, linear, and ease
+//!
+//! [`Interpolation::Hold`] keeps the outgoing value until the next keyframe
+//! and then jumps. [`Interpolation::Linear`] runs straight between them. Both
+//! are exact: the value at any instant is a rational function of rationals,
+//! computed with [`Rational`] and no rounding anywhere.
+//!
+//! [`Interpolation::Ease`] is the cubic Bézier every editor draws as two
+//! handles, and it is the one with an arithmetic problem worth stating
+//! plainly. A Bézier is parameterised by `t`, but a curve is asked for a value
+//! at a *time*, and getting from one to the other means solving `x(t) = time`
+//! — a cubic. Cardano's formula needs a cube root, which is not rational, so
+//! there is no exact answer to find.
+//!
+//! What is done instead: `t` is found by bisection to [`EASE_BITS`] halvings,
+//! and the value is then computed *exactly* at that `t`. So the number handed
+//! back is not an approximation of the curve — it is the curve's exact value
+//! at a dyadic parameter within `2^-32` of the right one. The approximation is
+//! entirely in which point of the curve was chosen, never in the arithmetic
+//! that evaluated it, and the same instant gives the same answer on every
+//! machine because integer bisection has no rounding mode to disagree about.
+//!
+//! Bisection needs `x(t)` to be monotone, which is why the handles' horizontal
+//! positions are held inside the span (R-1.3): a handle outside it makes a
+//! curve that goes back in time, where "the value at this instant" has more
+//! than one answer and no amount of arithmetic will pick between them.
 
 use alloc::vec::Vec;
 
@@ -489,6 +523,84 @@ impl Curve {
         }
     }
 
+    /// The exact area under the curve, from tick nought to `instant`.
+    ///
+    /// The integral, and the reason it exists: a clip whose *speed* is a curve
+    /// reads media at a position that is the area under that curve rather than
+    /// a multiple of it. Nothing else in this model has needed one, and
+    /// nothing else in it may: the answer is a rational only because the
+    /// shapes below are the ones it can be a rational for.
+    ///
+    /// **Held at both ends, like [`Curve::value_at`]**, so the area before the
+    /// first keyframe is a rectangle of its value and the area past the last
+    /// is a rectangle of that one. That is not a convenience — it is what lets
+    /// a ramp be written as two keyframes in the middle of a clip and still
+    /// answer at every tick of it.
+    ///
+    /// From tick *nought* rather than from the first keyframe, because every
+    /// curve in this model is measured from the start of the thing it belongs
+    /// to.
+    ///
+    /// Computed as the difference of two walks from the first keyframe rather
+    /// than as one walk from nought, and that is not a style: a curve
+    /// **re-based by a cut** has keyframes below nought, and a walk that
+    /// started at nought would have to charge the held first value for a
+    /// stretch the curve was not held over. It came out as six and a quarter
+    /// ticks of media on the first tail that was asked, which is a frame and a
+    /// half of drift at the first cut through a ramp.
+    ///
+    /// # Errors
+    ///
+    /// [`ModelStatus::WrongTimebase`] for an instant counted differently,
+    /// [`ModelStatus::EaseHasNoExactArea`] if either walk **reaches** an ease,
+    /// and [`ModelStatus::Time`] on arithmetic that will not fit.
+    pub fn area_to(&self, instant: Instant) -> Result<Rational> {
+        if instant.timebase() != self.timebase() {
+            return Err(ModelStatus::WrongTimebase);
+        }
+        Ok(self
+            .walked_from_first(instant.ticks())?
+            .checked_sub(self.walked_from_first(0)?)?)
+    }
+
+    /// The area from the first keyframe to `ticks`, which may be either side.
+    ///
+    /// One reference point for both ends of the subtraction above, which is
+    /// what makes the answer independent of where the curve happens to sit.
+    fn walked_from_first(&self, ticks: i64) -> Result<Rational> {
+        let first = self.keyframes[0];
+        if ticks <= first.at.ticks() {
+            // Held before the first keyframe, and the area is negative when
+            // the instant is below it -- which is the direction a re-based
+            // lane asks in.
+            return Ok(first
+                .value
+                .checked_mul(Rational::from_integer(ticks - first.at.ticks()))?);
+        }
+        let mut total = Rational::ZERO;
+        for pair in self.keyframes.windows(2) {
+            let (from, to) = (pair[0], pair[1]);
+            if ticks <= from.at.ticks() {
+                // Everything after this is past the instant. Leaving the loop
+                // here is also what lets a curve whose ease lies beyond the
+                // instant answer at all -- the refusal is about an ease the
+                // walk goes *through*, not one it stops short of.
+                break;
+            }
+            let span = to.at.ticks() - from.at.ticks();
+            let elapsed = (ticks - from.at.ticks()).min(span);
+            total = total.checked_add(area_of(from, to, elapsed, span)?)?;
+        }
+        let last = self.keyframes[self.keyframes.len() - 1];
+        if ticks > last.at.ticks() {
+            total = total.checked_add(
+                last.value
+                    .checked_mul(Rational::from_integer(ticks - last.at.ticks()))?,
+            )?;
+        }
+        Ok(total)
+    }
+
     /// Which pair of keyframes an instant falls between.
     ///
     /// Only ever called for an instant strictly inside the curve, so there is
@@ -505,6 +617,48 @@ impl Curve {
             }
         }
         low
+    }
+}
+
+/// The area under one segment, `elapsed` ticks into a span of `span`.
+///
+/// Two shapes, and each is exact for a reason worth having written down.
+///
+/// **Hold** is a rectangle: `v x E`.
+///
+/// **Linear** is a trapezium, and the arithmetic is
+/// `integral of a + (b-a)e/span de = a x E + (b-a)/2 x (E/span) x E`. Written
+/// with the fraction `E/span` taken *first* rather than as `E^2/(2 x span)`,
+/// because the fraction is never above one and so the product is never larger
+/// than the area itself. Squaring the tick count first would overflow a
+/// sixty-four bit numerator on a ramp of a few thousand frames, and would do
+/// it while computing a number that fits.
+///
+/// **Ease** is refused, and the refusal is the interesting one. Over a *whole*
+/// segment the area under a cubic Bézier is exactly rational — the integral of
+/// `y ds/dx dx` is a polynomial in the parameter, and at the ends the
+/// parameter is nought and one. Part way through a segment it is not: finding
+/// the parameter at a given tick means solving a cubic, which is the cube root
+/// [`EASE_BITS`] exists to approximate. A clip's source position is asked for
+/// at *every* tick, so the case that would be exact is never the case that is
+/// asked, and answering the approximation would put a frame of drift into
+/// something whose whole claim is that it does not drift.
+fn area_of(from: Keyframe, to: Keyframe, elapsed: i64, span: i64) -> Result<Rational> {
+    let along = Rational::from_integer(elapsed);
+    match from.interpolation {
+        Interpolation::Hold => Ok(from.value.checked_mul(along)?),
+        Interpolation::Linear => {
+            let fraction = Rational::new(elapsed, span)?;
+            let half = to
+                .value
+                .checked_sub(from.value)?
+                .checked_mul(Rational::new(1, 2)?)?;
+            Ok(from
+                .value
+                .checked_mul(along)?
+                .checked_add(half.checked_mul(fraction)?.checked_mul(along)?)?)
+        }
+        Interpolation::Ease { .. } => Err(ModelStatus::EaseHasNoExactArea),
     }
 }
 

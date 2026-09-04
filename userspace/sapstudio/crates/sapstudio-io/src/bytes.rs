@@ -169,6 +169,42 @@ impl Writer {
         self.bytes
     }
 
+    /// Empty it, keeping the allocation.
+    ///
+    /// For a writer that assembles one bounded record at a time and hands each
+    /// to a sink: the buffer is filled, written and emptied, and the
+    /// allocation is made once rather than once a record.
+    pub fn clear(&mut self) {
+        self.bytes.clear();
+    }
+
+    /// Append a number in decimal, zero-padded to at least `width` digits.
+    ///
+    /// Written a digit at a time rather than through a formatter, because a
+    /// formatter that grows a `String` is an allocation this type exists to
+    /// bound. Nineteen digits is every `u64` there is, so the scratch array
+    /// cannot overrun whatever it is handed.
+    ///
+    /// # Errors
+    ///
+    /// As [`Writer::bytes`].
+    pub fn decimal(&mut self, value: u64, width: usize) -> Result<()> {
+        let mut digits = [b'0'; 20];
+        let mut written = 0_usize;
+        let mut left = value;
+        loop {
+            let digit = u8::try_from(left % 10).unwrap_or(0);
+            digits[digits.len() - 1 - written] = b'0' + digit;
+            written += 1;
+            left /= 10;
+            if left == 0 {
+                break;
+            }
+        }
+        let from = digits.len() - written.max(width.min(digits.len()));
+        self.bytes(&digits[from..])
+    }
+
     /// Append bytes.
     ///
     /// # Errors
@@ -243,5 +279,93 @@ impl Writer {
     /// As [`Writer::bytes`].
     pub fn i64(&mut self, value: i64) -> Result<()> {
         self.bytes(&value.to_le_bytes())
+    }
+}
+
+/// A run of bytes somewhere, readable at an offset.
+///
+/// The smallest thing a streaming reader needs, and deliberately smaller than
+/// [`sapstudio_abi::seam::Storage`]: no slots, no capacity, no writing. A file
+/// in memory is one of these, and so is one item inside a vault inside a slot,
+/// which is what lets the same reel reader serve both without knowing which it
+/// has.
+///
+/// It exists because of a number. One of Sapote's files holds sixteen
+/// mebibytes and a Sapote program is mapped seventy-six kilobytes, so every
+/// reader in this crate that takes a `&[u8]` is a reader that cannot run on
+/// the target against a real file. A reader that takes one of these can.
+pub trait Extent {
+    /// How many bytes there are altogether.
+    fn length(&self) -> u64;
+
+    /// Copy a run beginning at `offset`, and say how many bytes that was.
+    ///
+    /// **Short at the end rather than refused**, matching
+    /// [`sapstudio_abi::seam::Storage::read_at`] and, underneath it, Sapote's
+    /// `sapfs_read`: a run beginning at or past the end fills nothing and says
+    /// nought, which is not an error.
+    ///
+    /// # Errors
+    ///
+    /// Whatever the underlying store refuses.
+    fn read_at(&self, offset: u64, into: &mut [u8]) -> Result<usize>;
+}
+
+impl Extent for &[u8] {
+    fn length(&self) -> u64 {
+        u64::try_from(self.len()).unwrap_or(u64::MAX)
+    }
+
+    fn read_at(&self, offset: u64, into: &mut [u8]) -> Result<usize> {
+        let at = usize::try_from(offset).unwrap_or(usize::MAX);
+        let from = self.get(at.min(self.len())..).unwrap_or(&[]);
+        let count = from.len().min(into.len());
+        into[..count].copy_from_slice(&from[..count]);
+        Ok(count)
+    }
+}
+
+/// Somewhere bytes can be added to the end of, and nowhere else.
+///
+/// The write-side mirror of [`Extent`], and deliberately the *weaker* of the
+/// two: an extent can be read anywhere, and a sink can only be extended. That
+/// asymmetry is the whole design. A writer that cannot seek backwards cannot
+/// damage what it has already written, so "the recorder overwrote frame two
+/// hundred while writing frame four hundred" is not a failure this program can
+/// have — not because it is careful, but because it cannot express the idea.
+///
+/// It exists because of the same number [`Extent`] exists for, in the other
+/// direction. A reel this build writes is bounded at five hundred and twelve
+/// mebibytes and a Sapote program is mapped seventy-six kilobytes, so every
+/// writer in this crate that returns a `Vec<u8>` is a writer that cannot run
+/// on the target against a real reel. A writer that takes one of these can.
+pub trait Sink {
+    /// How many bytes have been written so far.
+    ///
+    /// Not a cursor: there is nowhere else to be. It is the length of what
+    /// exists, and a caller uses it to check that it is starting from nothing.
+    fn written(&self) -> u64;
+
+    /// Add these bytes to the end, all of them or none.
+    ///
+    /// # Errors
+    ///
+    /// Whatever the underlying store refuses.
+    fn append(&mut self, bytes: &[u8]) -> Result<()>;
+}
+
+impl Sink for Vec<u8> {
+    fn written(&self) -> u64 {
+        u64::try_from(self.len()).unwrap_or(u64::MAX)
+    }
+
+    fn append(&mut self, bytes: &[u8]) -> Result<()> {
+        // Fallibly, like every other allocation in this crate (R-5.2). A
+        // recorder that aborted the process because a reel got long would be
+        // a recorder nobody could use on the machine this is for.
+        self.try_reserve(bytes.len())
+            .map_err(|_| IoStatus::OutOfMemory)?;
+        self.extend_from_slice(bytes);
+        Ok(())
     }
 }

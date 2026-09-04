@@ -19,6 +19,7 @@
 
 extern crate alloc;
 
+pub mod export;
 pub mod mixdown;
 pub mod timeline;
 
@@ -52,6 +53,10 @@ pub enum SlateStatus {
     /// Compositing was asked to build a stack on a base that is not
     /// premultiplied, and `over` is only correct on values that are.
     BaseNotPremultiplied,
+    /// A nested plan came back for a layer that is not there.
+    NestWithoutLayer,
+    /// Sequences nested deeper than this planner walks.
+    NestingTooDeep,
     /// The sound side refused.
     Audio(sapstudio_audio::AudioStatus),
 }
@@ -433,9 +438,23 @@ fn picture(console: &mut dyn Console) -> Result<(), SlateStatus> {
     // Over the dark grey, in linear light: 40 decodes to 0.0212, and
     // `0.1080 + 0.0212·(1 − 64/255)` is 0.1238, which encodes back to 98.
     //
+    // This number has been wrong twice and each time for a different reason,
+    // which is why it is derived here in full rather than recorded.
+    //
+    // It read 148 once, from adding code values — the exact mistake `over`
+    // exists to prevent. The arithmetic was right and the comment was wrong.
+    //
+    // It read 73 until M8.17, and that time the *arithmetic* was wrong:
+    // `faded` scaled the colour in code values too, so the top arrived as red
+    // 64 (light 0.0513) instead of light 0.1080. Every test the project had
+    // faded a layer that was black, where nought times anything is nought and
+    // the two arithmetics agree — so nothing caught it until a dissolve
+    // between two *identical* pictures was asked to be that picture, and
+    // sagged by twenty-eight code values in the middle instead.
+    //
     // The frame is opaque because the programme is: an empty instant is black
     // leader rather than a hole.
-    let packed = rendered.to_packed()?;
+    let packed = rendered.packed()?;
     say(console, "picture red    ", packed[0])?;
     say(console, "picture alpha  ", packed[3])?;
     Ok(())
@@ -454,7 +473,7 @@ fn flat(
     while bytes.len() < wanted {
         bytes.extend_from_slice(&pixel);
     }
-    Ok(sapstudio_media::Frame::from_packed(description, &bytes)?)
+    Ok(sapstudio_media::Frame::from_owned(description, bytes)?)
 }
 
 /// A length in frames of the slate's timebase.

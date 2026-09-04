@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Convert frames between colour descriptions.
+//! Converting a frame from one description to another.
+//!
+//! This is where the exact matrices and the integer transfer functions stop
+//! being arithmetic and start being pixels. The order is the one colour
+//! science requires and the one most pipelines get wrong:
 //!
 //! ```text
 //!   code values  →  normalise by range
@@ -11,9 +15,15 @@
 //!                →  quantise by range
 //! ```
 //!
-//! Gamut conversion occurs only in linear light. This operation does not change
-//! geometry or chroma subsampling; scaling and resampling are separate APIs
-//! (R-1.1, R-1.2).
+//! Changing gamut anywhere but in linear light is the classic mistake: a
+//! matrix applied to gamma-encoded values is not a gamut conversion, it is a
+//! different picture that happens to look nearly right on a monitor.
+//!
+//! Two bounded contracts, stated rather than worked around (R-1.1, R-1.2).
+//! The conversion refuses to change chroma subsampling, because that is a
+//! resampling filter and a filter is a decision with a name; and it refuses a
+//! geometry change, because that is a scaler. Both are separate operations
+//! that will arrive with their own contracts.
 
 use alloc::vec::Vec;
 
@@ -341,7 +351,7 @@ pub fn convert(frame: &Frame, target: FrameDescription) -> Result<Frame> {
         .checked_mul(height)
         .ok_or(RenderStatus::OutsideDomain)?;
 
-    let packed = frame.to_packed().map_err(RenderStatus::Media)?;
+    let packed = frame.packed().map_err(RenderStatus::Media)?;
 
     // One pass over the source produces the whole frame in linear light, and
     // one pass over that writes the target's layout. Holding a frame of light
@@ -369,7 +379,7 @@ pub fn convert(frame: &Frame, target: FrameDescription) -> Result<Frame> {
 
     let out = write_target(&light, &packed, target, &target_table, to_ycbcr.as_ref())?;
 
-    Frame::from_packed(target, &out).map_err(RenderStatus::Media)
+    Frame::from_owned(target, out).map_err(RenderStatus::Media)
 }
 
 /// Write a frame of linear light into the target's layout.

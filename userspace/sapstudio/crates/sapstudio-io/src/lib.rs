@@ -17,6 +17,7 @@
 
 extern crate alloc;
 
+pub mod bmp;
 pub mod bytes;
 pub mod conform;
 pub mod cube;
@@ -25,15 +26,20 @@ pub mod format;
 pub mod memory;
 pub mod peaks;
 pub mod png;
+pub mod sapote;
 pub mod save;
 pub mod sprw;
 pub mod status;
+pub mod vault;
+pub mod vtt;
 
+pub use bytes::Extent;
 pub use conform::{Conformed, LeftBehind};
 pub use edl::{Channel, EditDecisionList, Event, Transition};
 pub use format::{FORMAT_VERSION, HEADER_BYTES, MAGIC, MAX_PAYLOAD_BYTES, decode, encode};
 pub use memory::{Fault, MemoryStorage};
 pub use peaks::{decode as decode_summary, encode as encode_summary};
 pub use save::{load, save};
-pub use sprw::Reel;
+pub use sprw::{Reel, Spool};
 pub use status::{IoStatus, Result};
+pub use vault::{Catalogue, Entry, Item, Material, Stacks, Vault};

@@ -1,10 +1,48 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Exact pixel coverage for convex shapes.
+//! Shapes, and the exact area of a pixel inside one.
 //!
-//! The rasterizer clips each pixel square against the shape's half-planes and
-//! computes the remaining area as a rational. A separate one-edge closed form
-//! provides an independent check for wipes. Arithmetic overflow is reported
-//! instead of falling back to floating point.
+//! M4.5 recorded the reason wipes were not built: *a wipe needs a shape and a
+//! shape needs a rasteriser*. This is that rasteriser, and it is the same
+//! primitive a mask needs, so it is built once.
+//!
+//! ## Coverage is an area, not a sample
+//!
+//! The usual rasteriser asks "is the pixel's centre inside the shape" and gets
+//! a jagged edge, or asks it at sixteen sub-positions and gets sixteen
+//! possible answers instead of two hundred and fifty-six. This one computes
+//! the **exact area** of the pixel square that lies inside the shape, as a
+//! rational, and quantises once at the very end.
+//!
+//! That is worth the arithmetic for a reason that shows up immediately: a wipe
+//! is a straight line crossing a whole frame over a second, so the *same* edge
+//! is drawn at a thousand slightly different offsets. Sampled coverage makes
+//! the edge crawl — each pixel flips between two values at a different moment
+//! — while exact area makes it slide, because the area under a line is a
+//! continuous function of where the line is and a sample is not.
+//!
+//! ## Two implementations, one of them to be checked against
+//!
+//! A convex shape is an intersection of half-planes, and coverage is computed
+//! by clipping the pixel square against each in turn and taking the shoelace
+//! area of what is left. That is general: one edge is a wipe, four are a
+//! rectangle, many are a mask.
+//!
+//! There is also a closed form for the one-edge case — the area of a unit
+//! square under a line, in three lines of arithmetic — and it is *not* what
+//! the rasteriser calls. It exists to be compared against, pixel for pixel,
+//! over a whole frame at several angles. Two implementations that share no
+//! code and agree everywhere is a much stronger statement than one
+//! implementation and a test that agrees with it, which is the same argument
+//! [`crate::lut`] makes for keeping trilinear interpolation alive.
+//!
+//! ## What it refuses
+//!
+//! Every coordinate is an exact rational and every clip is exact, which means
+//! denominators grow: an intersection point is a ratio of products of the
+//! inputs, and the shoelace area multiplies those together again. A shape
+//! whose arithmetic will not fit in a rational is **refused by name** rather
+//! than quietly evaluated in floating point. There is no floating point here
+//! to fall back to, which is the point.
 
 use alloc::vec::Vec;
 
@@ -25,7 +63,16 @@ pub const MAX_EXTENT: usize = 16_384;
 /// Full coverage, as a byte.
 pub const FULL: u8 = 255;
 
-/// One closed half-plane: every point where `a·x + b·y <= c`.
+/// One half-plane: every point where `a·x + b·y <= c`.
+///
+/// The inequality is not strict, so the boundary line belongs to the region.
+/// **Nothing here can tell the difference**, and that was established by
+/// trying: making it strict changes no coverage anywhere, because a line has
+/// no area and the clipper puts back as a crossing point exactly the corner
+/// the strict test would have dropped. It is written down so that a later
+/// `contains(point)` — which *can* tell — does not have to decide it again,
+/// and it is recorded as a decision without a consequence rather than dressed
+/// up as one with one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Edge {
     a: Rational,
@@ -519,17 +566,27 @@ fn upper(one: Rational, other: Rational) -> Result<Rational> {
 /// pixels in it, [`RenderStatus::OutOfMemory`], and [`RenderStatus::Time`]
 /// wrapping an overflow.
 pub fn plane(shape: &Shape, width: usize, height: usize) -> Result<Vec<u8>> {
+    plane_rows(shape, width, height, 0..height)
+}
+
+/// A range of a shape's rows, rasterised against the whole frame.
+fn plane_rows(
+    shape: &Shape,
+    width: usize,
+    height: usize,
+    rows: core::ops::Range<usize>,
+) -> Result<Vec<u8>> {
     if width == 0 || height == 0 || width > MAX_EXTENT || height > MAX_EXTENT {
         return Err(RenderStatus::OutsideDomain);
     }
     let mut out = Vec::new();
     out.try_reserve(
         width
-            .checked_mul(height)
+            .checked_mul(rows.len())
             .ok_or(RenderStatus::OutsideDomain)?,
     )
     .map_err(|_| RenderStatus::OutOfMemory)?;
-    for y in 0..height {
+    for y in rows {
         for x in 0..width {
             let row = i64::try_from(y).map_err(|_| RenderStatus::OutsideDomain)?;
             let column = i64::try_from(x).map_err(|_| RenderStatus::OutsideDomain)?;
@@ -564,8 +621,11 @@ pub fn quantise(coverage: Rational) -> Result<u8> {
 
 /// A wipe whose edge fades rather than cutting.
 ///
-/// Two parallel lines with a linear coverage ramp between them. `band` is
-/// measured in the edge's coordinate units.
+/// Two parallel lines with a linear ramp between them: fully covered on the
+/// near side of the first, not at all past the second, and a straight run in
+/// between. The band is measured in the edge's own units, which is why nothing
+/// constructs one of these directly — [`sweeping_soft`] takes a softness as a
+/// fraction of the wipe's travel, where the units cancel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Feather {
     edge: Edge,
@@ -745,9 +805,54 @@ pub fn feathered(
     width: usize,
     height: usize,
 ) -> Result<Vec<u8>> {
+    feathered_rows(across, down, fraction, softness, width, height, 0..height)
+}
+
+/// One row of a wipe's coverage, rasterised against the whole frame.
+///
+/// The sweep is placed against the **full** width and height, for the reason
+/// [`masking_row`] gives: a wipe travels across the picture, and a wipe placed
+/// against one row would travel across that row.
+///
+/// # Errors
+///
+/// As [`feathered`], and [`RenderStatus::OutsideDomain`] for a row outside the
+/// frame.
+pub fn feathered_row(
+    across: Rational,
+    down: Rational,
+    fraction: Rational,
+    softness: Rational,
+    width: usize,
+    height: usize,
+    row: usize,
+) -> Result<Vec<u8>> {
+    if row >= height {
+        return Err(RenderStatus::OutsideDomain);
+    }
+    feathered_rows(
+        across,
+        down,
+        fraction,
+        softness,
+        width,
+        height,
+        row..row + 1,
+    )
+}
+
+fn feathered_rows(
+    across: Rational,
+    down: Rational,
+    fraction: Rational,
+    softness: Rational,
+    width: usize,
+    height: usize,
+    rows: core::ops::Range<usize>,
+) -> Result<Vec<u8>> {
     let shape = sweeping(across, down, fraction, width, height)?;
     if softness.is_zero() {
-        return plane(&shape, width, height);
+        return plane_rows(&shape, width, height, rows);
     }
     if softness.numerator() < 0
         || softness
@@ -765,11 +870,11 @@ pub fn feathered(
     let mut out = Vec::new();
     out.try_reserve(
         width
-            .checked_mul(height)
+            .checked_mul(rows.len())
             .ok_or(RenderStatus::OutsideDomain)?,
     )
     .map_err(|_| RenderStatus::OutOfMemory)?;
-    for y in 0..height {
+    for y in rows {
         for x in 0..width {
             let row = i64::try_from(y).map_err(|_| RenderStatus::OutsideDomain)?;
             let column = i64::try_from(x).map_err(|_| RenderStatus::OutsideDomain)?;
@@ -903,6 +1008,41 @@ pub fn masking(
     width: usize,
     height: usize,
 ) -> Result<Vec<u8>> {
+    masking_rows(corners, inverted, width, height, 0..height)
+}
+
+/// One row of a mask's coverage, rasterised against the whole frame.
+///
+/// The shape is placed against the **full** width and height and only the row
+/// asked for is rasterised, which is what makes a row of a mask the same bytes
+/// as that row of the whole mask. Placing it against a one-row frame instead
+/// would stretch the shape over one row, which is a different picture — and is
+/// the mistake this signature exists to make impossible.
+///
+/// # Errors
+///
+/// As [`masking`], and [`RenderStatus::OutsideDomain`] for a row outside the
+/// frame.
+pub fn masking_row(
+    corners: &[(Rational, Rational)],
+    inverted: bool,
+    width: usize,
+    height: usize,
+    row: usize,
+) -> Result<Vec<u8>> {
+    if row >= height {
+        return Err(RenderStatus::OutsideDomain);
+    }
+    masking_rows(corners, inverted, width, height, row..row + 1)
+}
+
+fn masking_rows(
+    corners: &[(Rational, Rational)],
+    inverted: bool,
+    width: usize,
+    height: usize,
+    rows: core::ops::Range<usize>,
+) -> Result<Vec<u8>> {
     if width == 0 || height == 0 || width > MAX_EXTENT || height > MAX_EXTENT {
         return Err(RenderStatus::OutsideDomain);
     }
@@ -932,11 +1072,11 @@ pub fn masking(
     let mut out = Vec::new();
     out.try_reserve(
         width
-            .checked_mul(height)
+            .checked_mul(rows.len())
             .ok_or(RenderStatus::OutsideDomain)?,
     )
     .map_err(|_| RenderStatus::OutOfMemory)?;
-    for y in 0..height {
+    for y in rows {
         for x in 0..width {
             let row = i64::try_from(y).map_err(|_| RenderStatus::OutsideDomain)?;
             let column = i64::try_from(x).map_err(|_| RenderStatus::OutsideDomain)?;

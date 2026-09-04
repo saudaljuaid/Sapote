@@ -10,6 +10,7 @@
 //! picture described the same way. That is what makes it usable as a cache key
 //! (R-8.5) rather than merely as a checksum.
 
+use alloc::borrow::Cow;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -215,6 +216,17 @@ impl Plane {
         self.stride
     }
 
+    /// The samples, handed over rather than lent.
+    ///
+    /// The other half of [`Plane::new`], and the reason both exist: a plane
+    /// built out of a buffer and taken apart again gives the *same* buffer
+    /// back, so a program that fills a window, wraps it, uses it and unwraps
+    /// it has copied nothing and allocated once.
+    #[must_use]
+    pub fn into_samples(self) -> Vec<u8> {
+        self.samples
+    }
+
     /// One row.
     ///
     /// # Errors
@@ -395,6 +407,45 @@ impl Frame {
         Self::from_packed(description, &samples)
     }
 
+    /// A frame of nothing at all: no light, and no coverage either.
+    ///
+    /// [`Frame::blank`] is an opaque black slug, which is what a *programme*
+    /// shows where it has nothing — a viewer displays black leader and an
+    /// export writes black frames. This is the other kind of nothing, and the
+    /// two are not interchangeable: material that is absent is **absent**, not
+    /// black, and a nested sequence composited onto black would blank out
+    /// every track beneath it wherever it happened to be empty.
+    ///
+    /// The colour is black rather than zero, for the reason `blank` writes out
+    /// at length: zero is below the legal floor of a limited-range plane. In
+    /// premultiplied form that is also the *correct* value — a premultiplied
+    /// sample is the encoding of `light × coverage`, and at no coverage the
+    /// light is nought, whose encoding is the black code and not the byte
+    /// nought. So this frame passes [`crate::AlphaState::Premultiplied`]'s own
+    /// check rather than merely claiming to.
+    ///
+    /// # Errors
+    ///
+    /// [`MediaStatus::AlphaRequired`] for a format with no alpha channel:
+    /// there is nowhere to say "none of this is here", and a format without
+    /// coverage cannot express absence at all.
+    /// [`MediaStatus::OutOfMemory`], or a description refusal.
+    pub fn clear(description: FrameDescription) -> Result<Self> {
+        if !description.format().has_alpha() {
+            return Err(MediaStatus::AlphaRequired);
+        }
+        let held = Self::blank(description)?;
+        let mut samples = held.to_packed()?;
+        let stride = usize::try_from(description.format().packed_bytes_per_pixel().unwrap_or(1))
+            .map_err(|_| MediaStatus::GeometryTooLarge)?;
+        for pixel in samples.chunks_exact_mut(stride) {
+            if let Some(alpha) = pixel.get_mut(ALPHA_CHANNEL) {
+                *alpha = 0;
+            }
+        }
+        Self::from_packed(description, &samples)
+    }
+
     /// What this frame is.
     #[must_use]
     pub const fn description(&self) -> &FrameDescription {
@@ -430,7 +481,119 @@ impl Frame {
         self.bytes
     }
 
+    /// Whether the frame already holds its samples as one packed run.
+    ///
+    /// True for an interleaved format with no padding between rows, which is
+    /// every frame the row path carries; false for a planar format, whose
+    /// planes are separate buffers and can never be one slice, and for a
+    /// frame with a stride wider than its rows.
+    ///
+    /// Public because it is the difference between [`Frame::packed`] lending
+    /// and copying, and a caller on a small machine is entitled to know which
+    /// it is about to get rather than to hope.
+    #[must_use]
+    pub fn is_packed(&self) -> bool {
+        self.run().is_some()
+    }
+
+    /// The samples as one packed run, if the frame already holds them so.
+    fn run(&self) -> Option<&[u8]> {
+        let [plane] = self.planes.as_slice() else {
+            return None;
+        };
+        let row = self
+            .description
+            .format()
+            .plane_row_bytes(self.description.geometry(), 0)
+            .ok()?;
+        (plane.stride() == row).then(|| plane.samples())
+    }
+
+    /// The frame's samples, packed, **lent** when they are already packed.
+    ///
+    /// The whole of what a row-at-a-time program needs from this type. A row
+    /// of an interleaved picture is one run of bytes and the frame is already
+    /// holding it: copying it out to look at it doubles the largest thing in
+    /// memory to say nothing new.
+    ///
+    /// It is [`Cow`] rather than a refusal because the two answers are the
+    /// same bytes. A planar frame cannot be one slice — its planes are
+    /// separate buffers — so somebody has to pack it, and making every caller
+    /// write that branch would be making every caller reimplement this
+    /// function. What a caller *can* do, if it cannot afford the copy, is ask
+    /// [`Frame::is_packed`] first.
+    ///
+    /// # Errors
+    ///
+    /// [`MediaStatus::OutOfMemory`], and only on the copying side.
+    pub fn packed(&self) -> Result<Cow<'_, [u8]>> {
+        match self.run() {
+            Some(run) => Ok(Cow::Borrowed(run)),
+            None => Ok(Cow::Owned(self.to_packed()?)),
+        }
+    }
+
+    /// A frame that **takes** a buffer rather than reading one.
+    ///
+    /// The other end of [`Frame::into_packed`], and the pair is the point: a
+    /// window filled from storage becomes a frame, becomes a window again, and
+    /// no sample is copied at either boundary. That is what lets a row path
+    /// allocate once and then cycle one buffer for a whole reel, on a machine
+    /// that is given seventy-six kibibytes.
+    ///
+    /// A planar frame copies, because a planar frame's planes are separate
+    /// buffers and one `Vec` cannot become three without moving bytes. That
+    /// is not a refusal for the reason [`Frame::packed`] gives: the answer is
+    /// the same frame either way, and a caller that cannot afford the copy
+    /// knows from the format alone.
+    ///
+    /// # Errors
+    ///
+    /// [`MediaStatus::PlaneSizeMismatch`] if the buffer is not exactly the
+    /// packed size, or [`MediaStatus::OutOfMemory`].
+    pub fn from_owned(description: FrameDescription, samples: Vec<u8>) -> Result<Self> {
+        // No length check of its own. A buffer of the wrong size is refused
+        // either by `from_packed` on the planar path or by `Frame::new` on the
+        // one-plane path, both with `PlaneSizeMismatch` — the same status this
+        // would have raised, one step later, having done no work in between.
+        // A control found the check changed no answer, and this project has
+        // deleted eight of those.
+        let format = description.format();
+        if format.plane_count() != 1 {
+            return Self::from_packed(description, &samples);
+        }
+        let row = format.plane_row_bytes(description.geometry(), 0)?;
+        let mut planes = Vec::new();
+        planes
+            .try_reserve(1)
+            .map_err(|_| MediaStatus::OutOfMemory)?;
+        planes.push(Plane::new(samples, row)?);
+        Self::new(description, planes)
+    }
+
+    /// The frame's samples, packed, **handed over** rather than copied.
+    ///
+    /// The frame is consumed, which is what makes this free: there is nobody
+    /// left to lend to. A frame that is already one packed run gives its own
+    /// buffer back — the same allocation, at the same address, as
+    /// [`Frame::from_owned`] took.
+    ///
+    /// # Errors
+    ///
+    /// [`MediaStatus::OutOfMemory`], and only on the copying side.
+    pub fn into_packed(mut self) -> Result<Vec<u8>> {
+        if self.run().is_none() {
+            return self.to_packed();
+        }
+        let plane = self.planes.pop().ok_or(MediaStatus::PlaneCountMismatch)?;
+        Ok(plane.into_samples())
+    }
+
     /// The frame's samples, tightly packed, in plane order.
+    ///
+    /// Always a fresh buffer. [`Frame::packed`] is the one to reach for when
+    /// the bytes are only going to be read, and [`Frame::into_packed`] when
+    /// the frame is finished with.
     ///
     /// # Errors
     ///

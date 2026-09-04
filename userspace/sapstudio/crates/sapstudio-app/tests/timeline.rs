@@ -45,7 +45,12 @@ struct Flat {
     looks: std::vec::Vec<(Digest, Look)>,
     /// Answer with `description` rather than with what was asked for.
     ///
-    /// Enabled only by tests that exercise a mismatched media response.
+    /// A field rather than the default behaviour, which it used to be. A
+    /// source that ignores the description it is given is a *fault*, and one
+    /// test exists to prove the graph refuses it — but every other test then
+    /// depended on the fault by accident, and a graded layer, which is fetched
+    /// straight, could not render at all. The lie is deliberate now and only
+    /// where it is the subject.
     answers_wrongly: bool,
 }
 
@@ -62,7 +67,11 @@ impl Library for Flat {
             .iter()
             .find(|(id, _)| *id == media)
             .map_or([0, 0, 0, 255], |(_, colour)| *colour);
-        // Normally return the requested description; mismatch tests opt out.
+        // Answer the description that was asked for, unless this fixture is
+        // deliberately being the source that does not. It used to always
+        // ignore it, which was harmless only while every layer was fetched the
+        // same way — a graded layer is fetched straight, and a source that
+        // hands back something else has answered a different question.
         let mut bytes = std::vec::Vec::new();
         for _ in 0..16 {
             bytes.extend_from_slice(&colour);
@@ -82,6 +91,60 @@ impl Library for Flat {
             .map(|(_, held)| held.clone())
             .ok_or(RenderStatus::UnknownNode)
     }
+
+    /// One row of the flat colour, which is what a flat colour's row is.
+    ///
+    /// Written rather than left to the refusing default, and that is the whole
+    /// distinction the default exists to draw: a library that can serve rows
+    /// says so by writing this, and `Whole` below says it cannot by not. The
+    /// row is built from the width it was asked for rather than from a
+    /// constant, so a description of another size would still be answered
+    /// honestly instead of by an accident of `described` being four wide.
+    fn row(
+        &mut self,
+        media: Digest,
+        tick: i64,
+        description: FrameDescription,
+        row: usize,
+    ) -> Result<Frame, RenderStatus> {
+        self.asked.push((media, tick));
+        let colour = self
+            .colours
+            .iter()
+            .find(|(id, _)| *id == media)
+            .map_or([0, 0, 0, 255], |(_, colour)| *colour);
+        let one = sapstudio_render::row_description(description, row)?;
+        let mut bytes = std::vec::Vec::new();
+        for _ in 0..one.geometry().width() {
+            bytes.extend_from_slice(&colour);
+        }
+        Frame::from_packed(one, &bytes).map_err(RenderStatus::Media)
+    }
+}
+
+/// A library that serves whole frames and no rows.
+///
+/// Everything `Flat` is, minus the one method — which is how a library says it
+/// has no row form, and so the only way to build the fixture that proves where
+/// that refusal comes from. A BMP decoder is this: it reads a file into a
+/// frame and has no notion of part of one.
+struct Whole {
+    inner: Flat,
+}
+
+impl Library for Whole {
+    fn frame(
+        &mut self,
+        media: Digest,
+        tick: i64,
+        description: FrameDescription,
+    ) -> Result<Frame, RenderStatus> {
+        self.inner.frame(media, tick, description)
+    }
+
+    fn look(&mut self, look: Digest) -> Result<Look, RenderStatus> {
+        self.inner.look(look)
+    }
 }
 
 /// The content digest of a media asset, which is how the graph names it.
@@ -89,7 +152,11 @@ fn digest_of(project: &Project, id: MediaId) -> Digest {
     project.media().get(id).expect("an asset").digest()
 }
 
-/// A fresh pool that prevents cache state from crossing render tests.
+/// A fresh pool for each render.
+///
+/// Deliberately not shared: most of these tests are about what a render
+/// produces, and a pool that outlived one call would let a stale frame answer
+/// for a changed graph. The caching test builds its own and keeps it.
 fn pool() -> FramePool {
     FramePool::new(64, 1 << 20)
 }
@@ -556,8 +623,12 @@ fn rendering_one_instant_twice_gives_one_answer() {
 
 #[test]
 fn a_dissolve_cross_fades_in_linear_light() {
-    // A dissolve is opacity applied through linear-light `over`. For white to
-    // black over four frames, the expected values derive as follows:
+    // The whole point of representing a dissolve as an opacity: `over` already
+    // computes `in x t + out x (1 - t)`, so a cross-fade needs no second
+    // operator — and it happens in light, like everything else.
+    //
+    // White dissolving to black over four frames. Every number below is worked
+    // out from the definitions rather than read off a run:
     //
     //   the incoming clip's coverage at n/5 is round(255 x n/5),
     //   the result's light is dec(255) x (1 - coverage/255) = 1 - n/5,
@@ -568,8 +639,15 @@ fn a_dissolve_cross_fades_in_linear_light() {
     //   3/5 -> alpha 153 -> light 0.4 -> 170
     //   4/5 -> alpha 204 -> light 0.2 -> 124
     //
-    // Code-value mixing would instead step 255, 204, 153, 102, 51, 0.
-    // The coloured-clip test separately covers premultiplied colour scaling.
+    // A dissolve done in code values instead would step 255, 204, 153, 102,
+    // 51, 0 — evenly spaced numbers, and a visibly wrong fade that goes dark
+    // too fast in the middle. That is what these four values catch.
+    //
+    // What they do *not* catch is scaling a layer's coverage without scaling
+    // its colour, because the incoming clip here is black and black has no
+    // colour to scale. `a_dissolve_is_opaque_all_the_way_through` uses
+    // coloured clips and catches exactly that — a control confirmed the
+    // division of labour, so neither test is redundant.
     use sapstudio_model::Transition;
 
     let mut project = Project::new();
@@ -1514,7 +1592,9 @@ fn one_clip() -> (Project, SequenceId, MediaId) {
 
 #[test]
 fn a_clip_whose_media_is_missing_still_renders() {
-    // Missing source media renders through the offline-media path.
+    // A project opens when the drive is not mounted. Failing the whole render
+    // because one source is unreachable is what makes an editor unusable on
+    // the day it matters most.
     let (project, sequence, only) = one_clip();
     let digest = digest_of(&project, only);
     let mut library = Sometimes {
@@ -1913,8 +1993,20 @@ fn a_mask_stays_in_the_frame_while_the_clip_moves_through_it() {
 
 #[test]
 fn an_animated_clip_plans_the_graph_a_still_one_at_that_framing_plans() {
-    // Static and animated clips that resolve to the same transform must build
-    // the same graph. A third transform confirms that framing affects output.
+    // M8.10 added animated framings and changed nothing in this crate or in
+    // the renderer, which is a claim worth a test rather than a sentence in a
+    // commit message. It holds because the layer stack hands out a *resolved*
+    // transform: by the time a frame is described, a motion has already become
+    // the framing it reads at that moment, so the renderer never learns that
+    // anything moves.
+    //
+    // Three renders, then. Two arrive at the same framing at frame five, one
+    // flatly and one by animating through it, and must agree node for node and
+    // byte for byte. The third is at a *different* framing, and is here
+    // because the first two would agree just as well if the framing were being
+    // dropped on the floor -- a flat colour scaled is the same flat colour, so
+    // the first fixture written for this passed without the transform doing
+    // anything at all.
     use sapstudio_model::{Curve, Interpolation, Keyframe, Motion, Resampling, Transform};
 
     let ratio = |numerator, denominator| {
@@ -2066,6 +2158,10 @@ fn offline_slate(tag: u8) -> Frame {
 
 #[test]
 fn an_offline_slate_names_the_media_it_is_missing() {
+    // The sentence that stood in the risk section for three milestones:
+    // "offline media renders a slate but cannot say which media is missing --
+    // that is text on a frame, and text needs a font". There is a font now.
+    //
     // Two clips of two different pieces of media, both offline. The slates
     // must differ, and they can only differ in what they say, because the
     // stripes underneath are a pure function of the frame's size.
@@ -3107,4 +3203,711 @@ fn the_planner_carries_the_pivot_across() {
         )),
         "the fixture's pivot is not the corner, so this comparison means something"
     );
+}
+
+/// A project whose outer sequence has a nested sequence on its own track.
+///
+/// Two picture tracks on the outer sequence: a clip of one colour on V1, and a
+/// **nest** on V2. The nested sequence holds a clip of another colour over
+/// only *half* its length, so the second half of the nest is empty — which is
+/// the case the whole transparency decision is about.
+fn with_a_nest(
+    project: &mut Project,
+) -> (
+    sapstudio_model::SequenceId,
+    sapstudio_model::MediaId,
+    sapstudio_model::MediaId,
+) {
+    let under = media(project, 1);
+    let over = media(project, 2);
+    let outer = project.add_sequence(RATE).expect("a sequence");
+    let inner = project.add_sequence(RATE).expect("a sequence");
+
+    lay(
+        project,
+        inner,
+        0,
+        &[
+            Item::Clip(Clip::new(over, 0, frames(5)).expect("a clip")),
+            Item::gap(frames(5)).expect("a gap"),
+        ],
+    );
+    let nest = project
+        .add_media(sapstudio_model::MediaAsset::nesting(inner, RATE, frames(10)).expect("an asset"))
+        .expect("room");
+    lay(
+        project,
+        outer,
+        0,
+        &[Item::Clip(Clip::new(under, 0, frames(10)).expect("a clip"))],
+    );
+    lay(
+        project,
+        outer,
+        1,
+        &[Item::Clip(Clip::new(nest, 0, frames(10)).expect("a clip"))],
+    );
+    (outer, under, over)
+}
+
+#[test]
+fn a_nested_sequence_renders_as_the_sequence_it_is() {
+    // The end-to-end case. A nest is media the program makes out of a
+    // sequence, so it goes where a source would and everything above it is
+    // the machinery a recording already goes through -- and what it *is* is
+    // the nested sequence composited at the instant the clip reads.
+    let mut project = Project::new();
+    let (outer, under, over) = with_a_nest(&mut project);
+
+    let mut library = Flat {
+        colours: std::vec![
+            (digest_of(&project, under), [10, 20, 200, 255]),
+            (digest_of(&project, over), [200, 40, 10, 255]),
+        ],
+        description: described(),
+        asked: std::vec::Vec::new(),
+        looks: std::vec::Vec::new(),
+        answers_wrongly: false,
+    };
+    // Frame nought: the nest holds its clip there, so the nest's picture wins
+    // over V1.
+    let frame = timeline::render(
+        &project,
+        outer,
+        at(0),
+        described(),
+        &mut pool(),
+        &mut library,
+    )
+    .expect("a frame");
+    assert_eq!(
+        pixel(&frame),
+        (200, 40, 10, 255),
+        "the nested sequence's own clip is not what the nest shows"
+    );
+}
+
+#[test]
+fn a_nest_is_transparent_where_it_is_empty() {
+    // The decision this milestone turns on, and the reason `Node::Empty`
+    // exists at all. A nested sequence is **material**, not a programme:
+    // material that is absent is absent, and composited onto black leader it
+    // would blank out every track beneath it wherever it happened to be
+    // empty -- which would make a nest on V2 useless for anything but a
+    // full-length one.
+    let mut project = Project::new();
+    let (outer, under, over) = with_a_nest(&mut project);
+
+    let mut library = Flat {
+        colours: std::vec![
+            (digest_of(&project, under), [10, 20, 200, 255]),
+            (digest_of(&project, over), [200, 40, 10, 255]),
+        ],
+        description: described(),
+        asked: std::vec::Vec::new(),
+        looks: std::vec::Vec::new(),
+        answers_wrongly: false,
+    };
+    // Frame seven: the nested sequence has a gap there, so V1 shows through.
+    let frame = timeline::render(
+        &project,
+        outer,
+        at(7),
+        described(),
+        &mut pool(),
+        &mut library,
+    )
+    .expect("a frame");
+    assert_eq!(
+        pixel(&frame),
+        (10, 20, 200, 255),
+        "the empty half of the nest blanked out the track beneath it"
+    );
+    // And the two instants really are different pictures, so neither
+    // assertion is passing for a reason that has nothing to do with the nest.
+    let first = timeline::render(
+        &project,
+        outer,
+        at(0),
+        described(),
+        &mut pool(),
+        &mut library,
+    )
+    .expect("a frame");
+    assert_ne!(pixel(&first), pixel(&frame));
+}
+
+#[test]
+fn the_two_nesting_bounds_agree() {
+    // The model refuses to build a project nested deeper than it renders, and
+    // the planner walks with an explicit stack bounded by the same number.
+    // Neither crate may depend on the other -- they are siblings -- so the
+    // constant is written twice, exactly as the fader's travel is, and this is
+    // what stops the two drifting.
+    assert_eq!(
+        sapstudio_model::MAX_NESTING_DEPTH,
+        sapstudio_app::timeline::MAX_NESTING_DEPTH,
+    );
+}
+
+#[test]
+fn a_nest_shows_itself_at_the_offset_its_clip_reads() {
+    // The nest's own boundary lands where the *clip* puts it rather than where
+    // the programme's clock is. Five frames of picture and five of nothing,
+    // dropped into the outer sequence five frames in: the change from one to
+    // the other belongs at outer frame ten, and a planner that walked the nest
+    // at the programme's instant would put it at five.
+    let mut project = Project::new();
+    let under = media(&mut project, 1);
+    let over = media(&mut project, 2);
+    let outer = project.add_sequence(RATE).expect("a sequence");
+    let inner = project.add_sequence(RATE).expect("a sequence");
+    lay(
+        &mut project,
+        inner,
+        0,
+        &[
+            Item::Clip(Clip::new(over, 0, frames(5)).expect("a clip")),
+            Item::gap(frames(5)).expect("a gap"),
+        ],
+    );
+    let nest = project
+        .add_media(sapstudio_model::MediaAsset::nesting(inner, RATE, frames(10)).expect("an asset"))
+        .expect("room");
+    lay(
+        &mut project,
+        outer,
+        0,
+        &[Item::Clip(Clip::new(under, 0, frames(20)).expect("a clip"))],
+    );
+    lay(
+        &mut project,
+        outer,
+        1,
+        &[
+            Item::gap(frames(5)).expect("a gap"),
+            Item::Clip(Clip::new(nest, 0, frames(10)).expect("a clip")),
+        ],
+    );
+
+    let mut library = Flat {
+        colours: std::vec![
+            (digest_of(&project, under), [10, 20, 200, 255]),
+            (digest_of(&project, over), [200, 40, 10, 255]),
+        ],
+        description: described(),
+        asked: std::vec::Vec::new(),
+        looks: std::vec::Vec::new(),
+        answers_wrongly: false,
+    };
+    let shown = |at_frame: i64, library: &mut Flat| {
+        pixel(
+            &timeline::render(
+                &project,
+                outer,
+                at(at_frame),
+                described(),
+                &mut pool(),
+                library,
+            )
+            .expect("a frame"),
+        )
+    };
+    // Outer frame nine is the nest's own frame four, which its clip still
+    // covers; outer frame ten is the nest's frame five, where it stops.
+    assert_eq!(
+        shown(9, &mut library),
+        (200, 40, 10, 255),
+        "the nest ended before its clip did"
+    );
+    assert_eq!(
+        shown(10, &mut library),
+        (10, 20, 200, 255),
+        "the nest went on past the frame its clip reads it to"
+    );
+}
+
+#[test]
+fn a_ramped_clip_asks_for_the_frame_the_area_names() {
+    // The whole of what a ramp does, seen from the far end of the program: the
+    // planner asks the clip where it has got to and the clip answers with the
+    // area under its speed curve. Nothing between here and there was told what
+    // a ramp is.
+    use sapstudio_core::Rational;
+    use sapstudio_model::curve::{Curve, Interpolation, Keyframe};
+
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let shot = media(&mut project, 1);
+    // Full speed for ten ticks, then down to a quarter over the next twenty.
+    let ramp = Curve::new(std::vec![
+        Keyframe::new(at(10), Rational::ONE, Interpolation::Linear).expect("a keyframe"),
+        Keyframe::new(
+            at(30),
+            Rational::new(1, 4).expect("a quarter"),
+            Interpolation::Linear
+        )
+        .expect("a keyframe"),
+    ])
+    .expect("a curve");
+    lay(
+        &mut project,
+        sequence,
+        0,
+        &[Item::Clip(
+            Clip::new(shot, 0, frames(60))
+                .expect("a clip")
+                .with_ramp(ramp)
+                .expect("a ramp"),
+        )],
+    );
+    let mut source = Flat {
+        colours: std::vec![(digest_of(&project, shot), [200, 30, 40, 255])],
+        description: described(),
+        asked: std::vec::Vec::new(),
+        looks: std::vec::Vec::new(),
+        answers_wrongly: false,
+    };
+    // Tick twenty is halfway down the ramp. The speed there is
+    // 1 + (1/4 - 1) x 10/20 = 5/8, so the area is
+    // 10 + (1 + 5/8)/2 x 10 = 10 + 65/8 = 145/8, whose floor is 18.
+    timeline::render(
+        &project,
+        sequence,
+        at(20),
+        described(),
+        &mut pool(),
+        &mut source,
+    )
+    .expect("a render");
+    assert_eq!(
+        source.asked,
+        std::vec![(digest_of(&project, shot), 18)],
+        "the ramp did not reach the frame the render asks for"
+    );
+}
+
+/// The rows of a scan, gathered into the frame they make.
+///
+/// A test's business rather than the library's: a caller with room for a whole
+/// frame should call `render`, and one without should never assemble one.
+fn gathered(scan: &timeline::Scan, source: &mut dyn Library) -> Frame {
+    let one = scan.row_description().expect("a row description");
+    let stride = one
+        .format()
+        .plane_row_bytes(one.geometry(), 0)
+        .expect("a stride");
+    let mut samples = std::vec::Vec::new();
+    for row in 0..scan.height() {
+        let line = scan.row(row, source).expect("a row");
+        assert_eq!(line.description(), &one, "a row is not one row");
+        samples.extend_from_slice(line.plane(0).expect("a plane").samples());
+    }
+    let full = sapstudio_media::FrameDescription::new(
+        sapstudio_media::Geometry::new(
+            one.geometry().width(),
+            u32::try_from(scan.height()).expect("a height"),
+        )
+        .expect("a geometry"),
+        one.format(),
+        one.colour(),
+        one.siting(),
+        one.alpha(),
+        one.pixel_aspect(),
+    )
+    .expect("a description");
+    Frame::new(
+        full,
+        std::vec![sapstudio_media::Plane::new(samples, stride).expect("a plane")],
+    )
+    .expect("a frame")
+}
+
+#[test]
+fn a_scans_rows_are_the_frame_the_render_makes() {
+    // The property, at the top of the program: a scan and a render are one
+    // picture computed two ways. Everything below this — the graph's row form,
+    // the spool's plane rows, the catalogue's ranged reads — exists to make
+    // this line true without holding a frame.
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let under = media(&mut project, 1);
+    let over = media(&mut project, 2);
+    lay(
+        &mut project,
+        sequence,
+        0,
+        &[Item::Clip(Clip::new(under, 0, frames(10)).expect("a clip"))],
+    );
+    lay(
+        &mut project,
+        sequence,
+        1,
+        &[Item::Clip(
+            Clip::new(over, 0, frames(10))
+                .expect("a clip")
+                .with_fades(frames(4), frames(4))
+                .expect("fades"),
+        )],
+    );
+    let mut source = Flat {
+        colours: std::vec![
+            (digest_of(&project, under), [10, 20, 200, 255]),
+            (digest_of(&project, over), [200, 40, 10, 255]),
+        ],
+        description: described(),
+        asked: std::vec::Vec::new(),
+        looks: std::vec::Vec::new(),
+        answers_wrongly: false,
+    };
+    let whole = timeline::render(
+        &project,
+        sequence,
+        at(2),
+        described(),
+        &mut pool(),
+        &mut source,
+    )
+    .expect("a render");
+    let scan =
+        timeline::Scan::open(&project, sequence, at(2), described(), &mut source).expect("a scan");
+    assert_eq!(scan.height(), described().geometry().height() as usize);
+    assert_eq!(gathered(&scan, &mut source), whole);
+}
+
+#[test]
+fn a_scan_plans_once_however_many_rows_it_renders() {
+    // The reason a scan is a type rather than a function. Planning walks the
+    // stack and resolves every clip's media; doing that once a row would trade
+    // one kind of waste for a worse one. The library's record of what it was
+    // asked is what says so: `available` is called while planning.
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let shot = media(&mut project, 3);
+    lay(
+        &mut project,
+        sequence,
+        0,
+        &[Item::Clip(Clip::new(shot, 0, frames(10)).expect("a clip"))],
+    );
+    let mut source = Flat {
+        colours: std::vec![(digest_of(&project, shot), [30, 60, 90, 255])],
+        description: described(),
+        asked: std::vec::Vec::new(),
+        looks: std::vec::Vec::new(),
+        answers_wrongly: false,
+    };
+    let scan =
+        timeline::Scan::open(&project, sequence, at(0), described(), &mut source).expect("a scan");
+    source.asked.clear();
+    for row in 0..scan.height() {
+        scan.row(row, &mut source).expect("a row");
+    }
+    // One fetch a row, and not one fetch a row plus a plan a row: every entry
+    // names the same media at the same tick, which is what a re-plan would
+    // also produce -- so the number is what distinguishes them.
+    assert_eq!(
+        source.asked.len(),
+        scan.height(),
+        "the scan fetched something other than one row of one shot per row"
+    );
+}
+
+#[test]
+fn a_scan_of_a_turned_clip_is_refused_before_a_row_is_rendered() {
+    // A turn resamples along a slope, and a slope crosses every row of the
+    // picture it lies in -- so there is no band to read and no row to draw.
+    // The refusal arrives at `open` rather than at row four hundred, which is
+    // the whole reason `open` asks.
+    //
+    // This used to say "a framed clip", and the framing was a half scale. That
+    // scans now: a scale takes horizontals to horizontals, so a row of it
+    // reads a bounded band. What could never scan is a turn, and that is what
+    // this test is about now.
+    let cosine = sapstudio_core::Rational::new(4, 5).expect("a cosine");
+    let sine = sapstudio_core::Rational::new(3, 5).expect("a sine");
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let shot = media(&mut project, 4);
+    let framed = Clip::new(shot, 0, frames(10))
+        .expect("a clip")
+        .with_transform(Some(
+            sapstudio_model::Transform::new(
+                [cosine, sine.checked_neg().expect("a sine"), sine, cosine],
+                (
+                    sapstudio_core::Rational::ZERO,
+                    sapstudio_core::Rational::ZERO,
+                ),
+                sapstudio_model::Resampling::Area,
+            )
+            .expect("a transform"),
+        ));
+    lay(&mut project, sequence, 0, &[Item::Clip(framed)]);
+    let mut source = Flat {
+        colours: std::vec![(digest_of(&project, shot), [1, 2, 3, 255])],
+        description: described(),
+        asked: std::vec::Vec::new(),
+        looks: std::vec::Vec::new(),
+        answers_wrongly: false,
+    };
+    assert_eq!(
+        timeline::Scan::open(&project, sequence, at(0), described(), &mut source).err(),
+        Some(SlateStatus::Render(RenderStatus::NotRowLocal))
+    );
+    assert!(
+        source.asked.is_empty(),
+        "a row was fetched before the refusal"
+    );
+    // And rendering it whole still works, which is the point of keeping both.
+    timeline::render(
+        &project,
+        sequence,
+        at(0),
+        described(),
+        &mut pool(),
+        &mut source,
+    )
+    .expect("a render");
+}
+
+#[test]
+fn a_scan_of_a_scaled_clip_agrees_with_the_render_of_it() {
+    // The direction that used to be a refusal, and the same shape M8.42's
+    // generators took: the test that said a framing could not be scanned is
+    // now the test that says it can, and it compares the gathered rows against
+    // the whole render rather than merely observing that nothing refused.
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let shot = media(&mut project, 4);
+    let framed = Clip::new(shot, 0, frames(10))
+        .expect("a clip")
+        .with_transform(Some(
+            sapstudio_model::Transform::scaled(
+                sapstudio_core::Rational::new(1, 2).expect("a scale"),
+                sapstudio_core::Rational::new(1, 3).expect("a scale"),
+                (
+                    sapstudio_core::Rational::new(1, 8).expect("a move"),
+                    sapstudio_core::Rational::ZERO,
+                ),
+                sapstudio_model::Resampling::Area,
+            )
+            .expect("a transform"),
+        ));
+    lay(&mut project, sequence, 0, &[Item::Clip(framed)]);
+    let mut source = Flat {
+        colours: std::vec![(digest_of(&project, shot), [1, 2, 3, 255])],
+        description: described(),
+        asked: std::vec::Vec::new(),
+        looks: std::vec::Vec::new(),
+        answers_wrongly: false,
+    };
+    let whole = timeline::render(
+        &project,
+        sequence,
+        at(0),
+        described(),
+        &mut pool(),
+        &mut source,
+    )
+    .expect("a render");
+    let scan =
+        timeline::Scan::open(&project, sequence, at(0), described(), &mut source).expect("a scan");
+    let packed = whole.to_packed().expect("bytes");
+    let stride = packed.len() / scan.height();
+    for row in 0..scan.height() {
+        let one = scan.row(row, &mut source).expect("a row");
+        assert_eq!(
+            one.to_packed().expect("bytes"),
+            packed[row * stride..(row + 1) * stride],
+            "row {row} of a scaled clip disagrees with the render"
+        );
+    }
+}
+
+#[test]
+fn an_offline_programme_scans_like_any_other() {
+    // This test used to be `a_scan_of_offline_media_says_which_kind_of_refusal
+    // _it_is`, and it was right until the generators grew row forms. An
+    // offline clip becomes a slate and a legend, and `NoRowForm` was always a
+    // statement about the build rather than about the operation -- which is
+    // exactly why it was a different status from `NotRowLocal`, and why this
+    // test could change and that one could not.
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let missing = media(&mut project, 5);
+    lay(
+        &mut project,
+        sequence,
+        0,
+        &[Item::Clip(
+            Clip::new(missing, 0, frames(10)).expect("a clip"),
+        )],
+    );
+    let mut source = Sometimes {
+        inner: Flat {
+            colours: std::vec::Vec::new(),
+            description: described(),
+            asked: std::vec::Vec::new(),
+            looks: std::vec::Vec::new(),
+            answers_wrongly: false,
+        },
+        missing: std::vec![digest_of(&project, missing)],
+    };
+    let scan = timeline::Scan::open(&project, sequence, at(0), described(), &mut source)
+        .expect("an offline programme scans");
+    let whole = timeline::render(
+        &project,
+        sequence,
+        at(0),
+        described(),
+        &mut pool(),
+        &mut source,
+    )
+    .expect("a render");
+    assert_eq!(gathered(&scan, &mut source), whole);
+    // And the library was never asked for a row, because there is no media to
+    // read: the slate is drawn.
+    assert!(source.inner.asked.is_empty());
+}
+
+#[test]
+fn a_library_with_no_row_form_opens_a_scan_and_refuses_its_first_row() {
+    // Where the halves of the contract meet, and the reason `open` does not
+    // ask the library. `open` refuses a *plan* that cannot be scanned -- a
+    // framing, a generator with no row form -- because that answer is free and
+    // a caller choosing between scanning and rendering whole wants it before
+    // it commits. Whether the *library* can serve rows is not asked, because
+    // asking would mean a second statement of the same fact, on a trait with
+    // a default, free to disagree with the row itself; and because the answer
+    // costs nothing to discover: every source in the graph is touched by row
+    // nought, so a library that cannot serve rows refuses on the first one and
+    // never on the four hundredth.
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let shot = media(&mut project, 6);
+    lay(
+        &mut project,
+        sequence,
+        0,
+        &[Item::Clip(Clip::new(shot, 0, frames(10)).expect("a clip"))],
+    );
+    let mut source = Whole {
+        inner: Flat {
+            colours: std::vec![(digest_of(&project, shot), [7, 8, 9, 255])],
+            description: described(),
+            asked: std::vec::Vec::new(),
+            looks: std::vec::Vec::new(),
+            answers_wrongly: false,
+        },
+    };
+    let scan =
+        timeline::Scan::open(&project, sequence, at(0), described(), &mut source).expect("a scan");
+    assert_eq!(
+        scan.row(0, &mut source).err(),
+        Some(SlateStatus::Render(RenderStatus::NoRowForm)),
+        "the first row, not a later one"
+    );
+    // And the same programme renders whole through the same library, which is
+    // what makes this a missing row form rather than a broken library.
+    timeline::render(
+        &project,
+        sequence,
+        at(0),
+        described(),
+        &mut pool(),
+        &mut source,
+    )
+    .expect("a render");
+}
+
+#[test]
+fn a_scan_of_an_empty_programme_is_black_leader_row_by_row() {
+    // A programme with nothing on it is opaque black, and every row of it is
+    // one row of opaque black -- which is the case a row renderer would get
+    // wrong by handing back nothing at all.
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let mut source = Flat {
+        colours: std::vec::Vec::new(),
+        description: described(),
+        asked: std::vec::Vec::new(),
+        looks: std::vec::Vec::new(),
+        answers_wrongly: false,
+    };
+    let scan =
+        timeline::Scan::open(&project, sequence, at(0), described(), &mut source).expect("a scan");
+    let whole = timeline::render(
+        &project,
+        sequence,
+        at(0),
+        described(),
+        &mut pool(),
+        &mut source,
+    )
+    .expect("a render");
+    assert_eq!(gathered(&scan, &mut source), whole);
+    assert!(source.asked.is_empty(), "nothing was decoded for nothing");
+}
+
+#[test]
+fn a_row_past_the_bottom_of_a_scan_is_refused() {
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let shot = media(&mut project, 6);
+    lay(
+        &mut project,
+        sequence,
+        0,
+        &[Item::Clip(Clip::new(shot, 0, frames(10)).expect("a clip"))],
+    );
+    let mut source = Flat {
+        colours: std::vec![(digest_of(&project, shot), [9, 9, 9, 255])],
+        description: described(),
+        asked: std::vec::Vec::new(),
+        looks: std::vec::Vec::new(),
+        answers_wrongly: false,
+    };
+    let scan =
+        timeline::Scan::open(&project, sequence, at(0), described(), &mut source).expect("a scan");
+    assert_eq!(
+        scan.row(scan.height(), &mut source).err(),
+        Some(SlateStatus::Render(RenderStatus::OutsideDomain))
+    );
+}
+
+#[test]
+fn a_nested_sequence_scans_row_by_row() {
+    // Nesting is the deepest graph the planner builds, so it is the one worth
+    // checking the two evaluators agree on: a nest is composited onto nothing
+    // rather than onto black, and every row of that has to say so.
+    let mut project = Project::new();
+    let (outer, under, over) = with_a_nest(&mut project);
+    let mut source = Flat {
+        colours: std::vec![
+            (digest_of(&project, under), [10, 20, 200, 255]),
+            (digest_of(&project, over), [200, 40, 10, 255]),
+        ],
+        description: described(),
+        asked: std::vec::Vec::new(),
+        looks: std::vec::Vec::new(),
+        answers_wrongly: false,
+    };
+    for instant in [0_i64, 7] {
+        let whole = timeline::render(
+            &project,
+            outer,
+            at(instant),
+            described(),
+            &mut pool(),
+            &mut source,
+        )
+        .expect("a render");
+        let scan = timeline::Scan::open(&project, outer, at(instant), described(), &mut source)
+            .expect("a scan");
+        assert_eq!(
+            gathered(&scan, &mut source),
+            whole,
+            "the two evaluators disagree at instant {instant}"
+        );
+    }
 }

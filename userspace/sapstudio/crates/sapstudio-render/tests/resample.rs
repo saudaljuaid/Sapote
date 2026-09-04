@@ -13,7 +13,7 @@ use sapstudio_media::{
     AlphaState, ColourDescription, Frame, FrameDescription, Geometry, PixelFormat,
 };
 use sapstudio_render::RenderStatus;
-use sapstudio_render::resample::{Filter, Mapping, resample};
+use sapstudio_render::resample::{Filter, MAX_BAND_ROWS, Mapping, band, resample, resample_row};
 
 fn r(numerator: i64, denominator: i64) -> Rational {
     Rational::new(numerator, denominator).expect("a rational")
@@ -132,10 +132,16 @@ fn a_flat_field_survives_every_scale() {
 fn halving_a_picture_averages_each_two_by_two_block() {
     // The defining case for area filtering, and the arithmetic is in *light*.
     //
-    // Values 64 and 192 distinguish linear-light averaging from code-value
-    // averaging. Black and white do not distinguish those paths.
+    // The values are 64 and 192 rather than black and white, and that is the
+    // whole point. Black and white are exactly where the transfer is the
+    // identity, so a checkerboard of them averages to 188 whether the
+    // averaging happens in light or in code values -- it cannot tell the two
+    // apart. The first version of this test used one, and the control that
+    // replaces the decode with a straight division passed against it.
     //
-    // The linear-light mean encodes to 146; the code-value mean is 128.
+    // At 64 and 192 the answers separate: the light mean encodes to **146**,
+    // and the mean of the code values is 128. Eighteen apart, in the
+    // direction that makes a picture *darker* every time it is reduced.
     let source = drawn(2, 2, |x, y| {
         if (x + y) % 2 == 0 {
             [192, 192, 192, 255]
@@ -689,5 +695,223 @@ fn a_pivot_at_the_centre_is_what_the_default_was() {
         pixels(&resample(&source, described(6, 6), about_centre, Filter::Area).expect("a frame")),
         pixels(&resample(&source, described(6, 6), by_hand, Filter::Area).expect("a frame")),
         "a pivot at the middle is not the map every earlier render used"
+    );
+}
+
+/// One row of a picture, cut out of it.
+fn one(frame: &Frame, row: usize) -> Frame {
+    let width = frame.description().geometry().width() as usize;
+    let packed = frame.to_packed().expect("bytes");
+    Frame::from_packed(
+        described(u32::try_from(width).expect("a width"), 1),
+        &packed[row * width * 4..(row + 1) * width * 4],
+    )
+    .expect("a row")
+}
+
+#[test]
+fn a_scanned_resample_is_the_resampled_picture_row_for_row() {
+    // The property that makes the row path worth having at all: what a scan
+    // produces and what a render produces are the same bytes. Three maps, both
+    // filters, every row of each -- and the picture is a function of position
+    // so a row drawn from the wrong band is visible.
+    let source = drawn(6, 6, |x, y| {
+        [
+            u8::try_from(x * 30 % 200).expect("a byte"),
+            u8::try_from(y * 30 % 200).expect("a byte"),
+            u8::try_from((x + y) * 20 % 200).expect("a byte"),
+            255,
+        ]
+    });
+    let target = described(6, 6);
+    let maps = [
+        (
+            "a move",
+            Mapping::new([n(1), n(0), n(0), n(1)], (n(0), n(2))).expect("a map"),
+        ),
+        (
+            "a shrink",
+            Mapping::scaled(r(1, 2), r(1, 3), (n(0), n(0))).expect("a map"),
+        ),
+        (
+            "a shear",
+            Mapping::new([n(1), r(1, 2), n(0), n(1)], (n(0), n(0))).expect("a map"),
+        ),
+    ];
+    for filter in [Filter::Area, Filter::Bilinear] {
+        for (name, mapping) in &maps {
+            let whole = resample(&source, target, *mapping, filter).expect("a frame");
+            for row in 0..6 {
+                let (from, to) = band(*mapping, filter, row, 6).expect("a band");
+                let held = if from < to {
+                    let packed = source.to_packed().expect("bytes");
+                    Some(
+                        Frame::from_packed(
+                            described(6, u32::try_from(to - from).expect("a height")),
+                            &packed[from * 24..to * 24],
+                        )
+                        .expect("a band"),
+                    )
+                } else {
+                    None
+                };
+                let scanned =
+                    resample_row(held.as_ref(), target, from, target, *mapping, filter, row)
+                        .expect("a row");
+                assert_eq!(scanned, one(&whole, row), "{name}, row {row}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_band_that_is_short_of_what_the_row_reads_is_refused() {
+    // The one refusal a caller cannot provoke by asking a wrong question: it
+    // means `band` answered wrongly, and it has to be a refusal rather than a
+    // hole because transparency is what a source legitimately returns past its
+    // own edge. A band short by one row would draw a picture with a gap in it
+    // and look like a picture with a gap in it.
+    let source = flat(4, 4, [10, 20, 30, 255]);
+    let target = described(4, 4);
+    let mapping = Mapping::scaled(Rational::ONE, r(1, 2), (n(0), n(0))).expect("a map");
+    let (from, to) = band(mapping, Filter::Area, 1, 4).expect("a band");
+    assert!(to - from > 1, "the band is one row and cannot be shortened");
+    let packed = source.to_packed().expect("bytes");
+    // One row short at the bottom, and the row still asks for it.
+    let short = Frame::from_packed(
+        described(4, u32::try_from(to - from - 1).expect("a height")),
+        &packed[from * 16..(to - 1) * 16],
+    )
+    .expect("a band");
+    assert_eq!(
+        resample_row(Some(&short), target, from, target, mapping, Filter::Area, 1),
+        Err(RenderStatus::RowOutsideBand)
+    );
+}
+
+#[test]
+fn a_turn_has_no_band_at_all() {
+    // Not a bound but a shape: a rotated row's preimage is a slope, and a
+    // slope crosses every row of the picture it lies in. So there is no band
+    // to ask for, and asking is refused rather than answered with all of them.
+    let cosine = r(4, 5);
+    let sine = r(3, 5);
+    let mapping = Mapping::new(
+        [cosine, sine.checked_neg().expect("a sine"), sine, cosine],
+        (n(0), n(0)),
+    )
+    .expect("a map");
+    assert!(!mapping.horizontal());
+    assert_eq!(
+        band(mapping, Filter::Area, 0, 8),
+        Err(RenderStatus::NotRowLocal)
+    );
+    // And every map that does take horizontals to horizontals says so.
+    for linear in [
+        [n(1), n(0), n(0), n(1)],
+        [r(1, 2), n(0), n(0), r(1, 3)],
+        [n(1), r(3, 4), n(0), n(1)],
+        [n(-1), n(0), n(0), n(-1)],
+    ] {
+        assert!(
+            Mapping::new(linear, (n(0), n(0)))
+                .expect("a map")
+                .horizontal()
+        );
+    }
+}
+
+#[test]
+fn a_band_past_its_bound_is_refused_and_an_empty_one_is_not() {
+    // Two ends of the same function. A shrink steeper than `MAX_BAND_ROWS` to
+    // one wants more rows than a band holds, and refuses. A picture moved
+    // entirely off its own frame wants *no* rows, which is not an error at
+    // all: there is nothing there, and nothing resamples to transparency.
+    let steep = Mapping::scaled(
+        Rational::ONE,
+        r(1, i64::try_from(MAX_BAND_ROWS).expect("a bound") * 2),
+        (n(0), n(0)),
+    )
+    .expect("a map");
+    assert_eq!(
+        band(steep, Filter::Area, 0, 1024),
+        Err(RenderStatus::BandTooTall)
+    );
+    // Exactly at the bound it is admitted, which is what "past" means -- and
+    // the scale that reaches it is one in sixty-*three*, not one in
+    // sixty-four. A destination row's preimage under a one-in-sixty-four
+    // shrink is the half-open span `[0, 64)`, whose lower edge lands exactly
+    // on a row boundary, and the band takes in the row that begins there. It
+    // has to: `area_at` visits that row, finds an overlap of nought and skips
+    // it, and a band that did not hold a row the sampler visits would refuse
+    // with `RowOutsideBand`. So the bound is a bound on the band, and the band
+    // is what the sampler reads rather than what it uses.
+    let allowed = Mapping::scaled(
+        Rational::ONE,
+        r(1, i64::try_from(MAX_BAND_ROWS).expect("a bound") - 1),
+        (n(0), n(0)),
+    )
+    .expect("a map");
+    assert_eq!(band(allowed, Filter::Area, 0, 1024), Ok((0, MAX_BAND_ROWS)));
+    assert_eq!(
+        band(
+            Mapping::scaled(
+                Rational::ONE,
+                r(1, i64::try_from(MAX_BAND_ROWS).expect("a bound")),
+                (n(0), n(0))
+            )
+            .expect("a map"),
+            Filter::Area,
+            0,
+            1024
+        ),
+        Err(RenderStatus::BandTooTall)
+    );
+
+    let away = Mapping::new([n(1), n(0), n(0), n(1)], (n(0), n(100))).expect("a map");
+    assert_eq!(band(away, Filter::Area, 0, 4), Ok((0, 0)));
+    let target = described(4, 4);
+    let row = resample_row(None, target, 0, target, away, Filter::Area, 0).expect("a row");
+    assert_eq!(pixels(&row), std::vec![[0, 0, 0, 0]; 4]);
+}
+
+#[test]
+fn a_band_of_a_different_picture_is_refused_rather_than_resampled() {
+    // A band has to be the same picture, cut down. One that is not is a band
+    // of something else, and resampling it would answer confidently about a
+    // picture nobody asked for -- with exactly the right number of bytes,
+    // which is why the byte count cannot be what catches it.
+    let target = described(4, 4);
+    let mapping = identity();
+    let narrow = flat(2, 2, [10, 20, 30, 255]);
+    assert_eq!(
+        resample_row(Some(&narrow), target, 0, target, mapping, Filter::Area, 0),
+        Err(RenderStatus::NotComposable)
+    );
+    // Same size, different colour: the bytes would fit and the answer would
+    // be wrong in light rather than in shape.
+    let elsewhere = FrameDescription::square(
+        Geometry::new(4, 2).expect("a geometry"),
+        PixelFormat::Rgba8,
+        ColourDescription {
+            primaries: Primaries::Bt709,
+            transfer: TransferFunction::Gamma22,
+            matrix: MatrixCoefficients::Identity,
+            range: Range::Full,
+        },
+        None,
+        Some(AlphaState::Premultiplied),
+    )
+    .expect("a description");
+    let other = Frame::from_packed(elsewhere, &[128; 32]).expect("a band");
+    assert_eq!(
+        resample_row(Some(&other), target, 0, target, mapping, Filter::Area, 0),
+        Err(RenderStatus::NotComposable)
+    );
+    // And a band that claims rows the picture does not have.
+    let past = flat(4, 3, [10, 20, 30, 255]);
+    assert_eq!(
+        resample_row(Some(&past), target, 2, target, mapping, Filter::Area, 0),
+        Err(RenderStatus::RowOutsideBand)
     );
 }

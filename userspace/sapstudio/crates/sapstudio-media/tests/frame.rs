@@ -366,8 +366,15 @@ fn one_changed_sample_changes_the_digest() {
 
 #[test]
 fn a_blank_frame_is_black_rather_than_full_of_zeroes() {
-    // A blank frame is opaque black in its declared range. Limited-range luma
-    // uses 16 for black, and limited-range chroma uses its neutral code.
+    // Zero is not black, and this test exists because it used to be treated as
+    // though it were. In a limited-range luma plane zero sits *below* the legal
+    // floor of sixteen; in a chroma plane zero is not neutral but the most
+    // negative value the byte can hold, which is a saturated blue-green. A
+    // blank frame filled with zeroes therefore showed up on a vectorscope in
+    // the corner of the graticule instead of at the origin — which is how it
+    // was found.
+    //
+    // A blank frame is an opaque black slug, legal in its own range.
     let full = Frame::blank(rgb_description(8, 8)).expect("a frame");
     for pixel in full.to_packed().expect("bytes").chunks_exact(4) {
         assert_eq!(pixel, &[0, 0, 0, 255], "full-range black, opaque");
@@ -502,4 +509,99 @@ fn a_format_without_alpha_cannot_be_given_an_association() {
         described.with_alpha(AlphaState::Premultiplied),
         Err(MediaStatus::AlphaMismatch)
     );
+}
+
+#[test]
+fn a_buffer_wrapped_as_a_frame_and_taken_back_is_the_same_allocation() {
+    // The property the whole row path turns on, and the only way to state it
+    // that a test can check: not "it is fast" but *the bytes never moved*. A
+    // window filled from storage becomes a frame and becomes a window again,
+    // and the address is the same address, so nothing was copied and nothing
+    // was allocated. Compare the contents instead and a copy would pass.
+    let description = rgb_description(4, 3);
+    let bytes = description.packed_bytes().expect("a size");
+    let window: std::vec::Vec<u8> = (0..bytes)
+        .map(|index| u8::try_from(index % 251).unwrap_or(0))
+        .collect();
+    let expected = window.clone();
+    let address = window.as_ptr();
+
+    let frame = Frame::from_owned(description, window).expect("a frame");
+    assert!(frame.is_packed(), "an interleaved frame is one packed run");
+    assert_eq!(
+        frame.packed().expect("bytes").as_ptr(),
+        address,
+        "lending the bytes copied them"
+    );
+
+    let back = frame.into_packed().expect("bytes");
+    assert_eq!(back.as_ptr(), address, "taking the buffer back copied it");
+    assert_eq!(back, expected, "and it is still the picture");
+}
+
+#[test]
+fn a_planar_frame_packs_rather_than_lends_and_says_so_first() {
+    // Three planes cannot be one slice, whatever anybody wants: they are
+    // three allocations. So this is the case that copies, and `is_packed`
+    // says so *before* the copy rather than after -- which is what lets a
+    // caller on a small machine decide instead of discover.
+    let description = yuv_description(4, 4, PixelFormat::Yuv420p8);
+    let bytes = description.packed_bytes().expect("a size");
+    let tight: std::vec::Vec<u8> = (0..bytes)
+        .map(|index| u8::try_from(index % 241).unwrap_or(0))
+        .collect();
+    let frame = Frame::from_packed(description, &tight).expect("a frame");
+    assert!(!frame.is_packed(), "a planar frame is not one run");
+    assert_eq!(frame.packed().expect("bytes").as_ref(), &tight[..]);
+    assert_eq!(frame.clone().into_packed().expect("bytes"), tight);
+    // And `from_owned` takes the same buffer and copies out of it, which is
+    // the same frame `from_packed` builds -- the difference is cost, not
+    // answer, and a milestone that changed the answer would be a bug.
+    assert_eq!(
+        Frame::from_owned(description, tight.clone()).expect("a frame"),
+        frame
+    );
+}
+
+#[test]
+fn a_padded_frame_packs_rather_than_lends() {
+    // Padding between rows is not part of the picture, so a padded frame's
+    // samples are not the picture's bytes and cannot be lent as them. One
+    // plane is not enough; the stride has to be the row.
+    let description = rgb_description(3, 2);
+    let row = 3 * 4;
+    let tight: std::vec::Vec<u8> = (0..row * 2)
+        .map(|index| u8::try_from(index % 256).unwrap_or(0))
+        .collect();
+    let mut padded_samples = std::vec::Vec::new();
+    for line in 0..2 {
+        padded_samples.extend_from_slice(&tight[line * row..(line + 1) * row]);
+        padded_samples.extend_from_slice(&[0xAA; 8]);
+    }
+    let padded = Frame::new(
+        description,
+        std::vec![Plane::new(padded_samples, row + 8).expect("a plane")],
+    )
+    .expect("a frame");
+    assert!(!padded.is_packed());
+    assert_eq!(padded.packed().expect("bytes").as_ref(), &tight[..]);
+    assert_eq!(padded.into_packed().expect("bytes"), tight);
+}
+
+#[test]
+fn a_buffer_of_the_wrong_size_is_not_taken() {
+    // A frame that took a short buffer would be a frame whose rows ran off the
+    // end of it. `from_owned` makes no check of its own: `Frame::new` compares
+    // the plane's length against the geometry and refuses with the same
+    // status, and a control showed the earlier check changed no answer. What
+    // this test holds is the refusal, not where it comes from.
+    let description = rgb_description(4, 3);
+    let bytes = description.packed_bytes().expect("a size");
+    for length in [bytes - 1, bytes + 1, 0] {
+        assert_eq!(
+            Frame::from_owned(description, std::vec![0; length]).err(),
+            Some(MediaStatus::PlaneSizeMismatch),
+            "a buffer of {length} bytes was taken for a frame of {bytes}"
+        );
+    }
 }

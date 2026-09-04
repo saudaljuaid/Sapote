@@ -22,6 +22,8 @@ pub enum MediaStatus {
     /// A format with an alpha channel was offered without an alpha
     /// association, or one without a channel was offered with one.
     AlphaMismatch,
+    /// A format with no alpha channel, where coverage was needed.
+    AlphaRequired,
     /// A matrix that means "these samples are already RGB" was paired with a
     /// format that is not, or the other way round.
     MatrixMismatch,
@@ -56,6 +58,7 @@ impl MediaStatus {
             Self::OddDimension => "this format halves a dimension that is odd",
             Self::SitingMismatch => "the chroma siting does not match the format",
             Self::AlphaMismatch => "the alpha association does not match the format",
+            Self::AlphaRequired => "that format has no coverage to set",
             Self::MatrixMismatch => "the matrix does not match the format",
             Self::BadPixelAspect => "a pixel aspect ratio must be greater than zero",
             Self::PlaneCountMismatch => "the wrong number of planes for this format",

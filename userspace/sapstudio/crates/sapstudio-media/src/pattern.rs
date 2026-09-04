@@ -13,6 +13,7 @@ use alloc::vec::Vec;
 use crate::colour::MatrixCoefficients;
 use crate::format::PixelFormat;
 use crate::frame::{Frame, FrameDescription};
+use crate::geometry::Geometry;
 use crate::status::{MediaStatus, Result};
 
 /// The eight bars, in the order the standard puts them, as full-range red,
@@ -69,6 +70,53 @@ impl TestPattern {
     /// conversion, and that is the colour pipeline's job rather than a
     /// fixture generator's (R-8.3).
     pub fn render(self, description: FrameDescription) -> Result<Frame> {
+        let height = description.geometry().height();
+        self.render_rows(description, 0, height, description)
+    }
+
+    /// Draw one row of this pattern, as a frame one row high.
+    ///
+    /// The pattern is placed against the **whole** picture and one row of it
+    /// drawn — the same discipline a mask takes, and for the same reason: bars
+    /// are eighths of the width and a checkerboard's squares are counted from
+    /// the top, so a pattern drawn into a frame one row high would be a
+    /// different picture rather than a row of this one.
+    ///
+    /// Exact rather than approximate, because [`TestPattern::colour_at`] is a
+    /// function of position and nothing else. There is no state to carry from
+    /// the row above.
+    ///
+    /// # Errors
+    ///
+    /// As [`TestPattern::render`], plus [`MediaStatus::GeometryTooLarge`] for
+    /// a row past the bottom of the picture.
+    pub fn render_row(self, description: FrameDescription, row: u32) -> Result<Frame> {
+        let geometry = description.geometry();
+        if row >= geometry.height() {
+            return Err(MediaStatus::GeometryTooLarge);
+        }
+        let one = FrameDescription::new(
+            Geometry::new(geometry.width(), 1)?,
+            description.format(),
+            description.colour(),
+            description.siting(),
+            description.alpha(),
+            description.pixel_aspect(),
+        )?;
+        self.render_rows(description, row, row + 1, one)
+    }
+
+    /// Draw a run of rows, placed against the whole picture.
+    ///
+    /// One rasteriser for both forms, so a row and a frame cannot disagree
+    /// about where a bar begins.
+    fn render_rows(
+        self,
+        description: FrameDescription,
+        from: u32,
+        to: u32,
+        out: FrameDescription,
+    ) -> Result<Frame> {
         if description.colour().matrix != MatrixCoefficients::Identity {
             return Err(MediaStatus::PatternFormatUnsupported);
         }
@@ -83,13 +131,13 @@ impl TestPattern {
         };
 
         let geometry = description.geometry();
-        let total = description.packed_bytes()?;
+        let total = out.packed_bytes()?;
         let mut samples = Vec::new();
         samples
             .try_reserve(total)
             .map_err(|_| MediaStatus::OutOfMemory)?;
 
-        for y in 0..geometry.height() {
+        for y in from..to {
             for x in 0..geometry.width() {
                 let rgb = self.colour_at(x, y, geometry.width(), geometry.height());
                 match channels {
@@ -102,7 +150,7 @@ impl TestPattern {
                 }
             }
         }
-        Frame::from_packed(description, &samples)
+        Frame::from_owned(out, samples)
     }
 
     /// The colour of one pixel.

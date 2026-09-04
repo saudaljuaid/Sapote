@@ -55,6 +55,48 @@ pub enum RenderStatus {
     LookStrengthOutOfRange,
     /// A source answered with a frame that is not the one asked for.
     SourceDescriptionMismatch,
+    /// A library was asked for media it does not hold.
+    MediaAbsent,
+    /// A library holds that media and cannot read it as material.
+    ///
+    /// Separate from [`RenderStatus::MediaAbsent`] deliberately: one of them
+    /// means somebody's drive is not mounted and the other means somebody's
+    /// file is damaged, and telling a person the first when it is the second
+    /// sends them looking in the wrong place.
+    MediaUnreadable,
+    /// Media that holds no frame at the tick asked for.
+    FrameAbsent,
+    /// A library was asked for a look it does not hold.
+    LookAbsent,
+    /// A node whose output row depends on more than a bounded band of its
+    /// inputs' rows, asked for a row.
+    ///
+    /// A statement about the operation rather than about this build: a
+    /// resampled frame's output row has a *line* in its source for a preimage,
+    /// and only a linear map that takes horizontals to horizontals makes that
+    /// line lie in one band of rows — which a rotation never does. Distinct
+    /// from [`RenderStatus::NoRowForm`], which is a statement about the build.
+    NotRowLocal,
+    /// A band of source rows taller than one may be.
+    ///
+    /// A vertical downscale steeper than [`crate::resample::MAX_BAND_ROWS`] to
+    /// one, where a band is most of a frame and scanning has bought nothing.
+    BandTooTall,
+    /// A resampled row reached for a source row outside the band it was given.
+    ///
+    /// Not a bad argument from a caller but a wrong answer from
+    /// [`crate::resample::band`], and the only way to notice it: a band that
+    /// came back too short would otherwise draw transparency where there is
+    /// picture, and transparency is what a source legitimately returns past
+    /// its own edge.
+    RowOutsideBand,
+    /// A node this build has no row form for, asked for a row.
+    ///
+    /// A statement about what has been written, not about what is possible.
+    /// The two are separate because somebody reading a refusal needs to know
+    /// whether to wait for a later version or to change what they are asking
+    /// for.
+    NoRowForm,
     /// An edge whose coefficients name no line.
     DegenerateEdge,
     /// A shape with no edges, or one enclosing no area.
@@ -100,6 +142,14 @@ impl RenderStatus {
                 "a grade's strength runs from none of the look to all of it"
             }
             Self::SourceDescriptionMismatch => "the source answered with a different frame",
+            Self::MediaAbsent => "this library does not hold that media",
+            Self::MediaUnreadable => "that media is here and cannot be read as material",
+            Self::FrameAbsent => "that media holds no frame at that tick",
+            Self::LookAbsent => "this library does not hold that look",
+            Self::NotRowLocal => "an output row of that node needs more than a band of input rows",
+            Self::BandTooTall => "one output row reads more source rows than a band holds",
+            Self::RowOutsideBand => "a resampled row reached past the band it was given",
+            Self::NoRowForm => "this build cannot produce that a row at a time",
             Self::DegenerateEdge => "an edge with no direction names no line",
             Self::DegenerateShape => "that shape encloses nothing",
             Self::ShapeTooComplex => "that shape has more edges than this rasterises",

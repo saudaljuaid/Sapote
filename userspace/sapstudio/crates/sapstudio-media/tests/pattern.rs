@@ -241,3 +241,44 @@ fn the_offline_slate_runs_diagonally() {
         assert_eq!(at(start, 0), at(start.saturating_sub(1), 1));
     }
 }
+
+#[test]
+fn a_row_of_a_pattern_is_that_row_of_the_whole_frame() {
+    // The row form, checked against the whole form it is a slice of. A pattern
+    // is placed against the whole picture -- bars are eighths of the width, a
+    // checkerboard is counted from the top -- so both forms are asked for the
+    // same description and only the range differs.
+    let description = FrameDescription::square(
+        Geometry::new(19, 7).expect("a geometry"),
+        PixelFormat::Rgb8,
+        ColourDescription::srgb_full(),
+        None,
+        None,
+    )
+    .expect("a description");
+    for pattern in [
+        TestPattern::Bars,
+        TestPattern::Ramp,
+        TestPattern::Offline,
+        TestPattern::Checkerboard { square: 3 },
+        TestPattern::Flat { value: 77 },
+    ] {
+        let whole = pattern.render(description).expect("a frame");
+        let bytes = whole.to_packed().expect("bytes");
+        let stride = 19 * 3;
+        for row in 0..7_u32 {
+            let one = pattern.render_row(description, row).expect("a row");
+            assert_eq!(one.description().geometry().height(), 1);
+            assert_eq!(
+                one.to_packed().expect("bytes"),
+                bytes[row as usize * stride..(row as usize + 1) * stride],
+                "{pattern:?} row {row} is not row {row} of the frame"
+            );
+        }
+        // And a row past the bottom is refused rather than drawn against
+        // arithmetic that happens to work. A caller reaching this directly has
+        // no other bound.
+        assert!(pattern.render_row(description, 7).is_err());
+        assert!(pattern.render_row(description, 1000).is_err());
+    }
+}

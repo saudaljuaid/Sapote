@@ -65,6 +65,24 @@ pub enum SampleRate {
 }
 
 impl SampleRate {
+    /// The timebase this rate counts in.
+    ///
+    /// Here rather than beside whatever needs it, because more than one thing
+    /// does: the mixer decides which sample a timeline instant falls in, and
+    /// the reel format decides how many samples a run of frames holds. Those
+    /// two must agree exactly — a format that disagreed with the mixer by one
+    /// sample would refuse every export it was handed — and the way to make
+    /// two things agree is to give them one answer rather than two.
+    #[must_use]
+    pub const fn timebase(self) -> sapstudio_core::Timebase {
+        match self {
+            Self::Hz44100 => sapstudio_core::Timebase::AUDIO_44K1,
+            Self::Hz48000 => sapstudio_core::Timebase::AUDIO_48K,
+            Self::Hz88200 => sapstudio_core::Timebase::AUDIO_88K2,
+            Self::Hz96000 => sapstudio_core::Timebase::AUDIO_96K,
+        }
+    }
+
     /// The rate as a whole number of samples per second.
     #[must_use]
     pub const fn hertz(self) -> u32 {

@@ -179,9 +179,18 @@ fn look_at(project: &mut Project, sequence: sapstudio_model::SequenceId) {
         .expect("a strength");
 }
 
-/// Animate all four framing lanes in the shared format fixture.
+/// Frame one clip and animate all four lanes of its framing.
 ///
-/// The ease keyframe gives the variable-length interpolation record payload.
+/// The sweeps below run over `sample`, and until this existed **no motion was
+/// in the file they sweep at all** — the motion tests build their own project,
+/// so every byte of every lane was covered by a round trip and by nothing
+/// else. That is the gap this file's own note about fixtures describes, sitting
+/// in the file since M8.10 and found by asking where the turn's new lane would
+/// be swept.
+///
+/// All four lanes, with an ease among the keyframes, because an ease is the
+/// only interpolation that writes anything after its tag — and a format bug in
+/// a variable-length record reads the next field as part of this one.
 fn frame_up(project: &mut Project, sequence: sapstudio_model::SequenceId) {
     project
         .apply(
@@ -254,8 +263,12 @@ fn frame_up(project: &mut Project, sequence: sapstudio_model::SequenceId) {
 
 /// Put a curve on each automation lane.
 ///
-/// Both picture and sound lanes are populated so the byte sweeps cover every
-/// automation record written by the format.
+/// Separate from the fixture only because the fixture had grown past what one
+/// function should hold. Both lanes are animated, and that is the point: the
+/// sweeps below cover bytes that are actually written, so a lane left empty
+/// here is a lane the format could forget entirely without a test noticing.
+/// It did — the first version of this animated only the picture track, and
+/// dropping the level curve from the writer broke nothing at all.
 fn animate(project: &mut Project, sequence: sapstudio_model::SequenceId) {
     // An ease rather than a linear on at least one keyframe, because it is the
     // only interpolation that writes anything after its tag — and a format bug
@@ -741,13 +754,17 @@ fn garbage_behind_a_valid_header_is_refused() {
 
 #[test]
 fn a_clip_naming_media_the_file_does_not_have_is_refused() {
-    // Hand-built: no media, one sequence, one track, one clip pointing at
-    // media index zero.
+    // Hand-built: one sequence, no media, one track, one clip pointing at
+    // media index zero. The sequence's *header* comes first and its body last,
+    // which is the ordering nested sequences forced -- a media table has to be
+    // able to name a sequence, and a sequence's body has to be able to name a
+    // media asset.
     let mut payload: std::vec::Vec<u8> = std::vec::Vec::new();
-    payload.extend_from_slice(&0_u32.to_le_bytes()); // no media
     payload.extend_from_slice(&1_u32.to_le_bytes()); // one sequence
-    payload.extend_from_slice(&30_000_i64.to_le_bytes());
+    payload.extend_from_slice(&30_000_i64.to_le_bytes()); // its timebase
     payload.extend_from_slice(&1_001_i64.to_le_bytes());
+    payload.extend_from_slice(&0_u32.to_le_bytes()); // no media
+    payload.extend_from_slice(&0_u32.to_le_bytes()); // this body is sequence nought
     payload.extend_from_slice(&1_u32.to_le_bytes()); // one track
     payload.push(0); // video
     payload.push(1); // a fader at a level
@@ -1037,8 +1054,12 @@ fn a_file_whose_dissolve_the_model_would_refuse_is_refused() {
 
 #[test]
 fn a_wipe_survives_the_file_with_its_direction() {
-    // The transition tag preserves its kind. Two rational direction components
-    // preserve the wipe orientation without angle rounding.
+    // Version seven's whole reason. A transition used to be a boundary and a
+    // length, and reading one back could only produce a dissolve because that
+    // was the only kind there was. The tag says which, and the direction is
+    // written as two rationals rather than an angle, so a wipe drawn at a
+    // third of a turn is the same wipe when it comes back rather than a
+    // rounding of one.
     use sapstudio_model::{Transition, TransitionKind, Wipe};
 
     let mut project = Project::new();
@@ -1415,10 +1436,10 @@ fn a_file_listing_one_piece_of_content_twice_is_refused() {
     }
     let file = encode(&project).expect("an encoding");
 
-    // The two records are the first thing in the payload after the count, and
-    // each begins with its digest. Making the second digest equal the first is
-    // what a file that lists one asset twice looks like.
-    let first: Vec<u8> = file[HEADER_BYTES + 4..HEADER_BYTES + 36].to_vec();
+    // The media table follows the sequence headers, and this project has no
+    // sequences -- so the count of nought is four bytes, the media count is
+    // four more, and the first record's digest begins after both.
+    let first: Vec<u8> = file[HEADER_BYTES + 8..HEADER_BYTES + 40].to_vec();
     let second = file
         .windows(32)
         .position(|window| window == Digest::of(b"two".as_slice()).bytes().as_slice())
@@ -2429,7 +2450,11 @@ fn a_speed_tag_this_build_does_not_read_is_refused() {
 
 #[test]
 fn a_file_holding_a_clip_stopped_at_no_speed_is_refused() {
-    // Frozen playback has its own tag; a numeric speed of zero is invalid.
+    // Through the model's own constructor, like everything else. The name of
+    // this test used to say "frozen", which stopped being right the day a
+    // freeze became a tag of its own: a still is `SPEED_FROZEN` and carries no
+    // number, and a *speed* of nought is a number that means nothing. Only the
+    // second is what this refuses.
     let project = retimed(Rational::new(1, 2).expect("a half"));
     let file = encode(&project).expect("an encoding");
     let mut wanted = std::vec::Vec::new();
@@ -3229,9 +3254,10 @@ fn a_sequence_with_no_markers_costs_four_bytes_to_say_so() {
 
     let single = encode(&one).expect("bytes").len();
     let double = encode(&two).expect("bytes").len();
-    // A second empty sequence is its timebase, its track count and its marker
-    // count: sixteen, four and four.
-    assert_eq!(double - single, 24);
+    // A second empty sequence is its timebase in the header block, then its
+    // own index, its track count and its marker count in the body: sixteen,
+    // then four, four and four.
+    assert_eq!(double - single, 28);
 }
 
 #[test]
@@ -3291,5 +3317,576 @@ fn a_file_holding_a_marker_before_the_programme_is_refused() {
         Err(IoStatus::Model(
             sapstudio_model::ModelStatus::MarkerBeforeStart
         )),
+    );
+}
+
+/// A project of two sequences, the second nested inside the first.
+fn nested() -> Project {
+    let mut project = Project::new();
+    let media = project
+        .add_media(MediaAsset::new(Digest::of(b"footage"), RATE, frames(9_000)).expect("an asset"))
+        .expect("room");
+    // The *inner* sequence is added second on purpose, so that the file's
+    // sequence order and the nesting order are not the same order -- a fixture
+    // where the nest happened to come first could not tell a reader that
+    // resolved by position from one that resolved by luck.
+    let outer = project.add_sequence(RATE).expect("room");
+    let inner = project.add_sequence(RATE).expect("room");
+    for (id, length) in [(outer, 200_i64), (inner, 60)] {
+        project
+            .apply(
+                id,
+                Edit::AddTrack {
+                    index: 0,
+                    kind: TrackKind::Video,
+                },
+            )
+            .expect("a track");
+        project
+            .apply(
+                id,
+                Edit::InsertItem {
+                    track: 0,
+                    index: 0,
+                    item: Item::Clip(Clip::new(media, 0, frames(length)).expect("a clip")),
+                },
+            )
+            .expect("a clip");
+    }
+    let nest = project
+        .add_media(MediaAsset::nesting(inner, RATE, frames(60)).expect("an asset"))
+        .expect("room");
+    project
+        .apply(
+            outer,
+            Edit::InsertItem {
+                track: 0,
+                index: 1,
+                item: Item::Clip(Clip::new(nest, 0, frames(40)).expect("a clip")),
+            },
+        )
+        .expect("a nested clip");
+    project
+}
+
+#[test]
+fn a_nest_survives_the_file_naming_the_sequence_it_named() {
+    // The whole reason the layout has three phases. A nest names a sequence by
+    // position, and a clip names media by position, so each table refers to
+    // the other -- and what breaks the knot is that only a sequence's timebase
+    // is needed to create it.
+    let back = round_tripped(&nested());
+    let ids: std::vec::Vec<_> = back.sequences().iter().map(|(id, _)| id).collect();
+    assert_eq!(ids.len(), 2);
+
+    let (_, asset) = back
+        .media()
+        .iter()
+        .find(|(_, held)| held.nested().is_some())
+        .expect("a nest came back");
+    assert_eq!(
+        asset.nested(),
+        Some(ids[1]),
+        "the nest came back naming the wrong sequence"
+    );
+    assert_eq!(asset.duration(), frames(60));
+    assert_eq!(asset.location(), None);
+}
+
+#[test]
+fn a_nest_naming_a_sequence_the_file_does_not_hold_is_refused() {
+    // The nest's sequence index, mutated past the end. Reaching it needs a
+    // resealed file, because the payload's digest refuses a mutated byte long
+    // before a field is looked at.
+    let file = encode(&nested()).expect("an encoding");
+    // The nested asset's tag is 2, followed by its sequence index of one.
+    let mut wanted = std::vec::Vec::new();
+    wanted.push(2_u8);
+    wanted.extend_from_slice(&1_u32.to_le_bytes());
+    let at = file
+        .windows(wanted.len())
+        .position(|window| window == wanted.as_slice())
+        .expect("the nest is in the file");
+    let mut lost = file.clone();
+    lost[at + 1..at + 5].copy_from_slice(&7_u32.to_le_bytes());
+    assert_eq!(
+        decode(&resealed(lost)),
+        Err(IoStatus::SequenceIndexOutOfRange)
+    );
+}
+
+#[test]
+fn a_nest_whose_digest_is_not_its_sequences_is_refused() {
+    // A nest is named by which sequence it is, and the reader recomputes that
+    // rather than believing the file. Otherwise a file could give two nests
+    // one digest, or give a nest a *recording's* digest, and the library would
+    // fold them together.
+    let file = encode(&nested()).expect("an encoding");
+    let mut wanted = std::vec::Vec::new();
+    wanted.push(2_u8);
+    wanted.extend_from_slice(&1_u32.to_le_bytes());
+    let at = file
+        .windows(wanted.len())
+        .position(|window| window == wanted.as_slice())
+        .expect("the nest is in the file");
+    // The record's digest is the first thirty-two bytes of it, and the source
+    // tag is the last byte before the payload above: back up over the tag, the
+    // location count, the duration and the timebase.
+    let record = at - 4 - 8 - 16 - 32;
+    let mut mangled = file.clone();
+    mangled[record] ^= 0xFF;
+    assert_eq!(
+        decode(&resealed(mangled)),
+        Err(IoStatus::NestDigestMismatch)
+    );
+}
+
+#[test]
+fn a_nest_carrying_a_location_is_refused() {
+    // A nest has nowhere to be, for the reason a title has nowhere to be. The
+    // location's length is the four bytes before the source tag.
+    let file = encode(&nested()).expect("an encoding");
+    let mut wanted = std::vec::Vec::new();
+    wanted.extend_from_slice(&0_u32.to_le_bytes());
+    wanted.push(2_u8);
+    wanted.extend_from_slice(&1_u32.to_le_bytes());
+    let at = file
+        .windows(wanted.len())
+        .position(|window| window == wanted.as_slice())
+        .expect("the nest is in the file");
+    let mut hinted = file.clone();
+    // One byte of hint, spliced in where the reader will look for it.
+    hinted.splice(at..at + 4, 1_u32.to_le_bytes());
+    hinted.insert(at + 4, b'/');
+    assert_eq!(decode(&resealed(hinted)), Err(IoStatus::NestHasLocation));
+}
+
+#[test]
+fn a_file_whose_nesting_is_a_cycle_is_refused() {
+    // Through the model's own checks, like everything else: a file cannot
+    // produce a project no sequence of edits could. Built by pointing the
+    // *outer* sequence's nest at the outer sequence itself, which is index
+    // nought rather than one.
+    let file = encode(&nested()).expect("an encoding");
+    let mut wanted = std::vec::Vec::new();
+    wanted.push(2_u8);
+    wanted.extend_from_slice(&1_u32.to_le_bytes());
+    let at = file
+        .windows(wanted.len())
+        .position(|window| window == wanted.as_slice())
+        .expect("the nest is in the file");
+    let mut looped = file.clone();
+    looped[at + 1..at + 5].copy_from_slice(&0_u32.to_le_bytes());
+    // The digest no longer matches the sequence it names, which is the *first*
+    // thing the reader checks -- so this proves the two refusals are ordered
+    // rather than that a cycle is accepted. The cycle itself is refused by the
+    // model, and `a_sequence_cannot_contain_itself` in the model's own suite
+    // is where that is pinned.
+    assert_eq!(decode(&resealed(looped)), Err(IoStatus::NestDigestMismatch));
+}
+
+#[test]
+fn a_file_giving_one_sequence_two_bodies_is_refused() {
+    // Once each, and every one. A file naming a body twice would build one
+    // sequence over the top of itself and leave the other empty, and both
+    // halves of that are a project no editor produced.
+    //
+    // The fixture gets a note in the *inner* sequence, which is what makes the
+    // splice findable: markers are the last thing in a body, so the four bytes
+    // after the note's text are the next body's header index.
+    let mut project = nested();
+    let inner = project
+        .sequences()
+        .iter()
+        .map(|(id, _)| id)
+        .nth(1)
+        .expect("two sequences");
+    project
+        .apply(
+            inner,
+            Edit::AddMarker {
+                at: Instant::new(10, RATE),
+                text: "innermost".into(),
+            },
+        )
+        .expect("a note");
+    let file = encode(&project).expect("an encoding");
+    let at = file
+        .windows(9)
+        .position(|window| window == b"innermost")
+        .expect("the note is in the file");
+    let next = at + 9;
+    // The bodies are written innermost first, so the note ends the *first* of
+    // them and the outer sequence -- header index nought -- follows.
+    assert_eq!(
+        &file[next..next + 4],
+        &0_u32.to_le_bytes(),
+        "the second body names the outer sequence"
+    );
+    let mut twice = file.clone();
+    twice[next..next + 4].copy_from_slice(&1_u32.to_le_bytes());
+    assert_eq!(decode(&resealed(twice)), Err(IoStatus::SequenceBodyTwice));
+}
+
+/// A project whose one clip runs on a ramp: full speed, down to a quarter.
+///
+/// The first keyframe sits at tick 777 so that the file can be searched for it
+/// without the pattern colliding with anything else in the payload.
+fn ramped() -> Project {
+    use sapstudio_model::curve::{Curve, Interpolation, Keyframe};
+
+    let mut project = Project::new();
+    let media = project
+        .add_media(MediaAsset::new(Digest::of(b"footage"), RATE, frames(9_000)).expect("an asset"))
+        .expect("room");
+    let sequence = project.add_sequence(RATE).expect("room");
+    project
+        .apply(
+            sequence,
+            Edit::AddTrack {
+                index: 0,
+                kind: TrackKind::Video,
+            },
+        )
+        .expect("a track");
+    let ramp = Curve::new(std::vec![
+        Keyframe::new(
+            Instant::new(777, RATE),
+            Rational::ONE,
+            Interpolation::Linear
+        )
+        .expect("a keyframe"),
+        Keyframe::new(
+            Instant::new(1_200, RATE),
+            Rational::new(1, 4).expect("a quarter"),
+            Interpolation::Linear
+        )
+        .expect("a keyframe"),
+    ])
+    .expect("a curve");
+    project
+        .apply(
+            sequence,
+            Edit::InsertItem {
+                track: 0,
+                index: 0,
+                item: Item::Clip(
+                    Clip::new(media, 0, frames(2_000))
+                        .expect("a clip")
+                        .with_ramp(ramp)
+                        .expect("a ramp"),
+                ),
+            },
+        )
+        .expect("a clip");
+    project.forget_history();
+    project
+}
+
+#[test]
+fn a_ramp_survives_the_file() {
+    let back = round_tripped(&ramped());
+    assert_eq!(back, ramped(), "the ramp did not come back as it went in");
+}
+
+#[test]
+fn a_file_whose_ramp_turns_around_is_refused() {
+    // Through the model's own door, like everything else: a file cannot hold a
+    // clip no sequence of edits could produce. The second keyframe's value is
+    // negated, which makes the ramp cross nought part way along -- and a ramp
+    // that turns around reads part of its media twice.
+    let file = encode(&ramped()).expect("an encoding");
+    // The second keyframe: its instant, then its value as a numerator over a
+    // denominator, then the byte saying how it leaves.
+    let at = file
+        .windows(8)
+        .position(|window| window == 1_200_i64.to_le_bytes())
+        .expect("the keyframe is in the file");
+    let mut turning = file.clone();
+    turning[at + 8..at + 16].copy_from_slice(&(-1_i64).to_le_bytes());
+    assert_eq!(
+        decode(&resealed(turning)),
+        Err(IoStatus::Model(
+            sapstudio_model::ModelStatus::SpeedRampChangesDirection
+        ))
+    );
+}
+
+#[test]
+fn a_file_whose_ramp_has_no_keyframes_is_refused() {
+    // A ramp is a curve and a curve holds at least one keyframe, so the tag
+    // above the count is what says whether there is a ramp at all. A count of
+    // nought under a ramp tag is a file saying both things at once.
+    let file = encode(&ramped()).expect("an encoding");
+    // The ramp's tag, then its count of two keyframes, then the first
+    // keyframe's instant -- which is what pins the pattern to this curve
+    // rather than to any other in the payload.
+    let mut wanted = std::vec::Vec::new();
+    wanted.push(3_u8);
+    wanted.extend_from_slice(&2_u32.to_le_bytes());
+    wanted.extend_from_slice(&777_i64.to_le_bytes());
+    let at = file
+        .windows(wanted.len())
+        .position(|window| window == wanted.as_slice())
+        .expect("the ramp is in the file");
+    let mut empty = file.clone();
+    empty[at + 1..at + 5].copy_from_slice(&0_u32.to_le_bytes());
+    assert_eq!(
+        decode(&resealed(empty)),
+        Err(IoStatus::RampWithoutKeyframes)
+    );
+}
+
+#[test]
+fn a_file_whose_ramp_eases_is_refused() {
+    // The refusal the model makes when a ramp is set, made again here. The
+    // first keyframe's interpolation byte is changed from linear to an ease,
+    // and the four handle rationals it would then want are spliced in after
+    // it -- so this is a *well-formed* eased curve that the model refuses on
+    // its meaning rather than a truncated one it refuses on its shape.
+    let file = encode(&ramped()).expect("an encoding");
+    let at = file
+        .windows(8)
+        .position(|window| window == 777_i64.to_le_bytes())
+        .expect("the keyframe is in the file");
+    // The instant, sixteen bytes of value, then the byte saying how it leaves.
+    let how = at + 8 + 16;
+    assert_eq!(file[how], 2, "the keyframe runs straight to the next");
+    let mut eased = file[..how].to_vec();
+    eased.push(3);
+    for handle in [(1_i64, 3_i64), (0, 1), (2, 3), (1, 1)] {
+        eased.extend_from_slice(&handle.0.to_le_bytes());
+        eased.extend_from_slice(&handle.1.to_le_bytes());
+    }
+    eased.extend_from_slice(&file[how + 1..]);
+    assert_eq!(
+        decode(&resealed(eased)),
+        Err(IoStatus::Model(
+            sapstudio_model::ModelStatus::EaseHasNoExactArea
+        ))
+    );
+}
+
+/// A project whose one clip carries two notes.
+fn noted() -> Project {
+    let mut project = Project::new();
+    let media = project
+        .add_media(MediaAsset::new(Digest::of(b"footage"), RATE, frames(9_000)).expect("an asset"))
+        .expect("room");
+    let sequence = project.add_sequence(RATE).expect("room");
+    project
+        .apply(
+            sequence,
+            Edit::AddTrack {
+                index: 0,
+                kind: TrackKind::Video,
+            },
+        )
+        .expect("a track");
+    project
+        .apply(
+            sequence,
+            Edit::InsertItem {
+                track: 0,
+                index: 0,
+                item: Item::Clip(Clip::new(media, 0, frames(2_000)).expect("a clip")),
+            },
+        )
+        .expect("a clip");
+    for (tick, text) in [(64_i64, "eyeline"), (512, "boom in shot")] {
+        project
+            .apply(
+                sequence,
+                Edit::AddClipMarker {
+                    track: 0,
+                    index: 0,
+                    at: Instant::new(tick, RATE),
+                    text: text.into(),
+                },
+            )
+            .expect("a note");
+    }
+    project.forget_history();
+    project
+}
+
+#[test]
+fn a_shots_notes_survive_the_file() {
+    assert_eq!(round_tripped(&noted()), noted());
+}
+
+#[test]
+fn a_file_giving_a_shot_two_notes_at_one_offset_is_refused() {
+    // Through the model's own door, one note at a time, so a file cannot hold
+    // a clip no sequence of edits could produce.
+    let file = encode(&noted()).expect("an encoding");
+    let at = file
+        .windows(8)
+        .position(|window| window == 512_i64.to_le_bytes())
+        .expect("the note is in the file");
+    let mut twice = file.clone();
+    twice[at..at + 8].copy_from_slice(&64_i64.to_le_bytes());
+    assert_eq!(
+        decode(&resealed(twice)),
+        Err(IoStatus::Model(sapstudio_model::ModelStatus::MarkerExists))
+    );
+}
+
+#[test]
+fn a_file_giving_a_shot_a_note_before_it_starts_is_refused() {
+    let file = encode(&noted()).expect("an encoding");
+    let at = file
+        .windows(8)
+        .position(|window| window == 64_i64.to_le_bytes())
+        .expect("the note is in the file");
+    let mut early = file.clone();
+    early[at..at + 8].copy_from_slice(&(-1_i64).to_le_bytes());
+    assert_eq!(
+        decode(&resealed(early)),
+        Err(IoStatus::Model(
+            sapstudio_model::ModelStatus::MarkerBeforeStart
+        ))
+    );
+}
+
+#[test]
+fn a_file_giving_a_shot_more_notes_than_the_bound_is_refused() {
+    // The bound is the *clip's*, which is three orders of magnitude below the
+    // sequence's. Reading a clip's list against the sequence's bound would let
+    // a file talk its way past the smaller one (R-11.2), which is exactly what
+    // this splices: a count of nine, which a sequence would accept happily.
+    let file = encode(&noted()).expect("an encoding");
+    let mut wanted = std::vec::Vec::new();
+    wanted.extend_from_slice(&2_u32.to_le_bytes());
+    wanted.extend_from_slice(&64_i64.to_le_bytes());
+    let at = file
+        .windows(wanted.len())
+        .position(|window| window == wanted.as_slice())
+        .expect("the note count is in the file");
+    let mut many = file.clone();
+    many[at..at + 4].copy_from_slice(
+        &u32::try_from(sapstudio_model::MAX_MARKERS_PER_CLIP + 1)
+            .expect("a count")
+            .to_le_bytes(),
+    );
+    assert_eq!(decode(&resealed(many)), Err(IoStatus::TooMany));
+}
+
+/// A project holding one captioned recording.
+fn transcribed() -> Project {
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let asset = MediaAsset::new(
+        Digest::of(b"an interview"),
+        RATE,
+        Duration::new(1000, RATE).expect("a length"),
+    )
+    .expect("an asset")
+    .with_captions(std::vec![
+        sapstudio_model::caption::Caption::new(0, 10, 0, "did you get that").expect("a caption"),
+        sapstudio_model::caption::Caption::new(5, 15, 1, "most of it").expect("a caption"),
+        sapstudio_model::caption::Caption::new(10, 20, 0, "good").expect("a caption"),
+    ])
+    .expect("a transcript");
+    let media = project.add_media(asset).expect("room");
+    project
+        .apply(
+            sequence,
+            Edit::AddTrack {
+                index: 0,
+                kind: TrackKind::Video,
+            },
+        )
+        .expect("a track");
+    project
+        .apply(
+            sequence,
+            Edit::InsertItem {
+                track: 0,
+                index: 0,
+                item: Item::Clip(
+                    Clip::new(media, 0, Duration::new(20, RATE).expect("a length"))
+                        .expect("a clip"),
+                ),
+            },
+        )
+        .expect("an insert");
+    project
+}
+
+#[test]
+fn a_transcript_survives_a_round_trip() {
+    let project = transcribed();
+    let file = encode(&project).expect("an encoding");
+    let back = decode(&file).expect("a decoding");
+    // The media and the programme, rather than the whole project: a file does
+    // not carry the edit journal, so the two differ in the history and in
+    // nothing else.
+    assert_eq!(back.media(), project.media());
+    let sequence = project.sequences().iter().next().expect("a sequence").0;
+    assert_eq!(
+        back.sequence(sequence).expect("a sequence"),
+        project.sequence(sequence).expect("a sequence")
+    );
+    // Field for field as well as as a whole, so a decoder that lost the voice
+    // and kept the words would be caught by name.
+    let (_, asset) = back.media().iter().next().expect("an asset");
+    let captions = asset.captions();
+    assert_eq!(captions.len(), 3);
+    assert_eq!(captions[0].text(), "did you get that");
+    assert_eq!((captions[0].from(), captions[0].to()), (0, 10));
+    assert_eq!(captions[1].voice(), 1, "the second speaker survived");
+    assert_eq!(captions[2].text(), "good");
+    // And re-encoding gives the same bytes, so nothing about the transcript
+    // depends on the order it came out of the file.
+    assert_eq!(encode(&back).expect("an encoding"), file);
+}
+
+#[test]
+fn a_file_holding_a_caption_no_editor_could_make_is_refused() {
+    // A hostile file, resealed so that the digest cannot be what refuses it.
+    // The reader comes through the model's own constructor, so every bound the
+    // model puts on a transcript a file has to pass too (R-11.2).
+    let file = encode(&transcribed()).expect("an encoding");
+    // The first caption's in and out points: 0 and 10, eight bytes each,
+    // immediately after the asset's digest and its own count of three.
+    let at = file
+        .windows(16)
+        .position(|window| {
+            window[..8] == 0_i64.to_le_bytes() && window[8..] == 10_i64.to_le_bytes()
+        })
+        .expect("the first caption's range is in the file");
+
+    // A caption that ends before it begins.
+    let mut backwards = file.clone();
+    backwards[at..at + 8].copy_from_slice(&20_i64.to_le_bytes());
+    let sealed = Digest::of(&backwards[HEADER_BYTES..]);
+    backwards[16..48].copy_from_slice(sealed.bytes());
+    assert_eq!(
+        decode(&backwards),
+        Err(IoStatus::Model(sapstudio_model::ModelStatus::EmptyCaption)),
+        "a file holding a backwards caption has to be refused"
+    );
+
+    // Two captions of one voice over the same tick: the second speaker's voice
+    // changed to the first's, which makes it overlap the caption above it.
+    let mut doubled = file.clone();
+    let voice = doubled
+        .windows(16)
+        .position(|window| {
+            window[..8] == 5_i64.to_le_bytes() && window[8..] == 15_i64.to_le_bytes()
+        })
+        .expect("the second caption's range is in the file")
+        + 16;
+    assert_eq!(doubled[voice], 1, "the second caption is the second voice");
+    doubled[voice] = 0;
+    let sealed = Digest::of(&doubled[HEADER_BYTES..]);
+    doubled[16..48].copy_from_slice(sealed.bytes());
+    assert_eq!(
+        decode(&doubled),
+        Err(IoStatus::Model(
+            sapstudio_model::ModelStatus::CaptionsOverlap
+        )),
+        "one voice cannot say two things at once, in a file either"
     );
 }

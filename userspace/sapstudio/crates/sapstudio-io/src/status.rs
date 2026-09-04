@@ -46,6 +46,14 @@ pub enum IoStatus {
     UnknownTrackKind(u8),
     /// A clip names a media entry the file does not contain.
     MediaIndexOutOfRange,
+    /// A nested asset naming a sequence the file does not hold.
+    SequenceIndexOutOfRange,
+    /// A file giving one sequence two bodies.
+    SequenceBodyTwice,
+    /// A nest whose digest is not the digest of the sequence it names.
+    NestDigestMismatch,
+    /// A nest carrying a location, which it has no use for.
+    NestHasLocation,
     /// A written file did not read back as what was written.
     WriteNotVerified,
     /// The media types refused what the file described.
@@ -94,6 +102,56 @@ pub enum IoStatus {
     EmptyReel,
     /// A reel's frames are not all described the same way.
     ReelDescriptionMismatch,
+    /// The file ends before the digest that closes it.
+    ///
+    /// What a reel cut short by an interrupted write looks like, and it is
+    /// answerable without hashing anything — which is the whole reason the
+    /// digest is at the end.
+    TruncatedTrailer,
+    /// A reel cannot be wound a row at a time in a format with several planes.
+    ///
+    /// A packed frame is plane nought entire, then plane one entire. A scan
+    /// arrives row by row, so writing it forwards would mean holding two
+    /// thirds of the picture until the last row — which is the allocation the
+    /// row form exists to avoid, spelled differently.
+    NotOnePlane,
+    /// A row arrived that is not the row the writer is waiting for.
+    ///
+    /// Refused rather than repaired (R-1.3): a writer that took whatever came
+    /// next would turn a caller's off-by-one into a file whose pictures are
+    /// wrong and whose digest is right.
+    RowOutOfOrder,
+    /// A reel was finished before every row of every frame had arrived.
+    IncompleteReel,
+    /// A reel was wound into somewhere that already held bytes.
+    SinkNotEmpty,
+    /// A reel's sound is not a length its pictures could cover.
+    ///
+    /// A frame at 30000/1001 into 48 kHz covers 1601.6 samples, so a run of
+    /// frames holds one of *two* counts and which one depends on where the
+    /// take was cut from. The bound is exact all the same: three such frames
+    /// hold 4804 samples or 4805, and never 4803.
+    SoundRunsPastPicture,
+    /// A reel with no sound was handed some, or one with sound was not.
+    SoundNotDeclared,
+    /// A reel's header disagrees with itself about its transcript.
+    TranscriptNotDeclared,
+    /// A caption arrived that is not the one the writer is waiting for.
+    CaptionOutOfOrder,
+    /// A block of samples arrived that is not the block the writer wants.
+    SoundOutOfOrder,
+    /// A cue that begins before the one before it, or before the file does.
+    CueOutOfOrder,
+    /// A cue whose in and out points round to the same millisecond.
+    CueVanishes,
+    /// A cue with no words in it.
+    EmptyCue,
+    /// A cue whose text holds a blank line, which would end the cue.
+    CueTextNotOneBlock,
+    /// A cue whose text holds `-->`, which would read as a timing line.
+    CueTextLooksLikeATiming,
+    /// A block of samples is not a length one frame could cover.
+    SoundBlockWrongLength,
     /// A pixel format tag this format does not define.
     UnknownPixelFormat(u8),
     /// A colour tag this format does not define.
@@ -116,6 +174,8 @@ pub enum IoStatus {
     TitleNotText,
     /// A marker whose text is not text.
     MarkerNotText,
+    /// A caption whose words are not text.
+    CaptionNotText,
     /// A title whose digest is not the digest of its own description.
     TitleDigestMismatch,
     /// An alignment tag this format does not define.
@@ -126,6 +186,56 @@ pub enum IoStatus {
     UnknownFadeTag(u8),
     /// A speed tag this format does not define.
     UnknownSpeedTag(u8),
+    /// A ramp whose curve has no keyframes, which is not a curve.
+    RampWithoutKeyframes,
+    /// A name with nothing in it.
+    NameEmpty,
+    /// Bytes offered as a bitmap that are not one.
+    NotABitmap,
+    /// Bytes offered as a vault that are not one.
+    NotAVault,
+    /// A frame position past the end of the reel that holds it.
+    FrameOutOfReel,
+    /// A plane a format does not have, or a row past a plane's height.
+    PlaneOutOfFrame,
+    /// A destination shorter than the run of bytes it was to receive.
+    TooSmall,
+    /// A vault already holding as much material as it may.
+    VaultFull,
+    /// Material that would take a vault past what one file holds.
+    VaultTooLarge,
+    /// A name longer than a vault entry carries.
+    VaultNameTooLong,
+    /// A name that is not printable text.
+    VaultNameNotText,
+    /// Material a vault already holds.
+    VaultItemTwice,
+    /// Material a vault does not hold.
+    VaultItemAbsent,
+    /// A vault whose spans leave a gap, overlap, or run backwards.
+    VaultSpanNotContiguous,
+    /// Material that is not what its entry says it is.
+    VaultItemDigestMismatch,
+    /// A bitmap of a shape this build does not read.
+    BitmapUnsupported,
+    /// A bitmap past the bounds Sapote's importer accepts.
+    BitmapTooLarge,
+    /// A name past eight-and-three, or past twelve bytes.
+    NameTooLong,
+    /// A name holding a byte Sapote's 8.3 subset does not accept.
+    NameNotCanonical,
+    /// A name with a second dot, a leading one, or a trailing one.
+    NameDotMisplaced,
+    /// A path with nothing in it, or one naming the root.
+    PathEmpty,
+    /// A path beginning at the root, which no mount accepts.
+    PathAbsolute,
+    /// A path past its byte or component bound.
+    PathTooLong,
+    /// A path with a backslash or a repeated separator.
+    PathMalformed,
+    /// A path climbing above the mount it is relative to.
+    PathAboveRoot,
     /// An exact arithmetic or timecode refusal from the core types.
     Time(sapstudio_core::CoreStatus),
     /// An edit decision list line is longer than any real one.
@@ -188,7 +298,22 @@ pub enum IoStatus {
 impl IoStatus {
     /// One line naming the condition.
     #[must_use]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "a table is as long as the number of things it names"
+    )]
     pub const fn describe(self) -> &'static str {
+        // One arm per status, one line each, and the length of it is the
+        // number of ways this crate can refuse -- which is the property worth
+        // having rather than a thing to be shortened. Splitting the match
+        // would need a subset arm for every status the subset does not name,
+        // which is a branch nothing reaches and no test can cover;
+        // `Edit::apply` in the model says the same thing at more length and
+        // for the same reason.
+        //
+        // `expect` rather than `allow`, so the day this drops back under a
+        // hundred lines the compiler says so instead of leaving a stale
+        // waiver behind.
         match self {
             Self::Model(status) => status.describe(),
             Self::Seam(_) => "the storage seam refused",
@@ -207,6 +332,12 @@ impl IoStatus {
             Self::UnknownItemTag(_) => "an item is tagged as something this format does not define",
             Self::UnknownTrackKind(_) => "a track carries something this format does not define",
             Self::MediaIndexOutOfRange => "a clip names media the file does not contain",
+            Self::SequenceIndexOutOfRange => "a nest names a sequence this file does not hold",
+            Self::SequenceBodyTwice => "a file gives one sequence two bodies",
+            Self::NestDigestMismatch => {
+                "a nest is named by which sequence it is, and that is not it"
+            }
+            Self::NestHasLocation => "a nest has nowhere to be, so it cannot have been found there",
             Self::WriteNotVerified => "the written file did not read back as what was written",
             Self::Media(status) => status.describe(),
             Self::Sound(status) => status.describe(),
@@ -232,6 +363,22 @@ impl IoStatus {
             Self::NotAReel => "the file is not a SapStudio reel",
             Self::EmptyReel => "a reel must hold at least one frame",
             Self::ReelDescriptionMismatch => "the reel's frames are not all described the same way",
+            Self::TruncatedTrailer => "the file ends before the digest that closes it",
+            Self::NotOnePlane => "a reel in a planar format cannot be wound a row at a time",
+            Self::RowOutOfOrder => "that is not the row this reel is waiting for",
+            Self::IncompleteReel => "the reel was finished before all of its rows arrived",
+            Self::SinkNotEmpty => "a file is written into something empty",
+            Self::SoundRunsPastPicture => "the reel's sound is not a length its pictures cover",
+            Self::SoundNotDeclared => "this reel's header does not describe sound",
+            Self::TranscriptNotDeclared => "this reel's header disagrees about its transcript",
+            Self::CaptionOutOfOrder => "that is not the caption this reel is waiting for",
+            Self::SoundOutOfOrder => "that is not the block of sound this reel is waiting for",
+            Self::CueOutOfOrder => "that cue begins before the one before it",
+            Self::CueVanishes => "that cue is shorter than the millisecond it would be written in",
+            Self::EmptyCue => "a cue with no words is a cue a reader cannot see",
+            Self::CueTextNotOneBlock => "a blank line inside a cue would end the cue",
+            Self::CueTextLooksLikeATiming => "an arrow inside a cue would read as a timing line",
+            Self::SoundBlockWrongLength => "that block is not a length one frame covers",
             Self::UnknownPixelFormat(_) => "a pixel format this format does not define",
             Self::UnknownColourTag(_) => "a colour tag this format does not define",
             Self::UnknownFaderTag(_) => "a fader tag this format does not define",
@@ -243,11 +390,37 @@ impl IoStatus {
             Self::UnknownMediaSourceTag(_) => "that media source tag is not one this build reads",
             Self::TitleNotText => "this title's words are not text",
             Self::MarkerNotText => "this marker's text is not text",
+            Self::CaptionNotText => "this caption's words are not text",
             Self::TitleDigestMismatch => "this title is not named by what it says",
             Self::UnknownAlignmentTag(_) => "that alignment tag is not one this build reads",
             Self::UnknownInkTag(_) => "that ink tag is not one this build reads",
             Self::UnknownFadeTag(_) => "that fade tag is not one this build reads",
             Self::UnknownSpeedTag(_) => "that speed tag is not one this build reads",
+            Self::RampWithoutKeyframes => "a ramp is a curve, and that curve has no keyframes",
+            Self::NameEmpty => "a name with nothing in it names nothing",
+            Self::NotABitmap => "those bytes are not a bitmap",
+            Self::NotAVault => "those bytes are not a vault",
+            Self::FrameOutOfReel => "that reel has no frame there",
+            Self::PlaneOutOfFrame => "that frame has no such plane or row",
+            Self::TooSmall => "that destination is shorter than what it was to receive",
+            Self::VaultFull => "this vault holds as much material as one may",
+            Self::VaultTooLarge => "that material would take the vault past one file",
+            Self::VaultNameTooLong => "that name is longer than a vault entry carries",
+            Self::VaultNameNotText => "a name has to be printable text",
+            Self::VaultItemTwice => "this vault already holds that material",
+            Self::VaultItemAbsent => "this vault does not hold that material",
+            Self::VaultSpanNotContiguous => "this vault's spans do not run end to end",
+            Self::VaultItemDigestMismatch => "that material is not what its entry says",
+            Self::BitmapUnsupported => "that is a bitmap of a shape this build does not read",
+            Self::BitmapTooLarge => "that bitmap is larger than the importer accepts",
+            Self::NameTooLong => "that name is longer than eight and three",
+            Self::NameNotCanonical => "that byte is not one this filesystem's names accept",
+            Self::NameDotMisplaced => "a name has one dot, and not at either end",
+            Self::PathEmpty => "that path names no file",
+            Self::PathAbsolute => "a path is relative to one mount",
+            Self::PathTooLong => "that path is longer than the mount accepts",
+            Self::PathMalformed => "that path is not a path this filesystem can follow",
+            Self::PathAboveRoot => "that path climbs above the mount it is relative to",
             Self::Time(status) => status.describe(),
             Self::EdlLineTooLong => "this edit decision list line is longer than any real one",
             Self::EdlMalformedEvent => "this event line does not have an event's fields",

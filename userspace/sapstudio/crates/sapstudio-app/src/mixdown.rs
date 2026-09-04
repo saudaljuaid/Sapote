@@ -1,40 +1,44 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Mix sequence audio over a time span.
+//! The sound half of rendering a sequence.
 //!
-//! Sample boundaries use [`sapstudio_core::Instant::floor_into`] at both ends,
-//! so fractional samples per video frame alternate without drift, overlap, or
-//! gaps. Each track uses its saved fader and automation. Decibel values are
-//! converted to gain here; muted tracks contribute no source.
+//! [`crate::timeline`] answers what a sequence looks like at an instant. This
+//! answers what it *sounds* like over a span, and the difference in shape is
+//! the whole of the difference between picture and sound: a frame is a moment,
+//! a sound is a stretch.
+//!
+//! The interesting part is where the two meet. A frame at 24 into 48 kHz is
+//! 2000 samples exactly, and at 30000/1001 — the commonest rate in television
+//! — it is 1601.6, which is not a number of samples. No frame at 29.97 holds a
+//! whole number of samples and none ever will.
+//!
+//! So a frame's samples are not counted, they are *bounded*: the samples of
+//! frame `n` are those from [`sapstudio_core::Instant::floor_into`] of `n` up
+//! to the same of `n + 1`. Each frame therefore holds 1601 samples or 1602,
+//! each frame's end is the next frame's beginning, and over any span the
+//! counts sum to exactly the samples in that span. Nothing drifts, nothing is
+//! dropped, and nothing is played twice — which is what the alternative,
+//! rounding to nearest, cannot promise at every boundary.
+//!
+//! Each track mixes at its own fader. The fader is a property of the *project*
+//! — it is set by an edit, it has an inverse, it undoes, and it is saved — so
+//! this function reads it rather than taking it as a parameter. A mix level
+//! that lived only in a function call would be a mix nobody could save.
+//!
+//! The model stores decibels and the mixer wants a factor, and the conversion
+//! happens here because this is the only place that sees both. A muted track
+//! contributes nothing at all, which is not the same as a track turned all the
+//! way down: the logarithm of zero is not a point on the scale.
 
 use alloc::vec::Vec;
 
 use sapstudio_audio::mix::Source;
 use sapstudio_audio::{AudioBuffer, Gain, MixReport, SampleRate};
-use sapstudio_core::{Instant, Rational, TimeRange, Timebase};
-use sapstudio_model::{Lane, MediaId, Sequence};
+use sapstudio_core::{Instant, Rational, TimeRange};
+use sapstudio_model::{Lane, Project, SequenceId};
 
 use crate::SlateStatus;
 
-/// Where samples of media come from.
-///
-/// The sound counterpart of [`sapstudio_render::Library`].
-pub trait SampleSource {
-    /// `count` samples of `media`, beginning at sample `start` of it.
-    ///
-    /// The buffer must have the rate and channel count that was asked for, and
-    /// exactly `count` samples. A source that returns a different length has
-    /// answered a different question.
-    ///
-    /// # Errors
-    ///
-    /// Whatever the source cannot do.
-    fn samples(
-        &mut self,
-        media: MediaId,
-        start: i64,
-        count: usize,
-    ) -> Result<AudioBuffer, SlateStatus>;
-}
+pub use sapstudio_audio::SampleSource;
 
 /// The mixer's gain for a fader position.
 fn gain_of(fader: sapstudio_model::Fader) -> Result<Gain, SlateStatus> {
@@ -44,19 +48,14 @@ fn gain_of(fader: sapstudio_model::Fader) -> Result<Gain, SlateStatus> {
     }
 }
 
-/// The timebase a sample rate counts in.
-fn timebase_of(rate: SampleRate) -> Timebase {
-    match rate {
-        SampleRate::Hz44100 => Timebase::AUDIO_44K1,
-        SampleRate::Hz48000 => Timebase::AUDIO_48K,
-        SampleRate::Hz88200 => Timebase::AUDIO_88K2,
-        SampleRate::Hz96000 => Timebase::AUDIO_96K,
-    }
-}
-
 /// Which sample a timeline instant falls in.
+///
+/// The timebase a rate counts in used to be a table here. It is
+/// [`SampleRate::timebase`] now, because the reel format needs the same answer
+/// to say how many samples a run of frames holds — and two tables that must
+/// agree are one table waiting to disagree.
 fn sample_of(instant: Instant, rate: SampleRate) -> Result<i64, SlateStatus> {
-    Ok(instant.floor_into(timebase_of(rate))?.ticks())
+    Ok(instant.floor_into(rate.timebase())?.ticks())
 }
 
 /// Mix a sequence's sound tracks over a span.
@@ -65,18 +64,34 @@ fn sample_of(instant: Instant, rate: SampleRate) -> Result<i64, SlateStatus> {
 /// `sample_of(end) - sample_of(start)` and is *not* the frame count times
 /// anything.
 ///
+/// ## Why this takes a project and not only a sequence
+///
+/// It did take only a sequence, and that was possible because the layer handed
+/// a [`sapstudio_model::MediaId`] straight to the source and nothing here ever
+/// had to know what the media *was*. A [`SampleSource`] is asked for a content
+/// digest now, for the reason that trait's own comment gives, and turning an
+/// identifier into a digest means reading the project's table — which is what
+/// [`crate::timeline::plan`] has always done on the picture side.
+///
+/// So the asymmetry is gone rather than papered over. Both halves of rendering
+/// a sequence take the project, both name media by what it is, and both can
+/// therefore read from a vault that several projects share.
+///
 /// # Errors
 ///
-/// [`SlateStatus::Model`] if the range is not in the sequence's timebase,
-/// [`SlateStatus::Audio`] if the sources do not agree with each other or with
-/// what was asked for, and whatever a source refuses.
+/// [`SlateStatus::Model`] if the range is not in the sequence's timebase or
+/// the sequence is not in the project, [`SlateStatus::Audio`] if the sources
+/// do not agree with each other or with what was asked for, and whatever a
+/// source refuses.
 pub fn mix(
-    sequence: &Sequence,
+    project: &Project,
+    sequence: SequenceId,
     range: TimeRange,
     rate: SampleRate,
     channels: usize,
     source: &mut dyn SampleSource,
 ) -> Result<(AudioBuffer, MixReport), SlateStatus> {
+    let held = project.sequence(sequence)?;
     let start = sample_of(range.start(), rate)?;
     let end = sample_of(
         range.end().map_err(sapstudio_model::ModelStatus::Time)?,
@@ -115,7 +130,8 @@ pub fn mix(
             .map_err(|_| SlateStatus::Audio(sapstudio_audio::AudioStatus::BufferTooLong))?;
 
         let block = frame_block(
-            sequence,
+            project,
+            held,
             Block {
                 from: frame,
                 to: next,
@@ -173,7 +189,8 @@ struct Block {
 
 /// One frame's worth of samples, with every layer on it summed.
 fn frame_block(
-    sequence: &Sequence,
+    project: &Project,
+    sequence: &sapstudio_model::Sequence,
     block: Block,
     source: &mut dyn SampleSource,
     report: &mut MixReport,
@@ -236,7 +253,13 @@ fn frame_block(
         // starts on the sample that frame boundary falls in, and two clips of
         // the same material at the same offset ask for the same samples.
         let begins = sample_of(Instant::new(layer.source(), frame.timebase()), rate)?;
-        let block = source.samples(layer.media(), begins, count)?;
+        // The identifier resolved into a digest here, where the project is,
+        // rather than by whatever is on the other side of the trait. A source
+        // reading from a shared vault has no table to consult.
+        let digest = project.media().get(layer.media())?.digest();
+        let block = source
+            .samples(digest, begins, count)
+            .map_err(SlateStatus::Audio)?;
         if block.rate() != rate || block.channel_count() != channels || block.len() != count {
             // A source that answers with a different span has answered a
             // different question, and resampling or padding it here would be a

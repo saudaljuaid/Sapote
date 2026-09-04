@@ -616,3 +616,41 @@ fn the_three_glyphs_that_are_not_only_strokes_still_have_their_extra_piece() {
         .all(|(x, _)| *x > r(0, 1) && *x < r(BOX_WIDTH, GRID));
     assert!(inside, "the crossbar reaches outside the legs");
 }
+
+#[test]
+fn a_row_of_a_run_is_that_row_of_the_whole_plane() {
+    // The row form of the rasteriser, checked against the whole form it is
+    // supposed to be a slice of. A run is laid out against the frame it
+    // belongs to, so both are asked for the same extent and only the range
+    // differs.
+    let run = sapstudio_render::font::title(
+        &["SAPSTUDIO", "take two"],
+        Rational::new(1, 4).expect("a size"),
+        Rational::new(1, 2).expect("a place"),
+        Rational::new(1, 2).expect("a place"),
+        sapstudio_render::font::Alignment::Centre,
+        40,
+        24,
+    )
+    .expect("a run");
+    let whole = run.plane(40, 24).expect("a plane");
+    for row in 0..24 {
+        assert_eq!(
+            run.plane_row(40, 24, row).expect("a row"),
+            whole[row * 40..(row + 1) * 40],
+            "row {row} of the run is not row {row} of its plane"
+        );
+    }
+    // And a row past the bottom is refused rather than rasterised against
+    // nothing. A caller reaching this directly has no other bound: the graph
+    // checks the row against the description, and this function does not see
+    // one.
+    assert_eq!(
+        run.plane_row(40, 24, 24),
+        Err(sapstudio_render::RenderStatus::OutsideDomain)
+    );
+    assert_eq!(
+        run.plane_row(40, 24, 1000),
+        Err(sapstudio_render::RenderStatus::OutsideDomain)
+    );
+}

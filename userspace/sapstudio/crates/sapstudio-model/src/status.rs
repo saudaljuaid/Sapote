@@ -70,6 +70,10 @@ pub enum ModelStatus {
     FadesLongerThanClip,
     /// A speed of nought, which shows one frame forever.
     SpeedNotUsable,
+    /// A ramp whose speed changes sign part way along it.
+    SpeedRampChangesDirection,
+    /// A Bézier ease asked for the exact area beneath it.
+    EaseHasNoExactArea,
     /// Sound asked to play at a speed other than one.
     SoundCannotBeRetimed,
     /// A motion on a clip that has no transform to animate.
@@ -84,12 +88,30 @@ pub enum ModelStatus {
     NotTheGapThatWasLifted,
     /// A marker carrying more text than the bound allows.
     MarkerTextTooLong,
+    /// A caption whose range ends at or before it begins.
+    EmptyCaption,
+    /// A caption carrying more text than the bound allows.
+    CaptionTextTooLong,
+    /// An asset carrying more captions than the bound allows.
+    TooManyCaptions,
+    /// Two captions of one voice covering the same tick of the recording.
+    ///
+    /// A person is not saying two things at once, and a reader given both has
+    /// no way to choose. Two *voices* overlapping is a conversation and is
+    /// allowed.
+    CaptionsOverlap,
+    /// A voice past the number an asset distinguishes.
+    UnknownVoice,
     /// A marker was asked for at an instant that has none.
     NoSuchMarker,
     /// A marker already sits at that instant.
     MarkerExists,
     /// A marker was placed before the programme starts.
     MarkerBeforeStart,
+    /// A sequence that would contain itself, directly or through others.
+    SequenceWouldContainItself,
+    /// Nesting deeper than the bound allows.
+    NestingTooDeep,
     /// An edit that would leave a transition dissolving from a gap.
     TransitionWouldLoseItsClip,
     /// An operation that only a clip supports was asked of a gap.
@@ -123,6 +145,8 @@ pub enum ModelStatus {
     /// An ease handle outside the span between its keyframes, which makes a
     /// curve that goes back in time.
     HandleOutOfSpan,
+    /// A position, or a stretch, that a caption reading does not cover.
+    OutsideTheReading,
     /// An opacity was set on a sound track, whose level is its fader.
     OpacityOnSound,
     /// A fader level was set on a picture track, whose level is its opacity.
@@ -177,6 +201,10 @@ impl ModelStatus {
             Self::NotGeneratedMedia => "that asset was recorded, not generated",
             Self::FadesLongerThanClip => "those fades together outlast the clip",
             Self::SpeedNotUsable => "a speed of nought is a freeze, not a speed",
+            Self::SpeedRampChangesDirection => "a ramp that turns around is two shots, not one",
+            Self::EaseHasNoExactArea => {
+                "the area under an ease is not a number this can write down"
+            }
             Self::SoundCannotBeRetimed => "sound cannot yet be played at another speed",
             Self::NoTransformToAnimate => "there is no transform on that clip to animate",
             Self::NoMaskToAnimate => "there is no mask on that clip to animate",
@@ -186,9 +214,16 @@ impl ModelStatus {
                 "that slot is not the gap of that length a lift left behind"
             }
             Self::MarkerTextTooLong => "a marker carries more text than one may",
+            Self::EmptyCaption => "a caption ends at or before it begins",
+            Self::CaptionTextTooLong => "a caption carries more text than one may",
+            Self::TooManyCaptions => "this asset carries more captions than one may",
+            Self::CaptionsOverlap => "one voice cannot say two things at once",
+            Self::UnknownVoice => "that voice is past the number an asset distinguishes",
             Self::NoSuchMarker => "no marker sits at that instant",
             Self::MarkerExists => "a marker already sits at that instant",
             Self::MarkerBeforeStart => "a marker before the programme starts is a note on nothing",
+            Self::SequenceWouldContainItself => "a sequence cannot contain itself",
+            Self::NestingTooDeep => "sequences nested deeper than this program renders",
             Self::TransitionWouldLoseItsClip => {
                 "a transition at that cut needs a clip on both sides of it"
             }
@@ -205,6 +240,7 @@ impl ModelStatus {
             Self::MixedTimebases => "these are not all counted the same way",
             Self::WrongTimebase => "that instant is counted another way",
             Self::HandleOutOfSpan => "an ease handle sits outside the span it eases across",
+            Self::OutsideTheReading => "that is outside the span this reading was projected over",
             Self::OpacityOnSound => "a sound track's level is its fader, not an opacity",
             Self::LevelOnPicture => "a picture track's level is its opacity, not a fader",
             Self::NoSuchKeyframe => "no keyframe sits at that instant",

@@ -1,11 +1,62 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Built-in monospaced vector text with exact pixel coverage.
+//! A face, and text drawn as exact coverage.
 //!
-//! Glyphs are disjoint convex polygons, so their coverage can be summed by the
-//! shape rasteriser without hinting or bitmap scaling. Tests reject overlapping
-//! pieces. Coordinates use a half-unit grid: 10 by 16 per glyph, a 2-unit
-//! stroke, and a 12-unit advance. The face uses straight edges and separate
-//! cap, x-height, ascender, and descender metrics.
+//! Text arrived last for a reason recorded three milestones ago: "offline
+//! media renders a slate but cannot say which media is missing — that is text
+//! on a frame, and text needs a font". A font could not be taken from
+//! anywhere. Every outline format worth reading is a parser and a hinting
+//! engine, and every free face worth shipping is somebody else's licence to
+//! reconcile with GPL-3.0-only on a platform that cannot mount a file system
+//! to load one. So SapStudio writes its own, and what it writes is decided by
+//! what it already has.
+//!
+//! ## A glyph is disjoint convex pieces, because that is what is exact
+//!
+//! The shape rasteriser computes the **exact area** of a pixel lying inside a
+//! convex region. A letter is not convex. But a letter *is* a small number of
+//! convex pieces, and the area of a union of pieces whose interiors do not
+//! overlap is the sum of their areas — exactly, with no reasoning about
+//! antialiasing at all.
+//!
+//! So every glyph here is authored as pieces that **touch but never overlap**,
+//! and coverage is their sum. That is not a convention the drawing hopes for:
+//! [`shape::quantise`] refuses a coverage above full, so a face whose pieces
+//! overlapped enough to fill a pixel past one would be *refused* rather than
+//! drawn wrong. And the tests go further and measure every pair's intersection
+//! area exactly, which catches an overlap far too small to fill a pixel.
+//!
+//! The consequence worth having is that this face is exact at every size. There
+//! is no bitmap, no hinting, no grid fitting and no size at which it stops
+//! being the same letter — a title at 4K and the same title on a proxy are the
+//! same shape, measured the same way.
+//!
+//! ## What it does not do, and why
+//!
+//! **No curves.** Every piece is a straight-edged quadrilateral or triangle.
+//! A curve would be a polygonal approximation of a curve, which is a decision
+//! about how many segments — a number that would have to be defended, would
+//! change with size, and would make "the same shape at every size" false.
+//!
+//! **Three heights, not one.** Capitals were the whole face to begin with, and
+//! a capital runs from the cap line to the baseline and does nothing else —
+//! one measurement. Lowercase needed three more: an x-height the bodies sit
+//! on, ascenders that reach the cap line, and descenders that hang below the
+//! baseline. That is why it was deferred as "a second set of metrics" rather
+//! than as more of the same drawing, and the deferral was right about the
+//! work. The metrics are named here and a test measures the glyphs against
+//! them, so they describe the face rather than decorating it.
+//!
+//! **Monospaced.** Every glyph advances by the same amount. The first things
+//! drawn are a timecode and a digest, and a proportional face makes a counting
+//! number dance in place while it counts.
+//!
+//! ## The design grid
+//!
+//! Half-units, sixteen to the em vertically. A glyph is drawn in a box ten
+//! half-units wide and sixteen tall — five by eight whole units — with a
+//! stroke two half-units thick, and the pen advances twelve. Every design
+//! coordinate below is an integer in that grid, so the face is exact rational
+//! data rather than a table of decimals somebody rounded.
 
 use alloc::vec::Vec;
 
@@ -172,9 +223,15 @@ enum Extra {
 
 /// One character's shape: pieces that touch but never overlap.
 ///
-/// A view over static stroke data. Corners are converted to exact rational
-/// coordinates only for glyphs used in a run, keeping the face in read-only
-/// data instead of generating every outline at startup.
+/// A **view onto static data**, not a copy of it. The face is a table of
+/// strokes in a design grid of small integers, which lives in the image's
+/// read-only data; a glyph turns its own strokes into exact rational corners
+/// when somebody draws it, and only the characters in a run ever pay for that.
+///
+/// The face used to build every glyph's corners up front, and the measurement
+/// that changed it is in the platform contract: `Face::stencil` was the
+/// largest single function in the whole program at 23,807 bytes, because every
+/// coordinate of every glyph was an *instruction* that stored it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Glyph {
     bands: &'static [Band],
@@ -435,17 +492,48 @@ impl Run {
     /// pixel is covered *more than once*, which is a face whose pieces
     /// overlap.
     pub fn plane(&self, width: usize, height: usize) -> Result<Vec<u8>> {
+        self.plane_rows(width, height, 0, height)
+    }
+
+    /// One row of the coverage, placed against the whole picture.
+    ///
+    /// A run is laid out against the frame it belongs to — the em is a
+    /// fraction of the height and the pen starts at a fraction of the width —
+    /// so type drawn into a frame one row high would be a different size in a
+    /// different place. Placed against the full extent, one row rasterised,
+    /// which is what a mask and a wipe do and for the same reason.
+    ///
+    /// Exact, because coverage is a function of position: a glyph's pieces are
+    /// convex and the area of one against a pixel needs nothing from the row
+    /// above it.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderStatus::OutsideDomain`] for an empty or oversized extent, or a
+    /// row past the bottom.
+    pub fn plane_row(&self, width: usize, height: usize, row: usize) -> Result<Vec<u8>> {
+        if row >= height {
+            return Err(RenderStatus::OutsideDomain);
+        }
+        self.plane_rows(width, height, row, row + 1)
+    }
+
+    /// A run of rows, placed against the whole picture.
+    ///
+    /// One rasteriser for both forms, so a row and a frame cannot disagree
+    /// about where a letter falls.
+    fn plane_rows(&self, width: usize, height: usize, from: usize, to: usize) -> Result<Vec<u8>> {
         if width == 0 || height == 0 || width > shape::MAX_EXTENT || height > shape::MAX_EXTENT {
             return Err(RenderStatus::OutsideDomain);
         }
         let mut out = Vec::new();
         out.try_reserve(
             width
-                .checked_mul(height)
+                .checked_mul(to.saturating_sub(from))
                 .ok_or(RenderStatus::OutsideDomain)?,
         )
         .map_err(|_| RenderStatus::OutOfMemory)?;
-        for y in 0..height {
+        for y in from..to {
             for x in 0..width {
                 let row = i64::try_from(y).map_err(|_| RenderStatus::OutsideDomain)?;
                 let column = i64::try_from(x).map_err(|_| RenderStatus::OutsideDomain)?;

@@ -32,10 +32,21 @@ The Media Editor icon is imported from the private SapStudio repository at
 commit `f205f90c6842ecf1b0e3e6f8bb8b41f8136ebf26` and retained at
 `assets/phipia/media-editor.png` with SHA-256
 `c5d706b274132b5fcaf0bb016d0da56ddd1dc54b417709364874ad1a58611eb5`.
-That repository currently contains the icon and license only; it has no newer
-editor implementation to import. `src/kernel/taskbar_art.h` was regenerated
-from the Phipia application artwork with this image in the `editor` slot.
+`src/kernel/taskbar_art.h` was regenerated from the Phipia application artwork
+with this image in the `editor` slot.
+
+The complete portable editor source in `userspace/sapstudio/` is synchronized
+from that repository's `engineering-foundation` branch at commit
+`3717f02d35fede9a37d62d37ce05b0eb47ea1a95`. The mirrored application keeps
+its stable crate, file-format, and ABI identifiers for compatibility while the
+desktop presents it as **Media Editor**. This snapshot includes nested
+sequences, bounded row and frame-window rendering, storage-backed media,
+streamed reel and audio export, captions, VTT sidecars, and caption burn-in.
+The Phipia window in `src/kernel/editor.c` is the interactive platform surface;
+`src/kernel/ui.c` owns the durable FAT32 adapter until the native image can use
+the full framebuffer, input, storage, and audio seams directly.
 
 Do not replace the platform camera broker with the shell window when updating
 this import. Reapply the same mechanical namespace conversion, then run the
-kernel strict-warning build and the Phipia shell self-tests.
+kernel strict-warning build, the Phipia shell self-tests, and the mirrored
+Media Editor verification suite.

@@ -7,7 +7,7 @@
 //! stopped firing, the `expect` said so, and the exemption went. The ceiling
 //! below stayed, because the ceiling is the half that was doing the work.
 //!
-//! A clip is 520 bytes and an edit is 544. A number that lives only in a doc comment is a number that
+//! A clip is 552 bytes and an edit is 576. A number that lives only in a doc comment is a number that
 //! goes stale, and these would go stale silently — nothing else in the suite
 //! would notice a field that doubled the cost of every item on every track,
 //! or every entry in the history.
@@ -23,18 +23,60 @@ use sapstudio_model::{Clip, Edit, Item, Mask, Motion, Transform};
 
 /// What one item on a track may cost.
 ///
-/// The current item is about 520 bytes. This ceiling tolerates compiler layout
-/// differences while still catching a material size increase. Any increase
-/// should be checked against the freestanding image measurements in the
-/// [platform contract](../../../docs/PLATFORM_CONTRACT.md).
-const MAX_ITEM_BYTES: usize = 576;
+/// Set a little above the 520 bytes it is, so that ordinary layout differences
+/// between compilers do not fail the build, and far enough below a doubling
+/// that a new field large enough to matter does.
+///
+/// The history of this number is the history of what a clip carries: 288
+/// before retiming, 320 after an exact speed, 344 after an opacity curve,
+/// 416 once a clip could animate its mask as well as its framing — an
+/// `Option<Motion>` was 72 bytes, three lanes of curve, and there are two of
+/// them — 440 once a grade could come on over a shot, which is one more
+/// `Option<Curve>` at 24, 488 once a motion gained a fourth lane for the turn,
+/// which is 24 more in each of the two motions, 520 once a transform carried
+/// the point it acts about — two rationals, 32 bytes — and 528 once a speed
+/// could be a ramp.
+///
+/// That last step is eight bytes for a whole third case, and the reason is
+/// worth knowing: **a freeze used to be free.** `Playback` was `At(Rational)`
+/// and `Frozen`, and a rational cannot have a denominator of nought, so the
+/// second variant lived in that niche and the enum was exactly one rational at
+/// 16 bytes. A ramp is a `Curve`, which is a `Vec` at 24, so the enum is now
+/// 24 — and the eight bytes appear here, and in `Edit`, and in the image.
+///
+/// Then 552, once a clip could carry notes of its own: a `Vec` at 24 bytes,
+/// whatever is in it. That is the same shape the ramp took and it is the last
+/// field this ceiling had room for, which is why the ceiling moves with it.
+///
+/// The ceiling moved from 512 to 576 when a transform gained its anchor, and
+/// what ate the room is named above rather than left to be worked out: a
+/// fourth lane, twice. At 512 the headroom had fallen to 24 bytes — exactly
+/// one more `Option<Curve>` — which makes a ceiling a tripwire for the next
+/// field rather than a bound on the shape, and a tripwire fails for the wrong
+/// reason.
+///
+/// It moved again, 576 to 640, when a clip learned to carry notes. The
+/// headroom had fallen to 24 bytes for the second time, which is the same
+/// tripwire as before; what ate it this time was a ramp at 8 and a note list
+/// at 24. Sixty-four bytes of new room is two more fields of that size, which
+/// is a bound on the shape rather than a dare.
+///
+/// Raising a ceiling is allowed; raising it without saying which change ate
+/// the room is not. And raising it without measuring the *image* would be
+/// worse: `Clip` going 320 → 344 took two pages **off** the program, because
+/// past 320 the optimiser stops copying a clip inline into each of
+/// `Edit::apply`'s arms; going 344 → 416 put those two pages back. The
+/// relationship is not monotone and cannot be reasoned about, only measured,
+/// which is why every milestone that moves this number records what the image
+/// did in [the platform contract](../../../docs/PLATFORM_CONTRACT.md).
+const MAX_ITEM_BYTES: usize = 640;
 
 /// What one edit in the history may cost.
 ///
 /// The largest variants are `InsertItem` and `DropItem`, which each carry a
 /// whole item, so this tracks [`MAX_ITEM_BYTES`] and sits the same distance
-/// above what it is.
-const MAX_EDIT_BYTES: usize = 592;
+/// above what it is. It moves when that one does and for the same reason.
+const MAX_EDIT_BYTES: usize = 672;
 
 #[test]
 fn an_item_costs_no_more_than_the_argument_for_its_shape_assumes() {
