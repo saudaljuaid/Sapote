@@ -2530,6 +2530,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/phipia.iso
 	rm -f "$$log"; \
 	timeout_seconds=15; reboot_control='-no-reboot'; \
 	case '$*' in \
+		phipia-proof) timeout_seconds=60 ;; \
 		fat32-*) timeout_seconds=45 ;; \
 		ext4-recovery) timeout_seconds=90 ;; \
 		native) timeout_seconds=180 ;; \
