@@ -10355,6 +10355,7 @@ enum ui_status ui_verify_installed(struct ui_proof *proof)
     state.stable_render_hash = second_hash;
 
     const struct boot_ledger *ledger = boot_ledger_installed();
+    const struct taskbar_counters taskbar_render = taskbar_get_counters();
     *proof = (struct ui_proof){
         .width = canvas->width,
         .height = canvas->height,
@@ -10363,7 +10364,11 @@ enum ui_status ui_verify_installed(struct ui_proof *proof)
         .panels = state.renders.panel_transitions,
         .cursor_moves = state.renders.cursor_moves,
         .damage_rectangles = state.renders.damage_rectangles,
-        .glyphs = state.renders.glyphs,
+        /* The Phipia taskbar owns its font and therefore its glyph counter.
+         * Folding that measured work into the compositor proof keeps the
+         * receipt meaningful when the legacy Dock is not the active shell. */
+        .glyphs = state.renders.glyphs +
+            (desktop_taskbar ? taskbar_render.glyphs : 0U),
         .ledger_fingerprint = ledger == NULL ? 0U : ledger->fingerprint,
         .render_hash = second_hash
     };
