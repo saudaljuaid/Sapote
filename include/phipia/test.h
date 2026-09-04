@@ -128,7 +128,7 @@ enum kernel_test_scenario {
     KERNEL_TEST_NATIVE_SDL,
     KERNEL_TEST_NATIVE_DYNAMIC,
     KERNEL_TEST_NATIVE_HTTPS,
-    KERNEL_TEST_NATIVE_SAP,
+    KERNEL_TEST_NATIVE_PHIP,
     KERNEL_TEST_EXT4_RECOVERY,
     KERNEL_TEST_INVALID
 };
@@ -201,7 +201,7 @@ _Noreturn void kernel_test_complete_native_audio(void);
 _Noreturn void kernel_test_complete_native_sdl(void);
 _Noreturn void kernel_test_complete_native_dynamic(void);
 _Noreturn void kernel_test_complete_native_https(void);
-_Noreturn void kernel_test_complete_native_sap(void);
+_Noreturn void kernel_test_complete_native_phip(void);
 bool kernel_test_audio_exit_self_test(void);
 bool kernel_test_nvidia_exit_self_test(void);
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame);

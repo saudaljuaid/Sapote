@@ -602,7 +602,7 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_NATIVE_HTTPS;
     }
     if (token_equals(value, length, "native-phip")) {
-        return KERNEL_TEST_NATIVE_SAP;
+        return KERNEL_TEST_NATIVE_PHIP;
     }
     if (token_equals(value, length, "ext4-recovery")) {
         return KERNEL_TEST_EXT4_RECOVERY;
@@ -799,7 +799,7 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
     case KERNEL_TEST_NATIVE_DYNAMIC: return UINT8_C(0x84);
     case KERNEL_TEST_NATIVE_HTTPS: return UINT8_C(0x85);
     case KERNEL_TEST_EXT4_RECOVERY: return UINT8_C(0x86);
-    case KERNEL_TEST_NATIVE_SAP: return UINT8_C(0x87);
+    case KERNEL_TEST_NATIVE_PHIP: return UINT8_C(0x87);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -4765,7 +4765,7 @@ void kernel_test_run(
     case KERNEL_TEST_NATIVE_SDL:
     case KERNEL_TEST_NATIVE_DYNAMIC:
     case KERNEL_TEST_NATIVE_HTTPS:
-    case KERNEL_TEST_NATIVE_SAP:
+    case KERNEL_TEST_NATIVE_PHIP:
     case KERNEL_TEST_EXT4_RECOVERY:
         /* Deferred until Phipia and the Boot Ledger are published. */
         return;
@@ -5697,7 +5697,7 @@ _Noreturn void kernel_test_complete_native_https(void)
     kernel_test_pass();
 }
 
-_Noreturn void kernel_test_complete_native_sap(void)
+_Noreturn void kernel_test_complete_native_phip(void)
 {
     static uint8_t database[4096U];
     struct native_process_result proof = { 0 };
@@ -5708,7 +5708,7 @@ _Noreturn void kernel_test_complete_native_sap(void)
     struct network_state network;
     size_t database_bytes = 0U;
 
-    if (active_scenario != KERNEL_TEST_NATIVE_SAP) {
+    if (active_scenario != KERNEL_TEST_NATIVE_PHIP) {
         kernel_test_fail("native phip completion used outside its scenario");
     }
     if (random_get_state().capability != RANDOM_CAPABILITY_INITIALIZED) {
@@ -9325,7 +9325,7 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "native-dynamic";
     case KERNEL_TEST_NATIVE_HTTPS:
         return "native-https";
-    case KERNEL_TEST_NATIVE_SAP:
+    case KERNEL_TEST_NATIVE_PHIP:
         return "native-phip";
     case KERNEL_TEST_EXT4_RECOVERY:
         return "ext4-recovery";
