@@ -722,6 +722,14 @@ def capture_phipia_session(args, qmp, pointer, work, output, durable_data):
     pointer.move_to(915, 89)
     pointer.click()
     pointer.settle_guest(0.50)
+    # Start from a known project and import the staged bitmap through the
+    # editor's ordinary shortcuts.  The fixture may already carry an older
+    # project whose source is intentionally absent from this retained data
+    # image; relying on that stale clip would only exercise the refusal path.
+    qmp.hmp("sendkey ctrl-n")
+    pointer.settle_guest(0.35)
+    qmp.hmp("sendkey ctrl-o")
+    pointer.settle_guest(0.70)
     pointer.move_to(105, 102)
     pointer.click()
     pointer.move_to(157, 53)
