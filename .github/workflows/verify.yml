@@ -50,38 +50,44 @@ jobs:
                   qemu-system-x86_64 -device nvme,help
             - name: Verify the kernel artifact
               run: make verify
-            - name: Capture Sapote Redwood from QEMU
+            - name: Capture the functional Phipia desktop from QEMU
               run: |
                   make iso
-                  python3 tools/capture-redwood.py \
+                  python3 tools/capture-phipia.py \
                       --iso build/sapote.iso \
                       --system build/userspace/sapote-system-fat32.raw \
                       --data build/userspace/sapote-data-fat32.raw \
-                      --output build/redwood-captures \
+                      --output build/phipia-captures \
                       --ffmpeg ffmpeg
                   python3 tools/fat32_image.py inspect \
-                      build/redwood-captures/sapote-redwood-data.raw \
-                      --report build/redwood-captures/fat32-report.json
+                      build/phipia-captures/phipia-data.raw \
+                      --report build/phipia-captures/fat32-report.json
                   python3 - <<'PY'
                   import json
                   import subprocess
                   from pathlib import Path
 
-                  captures = Path("build/redwood-captures")
+                  captures = Path("build/phipia-captures")
                   required = (
-                      "sapote-settings-all.png",
-                      "sapote-settings-desktop.png",
-                      "sapote-settings-appearance-light.png",
-                      "sapote-settings-appearance-dark.png",
-                      "sapote-redwood-files.png",
-                      "sapote-redwood-notes.png",
-                      "sapote-redwood-studio.png",
-                      "sapote-ui-redesign-final-dock.png",
+                      "phipia-desktop.png",
+                      "phipia-taskbar.png",
+                      "phipia-files-windowed.png",
+                      "phipia-files-maximized.png",
+                      "phipia-files-minimized.png",
+                      "phipia-files-restored.png",
+                      "phipia-notes-formatted.png",
+                      "phipia-paint-working.png",
+                      "phipia-media-editor.png",
+                      "phipia-media-editor-exported.png",
+                      "phipia-settings.png",
+                      "phipia-store.png",
+                      "phipia-task-manager.png",
+                      "phipia-desktop-restored.png",
                   )
                   for name in required:
                       if not (captures / name).is_file():
                           raise SystemExit(f"missing QEMU UI evidence: {name}")
-                  video = captures / "sapote-ui-redesign-25s.mp4"
+                  video = captures / "phipia-massive-update-25s.mp4"
                   duration = float(subprocess.check_output((
                       "ffprobe", "-v", "error", "-show_entries",
                       "format=duration", "-of", "default=nk=1:nw=1",
@@ -94,15 +100,18 @@ jobs:
                   # QEMU deliberately has no webcam source. Camera's real
                   # publisher/snapshot contract is exercised by make verify;
                   # the UI must not invent PHOTO00.BMP without a device.
-                  for name in ("NEW1.TXT", "SAPSTUDI.SAP", "EXPORT.BMP"):
+                  for name in (
+                      "NOTES.TXT", "SAPSTUDI.SAP", "PHIPMED.SAP",
+                      "EXPORT.BMP",
+                  ):
                       if name not in names:
                           raise SystemExit(f"missing retained guest artifact: {name}")
                   PY
-            - name: Upload Sapote Redwood captures
+            - name: Upload Phipia desktop captures
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
-                  name: sapote-redwood-captures
-                  path: build/redwood-captures
+                  name: phipia-desktop-captures
+                  path: build/phipia-captures
                   if-no-files-found: error
             - name: Prove faults and interrupts in QEMU
               run: |

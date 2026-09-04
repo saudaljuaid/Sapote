@@ -8959,13 +8959,36 @@ static enum ui_status activate_element(
 
 static void note_input(char character, bool control)
 {
+    struct ui_rect damage = { 0U, 0U, 0U, 0U };
+    enum notes_status notes_status = NOTES_STATUS_OK;
+
     if (!note_savable) {
         set_app_status("note is read-only in this editor",
             SAPFS_STATUS_RANGE);
         return;
     }
     if (control && (character == 's' || character == 'S')) {
+        if (phipia_shell_ready) {
+            phipia_note_to_buffer();
+        }
         (void)note_save();
+        return;
+    }
+    if (phipia_shell_ready) {
+        if (character == '\b') {
+            notes_status = notes_key_backspace(&damage);
+        } else if (character == '\n') {
+            notes_status = notes_key_enter(&damage);
+        } else if (character >= ' ' && character <= '~') {
+            notes_status = notes_text_input(character, &damage);
+        }
+        if (notes_status == NOTES_STATUS_OK &&
+                damage.width != 0U && damage.height != 0U) {
+            phipia_note_to_buffer();
+            set_app_status("editing in memory", SAPFS_STATUS_OK);
+        } else if (notes_status != NOTES_STATUS_OK) {
+            set_app_status("edit note", SAPFS_STATUS_RANGE);
+        }
         return;
     }
     if (character == '\b') {

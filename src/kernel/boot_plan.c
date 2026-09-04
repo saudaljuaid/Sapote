@@ -2074,6 +2074,9 @@ static void execute_desktop_construction(
     const enum ui_status status = ui_construct(pointer_is_present());
 
     if (status != UI_STATUS_OK) {
+        console_write("Phipia: desktop construction failed: ");
+        console_write(ui_status_string(status));
+        console_putc('\n');
         stage_failed(context, result, ui_status_string(status));
         return;
     }
@@ -2091,6 +2094,9 @@ static void execute_desktop_activation(
     const enum ui_status status = ui_activate();
 
     if (status != UI_STATUS_OK) {
+        console_write("Phipia: desktop activation failed: ");
+        console_write(ui_status_string(status));
+        console_putc('\n');
         stage_failed(context, result, ui_status_string(status));
         return;
     }
