@@ -8646,27 +8646,6 @@ static enum ui_element_id active_hit(struct ui_point point)
     if (phipia_shell_ready && taskbar_hit_test(point)) {
         return UI_ELEMENT_NONE;
     }
-    if (phipia_shell_ready && state.active_panel != UI_PANEL_NONE &&
-            phipia_panel(state.active_panel)) {
-        const struct ui_rect frame = state.layout.panel;
-        const uint32_t controls_x = frame.x + frame.width - 138U;
-        const struct ui_rect controls[3U] = {
-            { controls_x, frame.y + 1U, 46U, 31U },
-            { controls_x + 46U, frame.y + 1U, 46U, 31U },
-            { controls_x + 92U, frame.y + 1U, 46U, 31U }
-        };
-        static const enum ui_element_id ids[3U] = {
-            UI_ELEMENT_WINDOW_MINIMIZE, UI_ELEMENT_WINDOW_MAXIMIZE,
-            UI_ELEMENT_WINDOW_CLOSE
-        };
-
-        for (size_t index = 0U; index < 3U; ++index) {
-            if (rect_contains_point(controls[index], point)) {
-                return ids[index];
-            }
-        }
-        return UI_ELEMENT_NONE;
-    }
     if (rect_contains_point(menu_search_rect(), point)) {
         return UI_ELEMENT_MENU_SEARCH;
     }
@@ -8696,6 +8675,27 @@ static enum ui_element_id active_hit(struct ui_point point)
         }
         return rect_contains_point(panel, point) ? UI_ELEMENT_NONE :
             UI_ELEMENT_LAUNCHER_DISMISS;
+    }
+    if (phipia_shell_ready && state.active_panel != UI_PANEL_NONE &&
+            phipia_panel(state.active_panel)) {
+        const struct ui_rect frame = state.layout.panel;
+        const uint32_t controls_x = frame.x + frame.width - 138U;
+        const struct ui_rect controls[3U] = {
+            { controls_x, frame.y + 1U, 46U, 31U },
+            { controls_x + 46U, frame.y + 1U, 46U, 31U },
+            { controls_x + 92U, frame.y + 1U, 46U, 31U }
+        };
+        static const enum ui_element_id ids[3U] = {
+            UI_ELEMENT_WINDOW_MINIMIZE, UI_ELEMENT_WINDOW_MAXIMIZE,
+            UI_ELEMENT_WINDOW_CLOSE
+        };
+
+        for (size_t index = 0U; index < 3U; ++index) {
+            if (rect_contains_point(controls[index], point)) {
+                return ids[index];
+            }
+        }
+        return UI_ELEMENT_NONE;
     }
     const int dock_hit = dock3d_hit(&dock_model, point.x, point.y);
     enum ui_element_id hit = dock_hit >= 0 ?
