@@ -57,6 +57,14 @@ enum paint_tool {
 
 #define PAINT_SWATCHES 20U      /* two rows of ten */
 #define PAINT_SHAPES 21U        /* three rows of seven */
+#define PAINT_MAX_ROW_BYTES (1024U * 3U + 4U)
+
+struct paint_image_info {
+    uint32_t width;
+    uint32_t height;
+    uint32_t row_stride;
+    bool dirty;
+};
 
 enum paint_status {
     PAINT_STATUS_OK = 0,
@@ -87,6 +95,7 @@ enum paint_status paint_set_colours(size_t first, size_t second);
 enum paint_status paint_set_zoom(uint32_t percent);
 enum paint_status paint_set_title(const char *title);
 enum paint_status paint_set_focus(bool focused);
+enum paint_status paint_resize_image(uint32_t width, uint32_t height);
 
 enum paint_status paint_pointer_move(struct ui_point point,
     struct ui_rect *damage);
@@ -94,6 +103,18 @@ enum paint_status paint_pointer_press(struct ui_point point,
     struct ui_rect *damage);
 enum paint_status paint_pointer_release(struct ui_point point,
     struct ui_rect *damage);
+
+enum paint_status paint_text_input(char character, struct ui_rect *damage);
+enum paint_status paint_key_backspace(struct ui_rect *damage);
+enum paint_status paint_key_enter(struct ui_rect *damage);
+
+/* The title-bar save button is rendered by Paint but fulfilled by the shell's
+ * durable filesystem adapter.  Taking the request clears it. */
+bool paint_take_save_request(void);
+void paint_mark_saved(void);
+struct paint_image_info paint_image(void);
+enum paint_status paint_copy_bgr24_row(uint32_t row, uint8_t *destination,
+    size_t capacity, size_t *written);
 
 enum paint_status paint_draw(struct ui_rect damage);
 

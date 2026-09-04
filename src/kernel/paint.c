@@ -66,6 +66,13 @@
 #define PAINT_ZOOM_THUMB 7U
 #define PAINT_CANVAS_WIDTH 1024U
 #define PAINT_CANVAS_HEIGHT 768U
+#define PAINT_TEXT_BYTES 96U
+#define PAINT_CLIPBOARD_WIDTH 320U
+#define PAINT_CLIPBOARD_HEIGHT 240U
+#define PAINT_RESIZE_DIALOG_WIDTH 340U
+#define PAINT_RESIZE_DIALOG_HEIGHT 214U
+#define PAINT_CLIPBOARD_PIXELS \
+    (PAINT_CLIPBOARD_WIDTH * PAINT_CLIPBOARD_HEIGHT)
 
 /* ================================================================ PALETTE
  *
@@ -137,8 +144,45 @@ static size_t colour_one;          /* index into swatches */
 static size_t colour_two = 10U;    /* White, which is Paint's default */
 static uint32_t zoom_percent = 100U;
 static uint32_t canvas_pixels[PAINT_CANVAS_WIDTH * PAINT_CANVAS_HEIGHT];
+static uint32_t undo_pixels[PAINT_CANVAS_WIDTH * PAINT_CANVAS_HEIGHT];
+static uint32_t redo_pixels[PAINT_CANVAS_WIDTH * PAINT_CANVAS_HEIGHT];
+static uint32_t clipboard_pixels[PAINT_CLIPBOARD_PIXELS];
+static uint32_t image_width = PAINT_CANVAS_WIDTH;
+static uint32_t image_height = PAINT_CANVAS_HEIGHT;
+static uint32_t undo_width;
+static uint32_t undo_height;
+static uint32_t redo_width;
+static uint32_t redo_height;
+static uint32_t clipboard_width;
+static uint32_t clipboard_height;
+static bool undo_valid;
+static bool redo_valid;
+static bool clipboard_valid;
+static bool image_dirty;
+static bool save_requested;
 static bool painting;
 static struct ui_point last_paint_point;
+static uint32_t stroke_radius = 1U;
+static bool selecting;
+static bool select_mode;
+static bool selection_valid;
+static struct ui_point selection_origin;
+static struct ui_rect selection;
+static bool shape_mode;
+static bool shape_dragging;
+static struct ui_point shape_origin;
+static bool shape_outline = true;
+static bool shape_fill;
+static size_t colour_target;
+static bool text_active;
+static struct ui_point text_origin;
+static char text_buffer[PAINT_TEXT_BYTES];
+static size_t text_length;
+static bool resize_dialog_open;
+static bool resize_keep_aspect = true;
+static size_t resize_field;
+static uint32_t resize_width_value = PAINT_CANVAS_WIDTH;
+static uint32_t resize_height_value = PAINT_CANVAS_HEIGHT;
 static char window_title[48] = "Untitled - Paint";
 static size_t hover_tool = (size_t)-1;
 static size_t hover_shape = (size_t)-1;
@@ -174,6 +218,59 @@ static uint32_t pack_rgb(struct paint_rgb colour)
     return ((uint32_t)colour.red << format.red_position) |
         ((uint32_t)colour.green << format.green_position) |
         ((uint32_t)colour.blue << format.blue_position);
+}
+
+static void copy_canvas(uint32_t *destination, const uint32_t *source)
+{
+    for (size_t index = 0U;
+         index < (size_t)PAINT_CANVAS_WIDTH * PAINT_CANVAS_HEIGHT; ++index) {
+        destination[index] = source[index];
+    }
+}
+
+static void capture_undo(void)
+{
+    copy_canvas(undo_pixels, canvas_pixels);
+    undo_width = image_width;
+    undo_height = image_height;
+    undo_valid = true;
+    redo_valid = false;
+}
+
+static void undo_image(void)
+{
+    if (!undo_valid) {
+        return;
+    }
+    copy_canvas(redo_pixels, canvas_pixels);
+    redo_width = image_width;
+    redo_height = image_height;
+    redo_valid = true;
+    copy_canvas(canvas_pixels, undo_pixels);
+    image_width = undo_width;
+    image_height = undo_height;
+    undo_valid = false;
+    selection_valid = false;
+    text_active = false;
+    image_dirty = true;
+}
+
+static void redo_image(void)
+{
+    if (!redo_valid) {
+        return;
+    }
+    copy_canvas(undo_pixels, canvas_pixels);
+    undo_width = image_width;
+    undo_height = image_height;
+    undo_valid = true;
+    copy_canvas(canvas_pixels, redo_pixels);
+    image_width = redo_width;
+    image_height = redo_height;
+    redo_valid = false;
+    selection_valid = false;
+    text_active = false;
+    image_dirty = true;
 }
 
 static struct ui_rect intersect(struct ui_rect left, struct ui_rect right)
@@ -594,6 +691,127 @@ static struct ui_rect swatch_rect(size_t index)
         band.y + 20U + row * PAINT_SWATCH, PAINT_SWATCH, PAINT_SWATCH };
 }
 
+static struct ui_rect quick_rect(size_t index)
+{
+    const struct ui_rect caption = caption_rect();
+
+    return (struct ui_rect){ caption.x + 6U + PAINT_QAT_SLOT + 2U +
+        (uint32_t)index * PAINT_QAT_SLOT, caption.y, PAINT_QAT_SLOT,
+        caption.height };
+}
+
+static struct ui_rect clipboard_rect(size_t item)
+{
+    const struct ui_rect band = ribbon_rect();
+    const uint32_t left = group_left(PAINT_GROUP_CLIPBOARD);
+
+    if (item == 0U) {
+        return (struct ui_rect){ left, band.y + 4U, PAINT_TALL_WIDTH, 72U };
+    }
+    return (struct ui_rect){ left + PAINT_TALL_WIDTH + 4U,
+        band.y + 14U + (uint32_t)(item - 1U) * PAINT_SMALL_HEIGHT,
+        60U, PAINT_SMALL_HEIGHT };
+}
+
+static struct ui_rect image_rect(size_t item)
+{
+    const struct ui_rect band = ribbon_rect();
+    const uint32_t left = group_left(PAINT_GROUP_IMAGE);
+
+    if (item == 0U) {
+        return (struct ui_rect){ left, band.y + 4U, PAINT_TALL_WIDTH, 72U };
+    }
+    return (struct ui_rect){ left + PAINT_TALL_WIDTH + 4U,
+        band.y + 8U + (uint32_t)(item - 1U) * PAINT_SMALL_HEIGHT,
+        64U, PAINT_SMALL_HEIGHT };
+}
+
+static struct ui_rect brushes_rect(void)
+{
+    const struct ui_rect band = ribbon_rect();
+
+    return (struct ui_rect){ centred_x(group_left(PAINT_GROUP_BRUSHES),
+        group_width(PAINT_GROUP_BRUSHES), PAINT_TALL_WIDTH), band.y + 4U,
+        PAINT_TALL_WIDTH, 72U };
+}
+
+static struct ui_rect shape_option_rect(size_t item)
+{
+    const struct ui_rect band = ribbon_rect();
+    const uint32_t gallery_right = group_left(PAINT_GROUP_SHAPES) + 2U +
+        PAINT_SHAPE_CELL * PAINT_SHAPE_COLUMNS;
+
+    return (struct ui_rect){ gallery_right + PAINT_GALLERY_ARROWS + 6U,
+        band.y + 12U + (uint32_t)item * PAINT_SMALL_HEIGHT, 70U,
+        PAINT_SMALL_HEIGHT };
+}
+
+static struct ui_rect size_rect(void)
+{
+    const struct ui_rect band = ribbon_rect();
+
+    return (struct ui_rect){ group_left(PAINT_GROUP_SIZE), band.y + 4U,
+        PAINT_TALL_WIDTH, 72U };
+}
+
+static struct ui_rect colour_button_rect(size_t item)
+{
+    const struct ui_rect band = ribbon_rect();
+
+    return (struct ui_rect){ group_left(PAINT_GROUP_COLORS) +
+        (uint32_t)item * PAINT_COLOUR_BUTTON, band.y + 6U,
+        PAINT_COLOUR_BUTTON, PAINT_COLOUR_BUTTON };
+}
+
+static struct ui_rect edit_colours_rect(void)
+{
+    const struct ui_rect band = ribbon_rect();
+    const uint32_t left = group_left(PAINT_GROUP_COLORS);
+
+    return (struct ui_rect){ left + PAINT_COLOUR_BUTTON * 2U + 10U +
+        PAINT_SWATCH * PAINT_SWATCH_COLUMNS + 10U, band.y + 4U, 54U, 72U };
+}
+
+static struct ui_rect zoom_track_rect(void)
+{
+    const struct ui_rect bar = status_rect();
+
+    return (struct ui_rect){ bar.x + bar.width - PAINT_ZOOM_TRACK - 84U,
+        bar.y, PAINT_ZOOM_TRACK, bar.height };
+}
+
+static struct ui_rect resize_dialog_rect(void)
+{
+    return (struct ui_rect){
+        window_rect.x + (window_rect.width - PAINT_RESIZE_DIALOG_WIDTH) / 2U,
+        window_rect.y + (window_rect.height - PAINT_RESIZE_DIALOG_HEIGHT) / 2U,
+        PAINT_RESIZE_DIALOG_WIDTH, PAINT_RESIZE_DIALOG_HEIGHT
+    };
+}
+
+static struct ui_rect resize_field_rect(size_t field)
+{
+    const struct ui_rect dialog = resize_dialog_rect();
+
+    return (struct ui_rect){ dialog.x + 132U,
+        dialog.y + 58U + (uint32_t)field * 38U, 132U, 28U };
+}
+
+static struct ui_rect resize_aspect_rect(void)
+{
+    const struct ui_rect dialog = resize_dialog_rect();
+
+    return (struct ui_rect){ dialog.x + 22U, dialog.y + 139U, 190U, 24U };
+}
+
+static struct ui_rect resize_button_rect(size_t button)
+{
+    const struct ui_rect dialog = resize_dialog_rect();
+
+    return (struct ui_rect){ dialog.x + 174U + (uint32_t)button * 78U,
+        dialog.y + 174U, 70U, 28U };
+}
+
 /* ================================================================== PIECES */
 
 static const char *tool_glyph(size_t tool)
@@ -762,6 +980,9 @@ static enum paint_status draw_image_group(struct ui_rect damage)
     if (status != PAINT_STATUS_OK) {
         return status;
     }
+    if (select_mode) {
+        status = outline(image_rect(0U), damage, accent);
+    }
     /* Lucide has no dashed rectangle; Paint's Select is a plain marquee, so
      * the plain square stands in and the dropdown says the rest. */
     static const char *const glyphs[3] = { "crop", "scaling", "rotate-cw" };
@@ -786,7 +1007,8 @@ static enum paint_status draw_tools(struct ui_rect damage)
     for (size_t tool = 0U; tool < PAINT_TOOL_COUNT &&
             status == PAINT_STATUS_OK; ++tool) {
         const struct ui_rect cell = tool_rect(tool);
-        const bool chosen = tool == (size_t)current_tool;
+        const bool chosen = !select_mode && !shape_mode &&
+            tool == (size_t)current_tool;
 
         /*
          * Phipia marks the held tool with the ACCENT.  Paint marks it with a
@@ -813,7 +1035,7 @@ static enum paint_status draw_tools(struct ui_rect damage)
 static enum paint_status draw_brushes(struct ui_rect damage)
 {
     const struct ui_rect band = ribbon_rect();
-    const enum paint_status status = draw_tall((struct ui_rect){
+    enum paint_status status = draw_tall((struct ui_rect){
         centred_x(group_left(PAINT_GROUP_BRUSHES),
             group_width(PAINT_GROUP_BRUSHES), PAINT_TALL_WIDTH),
         band.y + 4U, PAINT_TALL_WIDTH, 0U },
@@ -821,6 +1043,13 @@ static enum paint_status draw_brushes(struct ui_rect damage)
 
     if (status != PAINT_STATUS_OK) {
         return status;
+    }
+    if (current_tool == PAINT_TOOL_PENCIL && stroke_radius > 1U &&
+            !select_mode && !shape_mode) {
+        status = outline(brushes_rect(), damage, accent);
+        if (status != PAINT_STATUS_OK) {
+            return status;
+        }
     }
     return draw_group_label(PAINT_GROUP_BRUSHES, damage);
 }
@@ -836,14 +1065,14 @@ static enum paint_status draw_shapes(struct ui_rect damage)
             status == PAINT_STATUS_OK; ++shape) {
         const struct ui_rect cell = shape_rect(shape);
 
-        if (shape == current_shape) {
+        if (shape_mode && shape == current_shape) {
             status = fill(cell, damage, accent);
         } else if (shape == hover_shape) {
             status = fill(cell, damage, hover_fill);
         }
         if (status == PAINT_STATUS_OK) {
             status = draw_glyph(shape_glyph[shape], cell, damage,
-                shape == current_shape ? on_accent : ink_soft);
+                shape_mode && shape == current_shape ? on_accent : ink_soft);
         }
     }
     if (status != PAINT_STATUS_OK) {
@@ -877,10 +1106,16 @@ static enum paint_status draw_shapes(struct ui_rect damage)
 
     status = draw_small((struct ui_rect){ side, band.y + 12U, 70U,
         PAINT_SMALL_HEIGHT }, damage, "square", "Outline");
+    if (status == PAINT_STATUS_OK && shape_outline) {
+        status = outline(shape_option_rect(0U), damage, accent);
+    }
     if (status == PAINT_STATUS_OK) {
         status = draw_small((struct ui_rect){ side,
             band.y + 12U + PAINT_SMALL_HEIGHT, 70U, PAINT_SMALL_HEIGHT },
             damage, "paint-bucket", "Fill");
+    }
+    if (status == PAINT_STATUS_OK && shape_fill) {
+        status = outline(shape_option_rect(1U), damage, accent);
     }
     if (status == PAINT_STATUS_OK) {
         status = draw_group_label(PAINT_GROUP_SHAPES, damage);
@@ -921,6 +1156,9 @@ static enum paint_status draw_size(struct ui_rect damage)
             ink_soft);
     }
     if (status == PAINT_STATUS_OK) {
+        status = outline(size_rect(), damage, accent);
+    }
+    if (status == PAINT_STATUS_OK) {
         status = draw_group_label(PAINT_GROUP_SIZE, damage);
     }
     return status;
@@ -945,7 +1183,8 @@ static enum paint_status draw_colours(struct ui_rect damage)
 
         status = fill(well, damage, swatches[chosen[index]]);
         if (status == PAINT_STATUS_OK) {
-            status = outline(well, damage, ink_faint);
+            status = outline(well, damage,
+                index == colour_target ? accent : ink_faint);
         }
         if (status == PAINT_STATUS_OK) {
             status = text_at(damage,
@@ -1161,15 +1400,17 @@ static enum paint_status draw_workspace(struct ui_rect damage)
 
     for (uint32_t y = 0U; y < clipped_page.height &&
             status == PAINT_STATUS_OK; ++y) {
-        const uint32_t source_y = clipped_page.y + y - page.y;
+        const uint32_t source_y = (uint32_t)(((uint64_t)
+            (clipped_page.y + y - page.y) * 100U) / zoom_percent);
 
-        if (source_y >= PAINT_CANVAS_HEIGHT) {
+        if (source_y >= image_height) {
             break;
         }
         for (uint32_t x = 0U; x < clipped_page.width; ++x) {
-            const uint32_t source_x = clipped_page.x + x - page.x;
+            const uint32_t source_x = (uint32_t)(((uint64_t)
+                (clipped_page.x + x - page.x) * 100U) / zoom_percent);
 
-            if (source_x >= PAINT_CANVAS_WIDTH) {
+            if (source_x >= image_width) {
                 break;
             }
             if (surface_pixel(canvas, clipped_page.x + x,
@@ -1183,6 +1424,18 @@ static enum paint_status draw_workspace(struct ui_rect damage)
     }
     if (status == PAINT_STATUS_OK) {
         status = outline(page, damage, sheet_edge);
+    }
+    if (status == PAINT_STATUS_OK && selection_valid) {
+        const struct ui_rect selected = {
+            page.x + (uint32_t)((uint64_t)selection.x * zoom_percent / 100U),
+            page.y + (uint32_t)((uint64_t)selection.y * zoom_percent / 100U),
+            (uint32_t)((uint64_t)selection.width * zoom_percent / 100U),
+            (uint32_t)((uint64_t)selection.height * zoom_percent / 100U)
+        };
+
+        if (selected.width != 0U && selected.height != 0U) {
+            status = outline(selected, damage, accent);
+        }
     }
     if (status != PAINT_STATUS_OK) {
         return status;
@@ -1231,10 +1484,88 @@ static void number_text(char *out, uint32_t value, const char *suffix)
     out[at] = '\0';
 }
 
+static enum paint_status draw_resize_dialog(struct ui_rect damage)
+{
+    const struct ui_rect dialog = resize_dialog_rect();
+    const struct ui_rect aspect = resize_aspect_rect();
+    char value[16];
+    enum paint_status status = fill((struct ui_rect){ dialog.x + 4U,
+        dialog.y + 4U, dialog.width, dialog.height }, damage, ink_faint);
+
+    if (status == PAINT_STATUS_OK) {
+        status = fill(dialog, damage, caption_fill);
+    }
+    if (status == PAINT_STATUS_OK) {
+        status = outline(dialog, damage, sheet_edge);
+    }
+    if (status == PAINT_STATUS_OK) {
+        status = fill((struct ui_rect){ dialog.x + 1U, dialog.y + 1U,
+            dialog.width - 2U, 36U }, damage, accent);
+    }
+    if (status == PAINT_STATUS_OK) {
+        status = text_at(damage, dialog.x + 14U, dialog.y + 24U,
+            "Resize image", on_accent);
+    }
+    if (status == PAINT_STATUS_OK) {
+        status = text_at(damage, dialog.x + 22U, dialog.y + 78U,
+            "Width", ink);
+    }
+    if (status == PAINT_STATUS_OK) {
+        status = text_at(damage, dialog.x + 22U, dialog.y + 116U,
+            "Height", ink);
+    }
+    for (size_t field = 0U; field < 2U && status == PAINT_STATUS_OK;
+         ++field) {
+        const struct ui_rect box = resize_field_rect(field);
+
+        status = fill(box, damage, sheet);
+        if (status == PAINT_STATUS_OK) {
+            status = outline(box, damage,
+                resize_field == field ? accent : rule);
+        }
+        if (status == PAINT_STATUS_OK) {
+            number_text(value, field == 0U ? resize_width_value :
+                resize_height_value, "");
+            status = text_at(damage, box.x + 8U, box.y + 19U, value, ink);
+        }
+        if (status == PAINT_STATUS_OK) {
+            status = text_at(damage, box.x + box.width + 8U, box.y + 19U,
+                "px", ink_soft);
+        }
+    }
+    if (status == PAINT_STATUS_OK) {
+        status = outline((struct ui_rect){ aspect.x, aspect.y + 4U, 16U, 16U },
+            damage, resize_keep_aspect ? accent : rule);
+    }
+    if (status == PAINT_STATUS_OK && resize_keep_aspect) {
+        status = text_at(damage, aspect.x + 4U, aspect.y + 17U, "x", accent);
+    }
+    if (status == PAINT_STATUS_OK) {
+        status = text_at(damage, aspect.x + 24U, aspect.y + 18U,
+            "Maintain aspect ratio", ink);
+    }
+    for (size_t button = 0U; button < 2U && status == PAINT_STATUS_OK;
+         ++button) {
+        const struct ui_rect box = resize_button_rect(button);
+
+        status = fill(box, damage, button == 0U ? accent : chrome);
+        if (status == PAINT_STATUS_OK) {
+            status = outline(box, damage, button == 0U ? accent : rule);
+        }
+        if (status == PAINT_STATUS_OK) {
+            const char *const label = button == 0U ? "Apply" : "Cancel";
+
+            status = text_at(damage, centred_x(box.x, box.width,
+                width_of(label)), box.y + 19U, label,
+                button == 0U ? on_accent : ink);
+        }
+    }
+    return status;
+}
+
 static enum paint_status draw_status(struct ui_rect damage)
 {
     const struct ui_rect bar = status_rect();
-    const struct ui_rect page = paint_sheet_bounds();
     const uint32_t baseline = bar.y + bar.height / 2U + 5U;
     char text[24];
     enum paint_status status = fill(bar, damage, chrome);
@@ -1258,11 +1589,11 @@ static enum paint_status draw_status(struct ui_rect damage)
             PAINT_MARK, bar.height }, damage, ink_soft);
     }
     if (status == PAINT_STATUS_OK) {
-        number_text(text, page.width, " x ");
+        number_text(text, image_width, " x ");
         status = text_at(damage, bar.x + 114U, baseline, text, ink_soft);
     }
     if (status == PAINT_STATUS_OK) {
-        number_text(text, page.height, "px");
+        number_text(text, image_height, "px");
         status = text_at(damage, bar.x + 114U + width_of("0000 x "), baseline,
             text, ink_soft);
     }
@@ -1348,6 +1679,9 @@ enum paint_status paint_draw(struct ui_rect damage)
     if (status == PAINT_STATUS_OK) {
         status = draw_status(damage);
     }
+    if (status == PAINT_STATUS_OK && resize_dialog_open) {
+        status = draw_resize_dialog(damage);
+    }
     return status;
 }
 
@@ -1360,9 +1694,38 @@ static bool canvas_point(struct ui_point point, uint32_t *x, uint32_t *y)
     if (!holds(page, point)) {
         return false;
     }
-    *x = (uint32_t)point.x - page.x;
-    *y = (uint32_t)point.y - page.y;
-    return *x < PAINT_CANVAS_WIDTH && *y < PAINT_CANVAS_HEIGHT;
+    *x = (uint32_t)(((uint64_t)((uint32_t)point.x - page.x) * 100U) /
+        zoom_percent);
+    *y = (uint32_t)(((uint64_t)((uint32_t)point.y - page.y) * 100U) /
+        zoom_percent);
+    return *x < image_width && *y < image_height;
+}
+
+static void paint_dot_canvas(int32_t center_x, int32_t center_y,
+    uint32_t colour, uint32_t radius)
+{
+    if (center_x < 0 || center_y < 0 || (uint32_t)center_x >= image_width ||
+            (uint32_t)center_y >= image_height) {
+        return;
+    }
+    const uint32_t cx = (uint32_t)center_x;
+    const uint32_t cy = (uint32_t)center_y;
+    const uint32_t left = cx > radius ? cx - radius : 0U;
+    const uint32_t top = cy > radius ? cy - radius : 0U;
+    uint32_t right = cx + radius + 1U;
+    uint32_t bottom = cy + radius + 1U;
+
+    if (right > image_width) {
+        right = image_width;
+    }
+    if (bottom > image_height) {
+        bottom = image_height;
+    }
+    for (uint32_t y = top; y < bottom; ++y) {
+        for (uint32_t x = left; x < right; ++x) {
+            canvas_pixels[(size_t)y * PAINT_CANVAS_WIDTH + x] = colour;
+        }
+    }
 }
 
 static void paint_dot(struct ui_point point, uint32_t colour, uint32_t radius)
@@ -1370,23 +1733,37 @@ static void paint_dot(struct ui_point point, uint32_t colour, uint32_t radius)
     uint32_t center_x;
     uint32_t center_y;
 
-    if (!canvas_point(point, &center_x, &center_y)) {
-        return;
+    if (canvas_point(point, &center_x, &center_y)) {
+        paint_dot_canvas((int32_t)center_x, (int32_t)center_y, colour,
+            radius);
     }
-    const uint32_t left = center_x > radius ? center_x - radius : 0U;
-    const uint32_t top = center_y > radius ? center_y - radius : 0U;
-    uint32_t right = center_x + radius + 1U;
-    uint32_t bottom = center_y + radius + 1U;
+}
 
-    if (right > PAINT_CANVAS_WIDTH) {
-        right = PAINT_CANVAS_WIDTH;
-    }
-    if (bottom > PAINT_CANVAS_HEIGHT) {
-        bottom = PAINT_CANVAS_HEIGHT;
-    }
-    for (uint32_t y = top; y < bottom; ++y) {
-        for (uint32_t x = left; x < right; ++x) {
-            canvas_pixels[(size_t)y * PAINT_CANVAS_WIDTH + x] = colour;
+static void paint_line_canvas(struct ui_point from, struct ui_point to,
+    uint32_t colour, uint32_t radius)
+{
+    int32_t x = from.x;
+    int32_t y = from.y;
+    const int32_t dx = to.x > from.x ? to.x - from.x : from.x - to.x;
+    const int32_t dy = to.y > from.y ? from.y - to.y : to.y - from.y;
+    const int32_t step_x = from.x < to.x ? 1 : -1;
+    const int32_t step_y = from.y < to.y ? 1 : -1;
+    int32_t error = dx + dy;
+
+    for (;;) {
+        paint_dot_canvas(x, y, colour, radius);
+        if (x == to.x && y == to.y) {
+            break;
+        }
+        const int32_t twice = error * 2;
+
+        if (twice >= dy) {
+            error += dy;
+            x += step_x;
+        }
+        if (twice <= dx) {
+            error += dx;
+            y += step_y;
         }
     }
 }
@@ -1420,6 +1797,474 @@ static void paint_line(struct ui_point from, struct ui_point to,
     }
 }
 
+static struct ui_rect canvas_rect(struct ui_point first,
+    struct ui_point second)
+{
+    const uint32_t left = first.x < second.x ? (uint32_t)first.x :
+        (uint32_t)second.x;
+    const uint32_t top = first.y < second.y ? (uint32_t)first.y :
+        (uint32_t)second.y;
+    const uint32_t right = first.x > second.x ? (uint32_t)first.x :
+        (uint32_t)second.x;
+    const uint32_t bottom = first.y > second.y ? (uint32_t)first.y :
+        (uint32_t)second.y;
+
+    return (struct ui_rect){ left, top, right - left + 1U,
+        bottom - top + 1U };
+}
+
+static void clear_canvas_pixels(void)
+{
+    const uint32_t white = pack_rgb(sheet);
+
+    for (size_t index = 0U;
+         index < (size_t)PAINT_CANVAS_WIDTH * PAINT_CANVAS_HEIGHT; ++index) {
+        canvas_pixels[index] = white;
+    }
+}
+
+static struct ui_rect copy_area(void)
+{
+    if (selection_valid) {
+        return selection;
+    }
+    return (struct ui_rect){ 0U, 0U,
+        image_width < PAINT_CLIPBOARD_WIDTH ? image_width :
+            PAINT_CLIPBOARD_WIDTH,
+        image_height < PAINT_CLIPBOARD_HEIGHT ? image_height :
+            PAINT_CLIPBOARD_HEIGHT };
+}
+
+static void copy_selection(bool cut)
+{
+    const struct ui_rect source = copy_area();
+
+    clipboard_width = source.width < PAINT_CLIPBOARD_WIDTH ? source.width :
+        PAINT_CLIPBOARD_WIDTH;
+    clipboard_height = source.height < PAINT_CLIPBOARD_HEIGHT ?
+        source.height : PAINT_CLIPBOARD_HEIGHT;
+    if (clipboard_width == 0U || clipboard_height == 0U) {
+        clipboard_valid = false;
+        return;
+    }
+    if (cut) {
+        capture_undo();
+    }
+    for (uint32_t y = 0U; y < clipboard_height; ++y) {
+        for (uint32_t x = 0U; x < clipboard_width; ++x) {
+            clipboard_pixels[(size_t)y * PAINT_CLIPBOARD_WIDTH + x] =
+                canvas_pixels[(size_t)(source.y + y) * PAINT_CANVAS_WIDTH +
+                    source.x + x];
+            if (cut) {
+                canvas_pixels[(size_t)(source.y + y) * PAINT_CANVAS_WIDTH +
+                    source.x + x] = pack_rgb(sheet);
+            }
+        }
+    }
+    clipboard_valid = true;
+    if (cut) {
+        image_dirty = true;
+    }
+}
+
+static void paste_selection(void)
+{
+    if (!clipboard_valid) {
+        return;
+    }
+    const uint32_t left = selection_valid ? selection.x : 0U;
+    const uint32_t top = selection_valid ? selection.y : 0U;
+
+    capture_undo();
+    for (uint32_t y = 0U; y < clipboard_height && top + y < image_height;
+         ++y) {
+        for (uint32_t x = 0U; x < clipboard_width && left + x < image_width;
+             ++x) {
+            canvas_pixels[(size_t)(top + y) * PAINT_CANVAS_WIDTH + left + x] =
+                clipboard_pixels[(size_t)y * PAINT_CLIPBOARD_WIDTH + x];
+        }
+    }
+    selection = (struct ui_rect){ left, top,
+        clipboard_width < image_width - left ? clipboard_width :
+            image_width - left,
+        clipboard_height < image_height - top ? clipboard_height :
+            image_height - top };
+    selection_valid = selection.width != 0U && selection.height != 0U;
+    image_dirty = true;
+}
+
+static void crop_selection(void)
+{
+    if (!selection_valid || selection.width == 0U ||
+            selection.height == 0U) {
+        return;
+    }
+    const uint32_t width = selection.width < PAINT_CANVAS_WIDTH ?
+        selection.width : PAINT_CANVAS_WIDTH;
+    const uint32_t height = selection.height < PAINT_CANVAS_HEIGHT ?
+        selection.height : PAINT_CANVAS_HEIGHT;
+
+    capture_undo();
+    for (uint32_t y = 0U; y < height; ++y) {
+        for (uint32_t x = 0U; x < width; ++x) {
+            redo_pixels[(size_t)y * PAINT_CANVAS_WIDTH + x] =
+                canvas_pixels[(size_t)(selection.y + y) *
+                    PAINT_CANVAS_WIDTH + selection.x + x];
+        }
+    }
+    clear_canvas_pixels();
+    for (uint32_t y = 0U; y < height; ++y) {
+        for (uint32_t x = 0U; x < width; ++x) {
+            canvas_pixels[(size_t)y * PAINT_CANVAS_WIDTH + x] =
+                redo_pixels[(size_t)y * PAINT_CANVAS_WIDTH + x];
+        }
+    }
+    image_width = width;
+    image_height = height;
+    selection_valid = false;
+    redo_valid = false;
+    image_dirty = true;
+}
+
+enum paint_status paint_resize_image(uint32_t width, uint32_t height)
+{
+    if (!initialized) {
+        return PAINT_STATUS_NOT_INITIALIZED;
+    }
+    if (width == 0U || height == 0U || width > PAINT_CANVAS_WIDTH ||
+            height > PAINT_CANVAS_HEIGHT) {
+        return PAINT_STATUS_BAD_INDEX;
+    }
+    if (width == image_width && height == image_height) {
+        return PAINT_STATUS_OK;
+    }
+
+    capture_undo();
+    for (uint32_t y = 0U; y < height; ++y) {
+        const uint32_t source_y = (uint32_t)((uint64_t)y * image_height /
+            height);
+
+        for (uint32_t x = 0U; x < width; ++x) {
+            const uint32_t source_x = (uint32_t)((uint64_t)x * image_width /
+                width);
+
+            redo_pixels[(size_t)y * PAINT_CANVAS_WIDTH + x] =
+                canvas_pixels[(size_t)source_y * PAINT_CANVAS_WIDTH +
+                    source_x];
+        }
+    }
+    clear_canvas_pixels();
+    for (uint32_t y = 0U; y < height; ++y) {
+        for (uint32_t x = 0U; x < width; ++x) {
+            canvas_pixels[(size_t)y * PAINT_CANVAS_WIDTH + x] =
+                redo_pixels[(size_t)y * PAINT_CANVAS_WIDTH + x];
+        }
+    }
+    image_width = width;
+    image_height = height;
+    selection_valid = false;
+    redo_valid = false;
+    image_dirty = true;
+    return PAINT_STATUS_OK;
+}
+
+static bool resize_sync_other(void)
+{
+    uint32_t value;
+
+    if (!resize_keep_aspect) {
+        return true;
+    }
+    if (resize_field == 0U) {
+        if (resize_width_value == 0U) {
+            resize_height_value = 0U;
+            return true;
+        }
+        value = (uint32_t)(((uint64_t)image_height * resize_width_value +
+            image_width / 2U) / image_width);
+        if (value == 0U || value > PAINT_CANVAS_HEIGHT) {
+            return false;
+        }
+        resize_height_value = value;
+    } else {
+        if (resize_height_value == 0U) {
+            resize_width_value = 0U;
+            return true;
+        }
+        value = (uint32_t)(((uint64_t)image_width * resize_height_value +
+            image_height / 2U) / image_height);
+        if (value == 0U || value > PAINT_CANVAS_WIDTH) {
+            return false;
+        }
+        resize_width_value = value;
+    }
+    return true;
+}
+
+static enum paint_status apply_resize_dialog(void)
+{
+    const enum paint_status status = paint_resize_image(resize_width_value,
+        resize_height_value);
+
+    if (status == PAINT_STATUS_OK) {
+        resize_dialog_open = false;
+    }
+    return status;
+}
+
+static void rotate_image(void)
+{
+    uint32_t width = image_height;
+    uint32_t height = image_width;
+
+    if (width > PAINT_CANVAS_WIDTH) {
+        width = PAINT_CANVAS_WIDTH;
+    }
+    if (height > PAINT_CANVAS_HEIGHT) {
+        height = PAINT_CANVAS_HEIGHT;
+    }
+    capture_undo();
+    for (uint32_t y = 0U; y < height; ++y) {
+        const uint32_t source_x = (uint32_t)((uint64_t)y * image_width /
+            height);
+
+        for (uint32_t x = 0U; x < width; ++x) {
+            const uint32_t source_y = image_height - 1U - (uint32_t)(
+                (uint64_t)x * image_height / width);
+
+            redo_pixels[(size_t)y * PAINT_CANVAS_WIDTH + x] =
+                canvas_pixels[(size_t)source_y * PAINT_CANVAS_WIDTH +
+                    source_x];
+        }
+    }
+    clear_canvas_pixels();
+    for (uint32_t y = 0U; y < height; ++y) {
+        for (uint32_t x = 0U; x < width; ++x) {
+            canvas_pixels[(size_t)y * PAINT_CANVAS_WIDTH + x] =
+                redo_pixels[(size_t)y * PAINT_CANVAS_WIDTH + x];
+        }
+    }
+    image_width = width;
+    image_height = height;
+    selection_valid = false;
+    redo_valid = false;
+    image_dirty = true;
+}
+
+static void flood_fill(uint32_t start_x, uint32_t start_y, uint32_t colour)
+{
+    const uint32_t target = canvas_pixels[
+        (size_t)start_y * PAINT_CANVAS_WIDTH + start_x];
+    size_t head = 0U;
+    size_t tail = 0U;
+
+    if (target == colour) {
+        return;
+    }
+    redo_pixels[tail++] = start_y * PAINT_CANVAS_WIDTH + start_x;
+    canvas_pixels[(size_t)start_y * PAINT_CANVAS_WIDTH + start_x] = colour;
+    while (head < tail) {
+        const uint32_t cell = redo_pixels[head++];
+        const uint32_t x = cell % PAINT_CANVAS_WIDTH;
+        const uint32_t y = cell / PAINT_CANVAS_WIDTH;
+        const uint32_t neighbours[4] = {
+            x == 0U ? cell : cell - 1U,
+            x + 1U >= image_width ? cell : cell + 1U,
+            y == 0U ? cell : cell - PAINT_CANVAS_WIDTH,
+            y + 1U >= image_height ? cell : cell + PAINT_CANVAS_WIDTH
+        };
+
+        for (size_t index = 0U; index < 4U; ++index) {
+            const uint32_t neighbour = neighbours[index];
+
+            if (neighbour == cell || canvas_pixels[neighbour] != target) {
+                continue;
+            }
+            canvas_pixels[neighbour] = colour;
+            redo_pixels[tail++] = neighbour;
+        }
+    }
+    redo_valid = false;
+}
+
+static void paint_rectangle_shape(struct ui_rect area)
+{
+    const uint32_t outline_colour = pack_rgb(swatches[colour_one]);
+    const uint32_t fill_colour = pack_rgb(swatches[colour_two]);
+    const uint32_t right = area.x + area.width - 1U;
+    const uint32_t bottom = area.y + area.height - 1U;
+
+    if (shape_fill) {
+        for (uint32_t y = area.y; y <= bottom; ++y) {
+            for (uint32_t x = area.x; x <= right; ++x) {
+                canvas_pixels[(size_t)y * PAINT_CANVAS_WIDTH + x] =
+                    fill_colour;
+            }
+        }
+    }
+    if (shape_outline || !shape_fill) {
+        paint_line_canvas((struct ui_point){ (int32_t)area.x,
+            (int32_t)area.y }, (struct ui_point){ (int32_t)right,
+            (int32_t)area.y }, outline_colour, stroke_radius);
+        paint_line_canvas((struct ui_point){ (int32_t)right,
+            (int32_t)area.y }, (struct ui_point){ (int32_t)right,
+            (int32_t)bottom }, outline_colour, stroke_radius);
+        paint_line_canvas((struct ui_point){ (int32_t)right,
+            (int32_t)bottom }, (struct ui_point){ (int32_t)area.x,
+            (int32_t)bottom }, outline_colour, stroke_radius);
+        paint_line_canvas((struct ui_point){ (int32_t)area.x,
+            (int32_t)bottom }, (struct ui_point){ (int32_t)area.x,
+            (int32_t)area.y }, outline_colour, stroke_radius);
+    }
+}
+
+static void paint_ellipse_shape(struct ui_rect area)
+{
+    const uint32_t outline_colour = pack_rgb(swatches[colour_one]);
+    const uint32_t fill_colour = pack_rgb(swatches[colour_two]);
+    const int32_t center_x = (int32_t)(area.x + area.width / 2U);
+    const int32_t center_y = (int32_t)(area.y + area.height / 2U);
+    const int32_t radius_x = area.width > 2U ? (int32_t)area.width / 2 : 1;
+    const int32_t radius_y = area.height > 2U ? (int32_t)area.height / 2 : 1;
+    const uint64_t rx_squared = (uint64_t)(radius_x * radius_x);
+    const uint64_t ry_squared = (uint64_t)(radius_y * radius_y);
+    const uint64_t edge = rx_squared * ry_squared;
+    const uint64_t band = (rx_squared + ry_squared) *
+        (stroke_radius + 1U) * 3U;
+
+    for (int32_t y = center_y - radius_y; y <= center_y + radius_y; ++y) {
+        if (y < 0 || (uint32_t)y >= image_height) {
+            continue;
+        }
+        for (int32_t x = center_x - radius_x; x <= center_x + radius_x;
+             ++x) {
+            if (x < 0 || (uint32_t)x >= image_width) {
+                continue;
+            }
+            const int32_t dx = x - center_x;
+            const int32_t dy = y - center_y;
+            const uint64_t value = (uint64_t)(dx * dx) * ry_squared +
+                (uint64_t)(dy * dy) * rx_squared;
+
+            if (value > edge) {
+                continue;
+            }
+            if (shape_fill) {
+                canvas_pixels[(size_t)y * PAINT_CANVAS_WIDTH +
+                    (uint32_t)x] = fill_colour;
+            }
+            if (shape_outline || !shape_fill) {
+                if (value + band >= edge) {
+                    canvas_pixels[(size_t)y * PAINT_CANVAS_WIDTH +
+                        (uint32_t)x] = outline_colour;
+                }
+            }
+        }
+    }
+}
+
+static void paint_shape_between(struct ui_point first, struct ui_point last)
+{
+    const struct ui_rect area = canvas_rect(first, last);
+    const uint32_t colour = pack_rgb(swatches[colour_one]);
+    const int32_t left = (int32_t)area.x;
+    const int32_t top = (int32_t)area.y;
+    const int32_t right = (int32_t)(area.x + area.width - 1U);
+    const int32_t bottom = (int32_t)(area.y + area.height - 1U);
+    const int32_t middle_x = left + (right - left) / 2;
+    const int32_t middle_y = top + (bottom - top) / 2;
+    const struct ui_point a = { left, top };
+    const struct ui_point b = { right, bottom };
+
+    if (current_shape == 0U) {
+        paint_line_canvas(first, last, colour, stroke_radius);
+    } else if (current_shape == 1U) {
+        paint_line_canvas(first, (struct ui_point){ middle_x, top }, colour,
+            stroke_radius);
+        paint_line_canvas((struct ui_point){ middle_x, top }, last, colour,
+            stroke_radius);
+    } else if (current_shape == 2U || current_shape == 19U ||
+            current_shape == 20U) {
+        paint_ellipse_shape(area);
+        if (current_shape == 19U) {
+            paint_line_canvas((struct ui_point){ middle_x, bottom - 2 },
+                (struct ui_point){ middle_x - 8, bottom + 8 }, colour,
+                stroke_radius);
+        } else if (current_shape == 20U) {
+            const struct ui_rect puff = { area.x + area.width / 4U,
+                area.y, area.width / 2U + 1U, area.height / 2U + 1U };
+
+            paint_ellipse_shape(puff);
+        }
+    } else if (current_shape == 3U || current_shape == 4U ||
+            current_shape == 18U) {
+        paint_rectangle_shape(area);
+        if (current_shape == 18U) {
+            paint_line_canvas((struct ui_point){ middle_x, bottom },
+                (struct ui_point){ middle_x - 8, bottom + 8 }, colour,
+                stroke_radius);
+        }
+    } else if (current_shape == 6U) {
+        paint_line_canvas((struct ui_point){ middle_x, top },
+            (struct ui_point){ right, bottom }, colour, stroke_radius);
+        paint_line_canvas((struct ui_point){ right, bottom },
+            (struct ui_point){ left, bottom }, colour, stroke_radius);
+        paint_line_canvas((struct ui_point){ left, bottom },
+            (struct ui_point){ middle_x, top }, colour, stroke_radius);
+    } else if (current_shape == 7U) {
+        paint_line_canvas(a, (struct ui_point){ left, bottom }, colour,
+            stroke_radius);
+        paint_line_canvas((struct ui_point){ left, bottom }, b, colour,
+            stroke_radius);
+        paint_line_canvas(b, a, colour, stroke_radius);
+    } else if (current_shape == 8U || current_shape == 9U ||
+            current_shape == 10U) {
+        paint_line_canvas((struct ui_point){ middle_x, top },
+            (struct ui_point){ right, middle_y }, colour, stroke_radius);
+        paint_line_canvas((struct ui_point){ right, middle_y },
+            (struct ui_point){ middle_x, bottom }, colour, stroke_radius);
+        paint_line_canvas((struct ui_point){ middle_x, bottom },
+            (struct ui_point){ left, middle_y }, colour, stroke_radius);
+        paint_line_canvas((struct ui_point){ left, middle_y },
+            (struct ui_point){ middle_x, top }, colour, stroke_radius);
+    } else if (current_shape >= 11U && current_shape <= 14U) {
+        paint_line_canvas(first, last, colour, stroke_radius);
+        if (current_shape == 11U || current_shape == 12U) {
+            const int32_t tip = current_shape == 11U ? right : left;
+            const int32_t wing = current_shape == 11U ? right - 12 :
+                left + 12;
+
+            paint_line_canvas((struct ui_point){ tip, middle_y },
+                (struct ui_point){ wing, middle_y - 10 }, colour,
+                stroke_radius);
+            paint_line_canvas((struct ui_point){ tip, middle_y },
+                (struct ui_point){ wing, middle_y + 10 }, colour,
+                stroke_radius);
+        } else {
+            const int32_t tip = current_shape == 13U ? top : bottom;
+            const int32_t wing = current_shape == 13U ? top + 12 :
+                bottom - 12;
+
+            paint_line_canvas((struct ui_point){ middle_x, tip },
+                (struct ui_point){ middle_x - 10, wing }, colour,
+                stroke_radius);
+            paint_line_canvas((struct ui_point){ middle_x, tip },
+                (struct ui_point){ middle_x + 10, wing }, colour,
+                stroke_radius);
+        }
+    } else if (current_shape >= 15U && current_shape <= 17U) {
+        paint_line_canvas((struct ui_point){ middle_x, top },
+            (struct ui_point){ middle_x, bottom }, colour, stroke_radius);
+        paint_line_canvas((struct ui_point){ left, middle_y },
+            (struct ui_point){ right, middle_y }, colour, stroke_radius);
+        paint_line_canvas(a, b, colour, stroke_radius);
+        paint_line_canvas((struct ui_point){ right, top },
+            (struct ui_point){ left, bottom }, colour, stroke_radius);
+    } else {
+        paint_rectangle_shape(area);
+    }
+}
+
 enum paint_status paint_pointer_move(struct ui_point point,
     struct ui_rect *damage)
 {
@@ -1434,14 +2279,26 @@ enum paint_status paint_pointer_move(struct ui_point point,
         return PAINT_STATUS_NOT_INITIALIZED;
     }
     *damage = (struct ui_rect){ 0U, 0U, 0U, 0U };
-    if (painting) {
+    if (selecting) {
+        uint32_t x;
+        uint32_t y;
+
+        if (canvas_point(point, &x, &y)) {
+            selection = canvas_rect(selection_origin,
+                (struct ui_point){ (int32_t)x, (int32_t)y });
+            selection_valid = true;
+            *damage = paint_sheet_bounds();
+        }
+    } else if (painting) {
         const uint32_t colour = current_tool == PAINT_TOOL_ERASER ?
             pack_rgb(sheet) : pack_rgb(swatches[colour_one]);
-        const uint32_t radius = current_tool == PAINT_TOOL_ERASER ? 4U : 1U;
+        const uint32_t radius = current_tool == PAINT_TOOL_ERASER ?
+            stroke_radius + 3U : stroke_radius;
 
         paint_line(last_paint_point, point, colour, radius);
         last_paint_point = point;
         *damage = paint_sheet_bounds();
+        image_dirty = true;
     }
     hover_tool = (size_t)-1;
     hover_shape = (size_t)-1;
@@ -1481,6 +2338,165 @@ enum paint_status paint_pointer_press(struct ui_point point,
         return PAINT_STATUS_NOT_INITIALIZED;
     }
     *damage = (struct ui_rect){ 0U, 0U, 0U, 0U };
+    if (resize_dialog_open) {
+        for (size_t field = 0U; field < 2U; ++field) {
+            if (holds(resize_field_rect(field), point)) {
+                resize_field = field;
+                *damage = resize_dialog_rect();
+                return PAINT_STATUS_OK;
+            }
+        }
+        if (holds(resize_aspect_rect(), point)) {
+            const uint32_t old_width = resize_width_value;
+            const uint32_t old_height = resize_height_value;
+
+            resize_keep_aspect = !resize_keep_aspect;
+            if (resize_keep_aspect && !resize_sync_other()) {
+                resize_width_value = old_width;
+                resize_height_value = old_height;
+                resize_keep_aspect = false;
+            }
+            *damage = resize_dialog_rect();
+            return PAINT_STATUS_OK;
+        }
+        if (holds(resize_button_rect(0U), point)) {
+            const enum paint_status status = apply_resize_dialog();
+
+            *damage = status == PAINT_STATUS_OK ? window_rect :
+                resize_dialog_rect();
+            return status;
+        }
+        if (holds(resize_button_rect(1U), point)) {
+            resize_dialog_open = false;
+            *damage = window_rect;
+            return PAINT_STATUS_OK;
+        }
+        *damage = resize_dialog_rect();
+        return PAINT_STATUS_OK;
+    }
+    for (size_t index = 0U; index < 3U; ++index) {
+        if (!holds(quick_rect(index), point)) {
+            continue;
+        }
+        if (index == 0U) {
+            save_requested = true;
+        } else if (index == 1U) {
+            undo_image();
+        } else {
+            redo_image();
+        }
+        *damage = window_rect;
+        return PAINT_STATUS_OK;
+    }
+    for (size_t item = 0U; item < 3U; ++item) {
+        if (!holds(clipboard_rect(item), point)) {
+            continue;
+        }
+        if (item == 0U) {
+            paste_selection();
+        } else {
+            copy_selection(item == 1U);
+        }
+        *damage = window_rect;
+        return PAINT_STATUS_OK;
+    }
+    for (size_t item = 0U; item < 4U; ++item) {
+        if (!holds(image_rect(item), point)) {
+            continue;
+        }
+        if (item == 0U) {
+            select_mode = true;
+            shape_mode = false;
+            text_active = false;
+        } else if (item == 1U) {
+            crop_selection();
+        } else if (item == 2U) {
+            resize_dialog_open = true;
+            resize_keep_aspect = true;
+            resize_field = 0U;
+            resize_width_value = image_width;
+            resize_height_value = image_height;
+        } else {
+            rotate_image();
+        }
+        *damage = window_rect;
+        return PAINT_STATUS_OK;
+    }
+    if (holds(brushes_rect(), point)) {
+        current_tool = PAINT_TOOL_PENCIL;
+        select_mode = false;
+        shape_mode = false;
+        text_active = false;
+        stroke_radius = stroke_radius >= 8U ? 1U : stroke_radius * 2U;
+        *damage = ribbon_rect();
+        return PAINT_STATUS_OK;
+    }
+    for (size_t item = 0U; item < 2U; ++item) {
+        if (!holds(shape_option_rect(item), point)) {
+            continue;
+        }
+        if (item == 0U) {
+            shape_outline = !shape_outline;
+        } else {
+            shape_fill = !shape_fill;
+        }
+        *damage = ribbon_rect();
+        return PAINT_STATUS_OK;
+    }
+    if (holds(size_rect(), point)) {
+        stroke_radius = stroke_radius == 1U ? 2U :
+            (stroke_radius == 2U ? 4U :
+                (stroke_radius == 4U ? 8U : 1U));
+        *damage = ribbon_rect();
+        return PAINT_STATUS_OK;
+    }
+    for (size_t item = 0U; item < 2U; ++item) {
+        if (holds(colour_button_rect(item), point)) {
+            colour_target = item;
+            *damage = ribbon_rect();
+            return PAINT_STATUS_OK;
+        }
+    }
+    if (holds(edit_colours_rect(), point)) {
+        if (colour_target == 0U) {
+            colour_one = (colour_one + 1U) % PAINT_SWATCHES;
+        } else {
+            colour_two = (colour_two + 1U) % PAINT_SWATCHES;
+        }
+        *damage = ribbon_rect();
+        return PAINT_STATUS_OK;
+    }
+    {
+        const struct ui_rect track = zoom_track_rect();
+        const struct ui_rect minus = { track.x - 20U, track.y, 20U,
+            track.height };
+        const struct ui_rect plus = { track.x + track.width, track.y, 20U,
+            track.height };
+        static const uint32_t notches[7] = { 12U, 25U, 50U, 100U, 200U,
+            400U, 800U };
+        size_t notch = 0U;
+
+        for (size_t index = 0U; index < 7U; ++index) {
+            if (zoom_percent >= notches[index]) {
+                notch = index;
+            }
+        }
+        if (holds(track, point)) {
+            notch = (size_t)(((uint32_t)point.x - track.x) * 6U +
+                track.width / 2U) / track.width;
+        } else if (holds(minus, point) && notch > 0U) {
+            --notch;
+        } else if (holds(plus, point) && notch + 1U < 7U) {
+            ++notch;
+        } else {
+            notch = 7U;
+        }
+        if (notch < 7U) {
+            zoom_percent = notches[notch];
+            *damage = window_rect;
+            return PAINT_STATUS_OK;
+        }
+    }
     if (holds(paint_sheet_bounds(), point)) {
         uint32_t x;
         uint32_t y;
@@ -1488,14 +2504,22 @@ enum paint_status paint_pointer_press(struct ui_point point,
         if (!canvas_point(point, &x, &y)) {
             return PAINT_STATUS_OK;
         }
-        if (current_tool == PAINT_TOOL_FILL) {
+        if (select_mode) {
+            selecting = true;
+            selection_origin = (struct ui_point){ (int32_t)x, (int32_t)y };
+            selection = (struct ui_rect){ x, y, 1U, 1U };
+            selection_valid = true;
+        } else if (shape_mode) {
+            capture_undo();
+            shape_dragging = true;
+            shape_origin = (struct ui_point){ (int32_t)x, (int32_t)y };
+            text_active = false;
+        } else if (current_tool == PAINT_TOOL_FILL) {
             const uint32_t colour = pack_rgb(swatches[colour_one]);
 
-            for (size_t offset = 0U;
-                 offset < (size_t)PAINT_CANVAS_WIDTH * PAINT_CANVAS_HEIGHT;
-                 ++offset) {
-                canvas_pixels[offset] = colour;
-            }
+            capture_undo();
+            flood_fill(x, y, colour);
+            image_dirty = true;
         } else if (current_tool == PAINT_TOOL_PICKER) {
             const uint32_t colour = canvas_pixels[
                 (size_t)y * PAINT_CANVAS_WIDTH + x];
@@ -1509,13 +2533,22 @@ enum paint_status paint_pointer_press(struct ui_point point,
         } else if (current_tool == PAINT_TOOL_MAGNIFIER) {
             zoom_percent = zoom_percent >= 400U ? 100U :
                 zoom_percent + 25U;
+        } else if (current_tool == PAINT_TOOL_TEXT) {
+            capture_undo();
+            text_active = true;
+            text_origin = (struct ui_point){ (int32_t)x, (int32_t)y };
+            text_length = 0U;
+            text_buffer[0U] = '\0';
         } else if (current_tool == PAINT_TOOL_PENCIL ||
                 current_tool == PAINT_TOOL_ERASER) {
+            capture_undo();
             painting = true;
             last_paint_point = point;
             paint_dot(point, current_tool == PAINT_TOOL_ERASER ?
                 pack_rgb(sheet) : pack_rgb(swatches[colour_one]),
-                current_tool == PAINT_TOOL_ERASER ? 4U : 1U);
+                current_tool == PAINT_TOOL_ERASER ? stroke_radius + 3U :
+                    stroke_radius);
+            image_dirty = true;
         }
         *damage = window_rect;
         return PAINT_STATUS_OK;
@@ -1523,6 +2556,9 @@ enum paint_status paint_pointer_press(struct ui_point point,
     for (size_t tool = 0U; tool < PAINT_TOOL_COUNT; ++tool) {
         if (holds(tool_rect(tool), point)) {
             current_tool = (enum paint_tool)tool;
+            select_mode = false;
+            shape_mode = false;
+            text_active = false;
             *damage = ribbon_rect();
             return PAINT_STATUS_OK;
         }
@@ -1530,14 +2566,20 @@ enum paint_status paint_pointer_press(struct ui_point point,
     for (size_t shape = 0U; shape < PAINT_SHAPES; ++shape) {
         if (holds(shape_rect(shape), point)) {
             current_shape = shape;
+            shape_mode = true;
+            select_mode = false;
+            text_active = false;
             *damage = ribbon_rect();
             return PAINT_STATUS_OK;
         }
     }
     for (size_t index = 0U; index < PAINT_SWATCHES; ++index) {
         if (holds(swatch_rect(index), point)) {
-            /* A left click sets Color 1, which is what Paint does. */
-            colour_one = index;
+            if (colour_target == 0U) {
+                colour_one = index;
+            } else {
+                colour_two = index;
+            }
             *damage = ribbon_rect();
             return PAINT_STATUS_OK;
         }
@@ -1548,15 +2590,255 @@ enum paint_status paint_pointer_press(struct ui_point point,
 enum paint_status paint_pointer_release(struct ui_point point,
     struct ui_rect *damage)
 {
-    (void)point;
     if (damage == NULL) {
         return PAINT_STATUS_NULL_ARGUMENT;
     }
     if (!initialized) {
         return PAINT_STATUS_NOT_INITIALIZED;
     }
-    painting = false;
     *damage = (struct ui_rect){ 0U, 0U, 0U, 0U };
+    if (selecting) {
+        uint32_t x;
+        uint32_t y;
+
+        if (canvas_point(point, &x, &y)) {
+            selection = canvas_rect(selection_origin,
+                (struct ui_point){ (int32_t)x, (int32_t)y });
+            selection_valid = true;
+        }
+        selecting = false;
+        *damage = paint_sheet_bounds();
+    }
+    if (shape_dragging) {
+        uint32_t x;
+        uint32_t y;
+
+        if (canvas_point(point, &x, &y)) {
+            paint_shape_between(shape_origin,
+                (struct ui_point){ (int32_t)x, (int32_t)y });
+            image_dirty = true;
+        }
+        shape_dragging = false;
+        redo_valid = false;
+        *damage = paint_sheet_bounds();
+    }
+    if (painting) {
+        image_dirty = true;
+        *damage = paint_sheet_bounds();
+    }
+    painting = false;
+    return PAINT_STATUS_OK;
+}
+
+static enum paint_status render_text_buffer(void)
+{
+    if (!text_active || !undo_valid) {
+        return PAINT_STATUS_OK;
+    }
+    copy_canvas(canvas_pixels, undo_pixels);
+    if (text_length == 0U) {
+        return PAINT_STATUS_OK;
+    }
+    const struct ui_font_metrics metrics = ui_font_get_metrics();
+    uint32_t top = text_origin.y < 0 ? 0U : (uint32_t)text_origin.y;
+
+    if (metrics.height == 0U || top + metrics.height > image_height) {
+        return PAINT_STATUS_BAD_INDEX;
+    }
+    struct surface target = {
+        .active = true,
+        .width = PAINT_CANVAS_WIDTH,
+        .height = PAINT_CANVAS_HEIGHT,
+        .pitch = PAINT_CANVAS_WIDTH * SURFACE_BYTES_PER_PIXEL,
+        .pixels = canvas_pixels
+    };
+    const struct surface_rect bounds = { 0U, 0U, image_width, image_height };
+
+    return ui_font_draw_text(&target, bounds,
+        text_origin.x < 0 ? 0U : (uint32_t)text_origin.x,
+        top + metrics.ascent, text_buffer,
+        pack_rgb(swatches[colour_one]), NULL) == UI_FONT_STATUS_OK ?
+            PAINT_STATUS_OK : PAINT_STATUS_SURFACE_FAILURE;
+}
+
+enum paint_status paint_text_input(char character, struct ui_rect *damage)
+{
+    if (damage == NULL) {
+        return PAINT_STATUS_NULL_ARGUMENT;
+    }
+    if (!initialized) {
+        return PAINT_STATUS_NOT_INITIALIZED;
+    }
+    *damage = (struct ui_rect){ 0U, 0U, 0U, 0U };
+    if (resize_dialog_open) {
+        const uint32_t old_width = resize_width_value;
+        const uint32_t old_height = resize_height_value;
+        uint32_t *const field = resize_field == 0U ? &resize_width_value :
+            &resize_height_value;
+        const uint32_t limit = resize_field == 0U ? PAINT_CANVAS_WIDTH :
+            PAINT_CANVAS_HEIGHT;
+
+        if (character >= '0' && character <= '9') {
+            const uint32_t candidate = *field * 10U +
+                (uint32_t)(character - '0');
+
+            if (candidate <= limit) {
+                *field = candidate;
+                if (!resize_sync_other()) {
+                    resize_width_value = old_width;
+                    resize_height_value = old_height;
+                }
+            }
+        }
+        *damage = resize_dialog_rect();
+        return PAINT_STATUS_OK;
+    }
+    if (!text_active || character < ' ' || character > '~') {
+        return PAINT_STATUS_OK;
+    }
+    if (text_length + 1U >= PAINT_TEXT_BYTES) {
+        return PAINT_STATUS_BAD_INDEX;
+    }
+    uint32_t text_width = 0U;
+    char prospective[PAINT_TEXT_BYTES];
+
+    for (size_t index = 0U; index < text_length; ++index) {
+        prospective[index] = text_buffer[index];
+    }
+    prospective[text_length] = character;
+    prospective[text_length + 1U] = '\0';
+    if (ui_font_text_width(prospective, &text_width) != UI_FONT_STATUS_OK ||
+            text_origin.x < 0 || (uint32_t)text_origin.x + text_width >
+                image_width) {
+        return PAINT_STATUS_BAD_INDEX;
+    }
+    text_buffer[text_length++] = character;
+    text_buffer[text_length] = '\0';
+    const enum paint_status status = render_text_buffer();
+
+    if (status == PAINT_STATUS_OK) {
+        image_dirty = true;
+        *damage = paint_sheet_bounds();
+    }
+    return status;
+}
+
+enum paint_status paint_key_backspace(struct ui_rect *damage)
+{
+    if (damage == NULL) {
+        return PAINT_STATUS_NULL_ARGUMENT;
+    }
+    if (!initialized) {
+        return PAINT_STATUS_NOT_INITIALIZED;
+    }
+    *damage = (struct ui_rect){ 0U, 0U, 0U, 0U };
+    if (resize_dialog_open) {
+        const uint32_t old_width = resize_width_value;
+        const uint32_t old_height = resize_height_value;
+        uint32_t *const field = resize_field == 0U ? &resize_width_value :
+            &resize_height_value;
+
+        *field /= 10U;
+        if (!resize_sync_other()) {
+            resize_width_value = old_width;
+            resize_height_value = old_height;
+        }
+        *damage = resize_dialog_rect();
+        return PAINT_STATUS_OK;
+    }
+    if (!text_active || text_length == 0U) {
+        return PAINT_STATUS_OK;
+    }
+    text_buffer[--text_length] = '\0';
+    const enum paint_status status = render_text_buffer();
+
+    if (status == PAINT_STATUS_OK) {
+        image_dirty = true;
+        *damage = paint_sheet_bounds();
+    }
+    return status;
+}
+
+enum paint_status paint_key_enter(struct ui_rect *damage)
+{
+    if (damage == NULL) {
+        return PAINT_STATUS_NULL_ARGUMENT;
+    }
+    if (!initialized) {
+        return PAINT_STATUS_NOT_INITIALIZED;
+    }
+    *damage = (struct ui_rect){ 0U, 0U, 0U, 0U };
+    if (resize_dialog_open) {
+        const enum paint_status status = apply_resize_dialog();
+
+        *damage = status == PAINT_STATUS_OK ? window_rect :
+            resize_dialog_rect();
+        return status;
+    }
+    if (!text_active) {
+        return PAINT_STATUS_OK;
+    }
+    const struct ui_font_metrics metrics = ui_font_get_metrics();
+    const uint32_t next = (uint32_t)text_origin.y + metrics.height;
+
+    capture_undo();
+    text_origin.y = (int32_t)(next < image_height ? next :
+        image_height - 1U);
+    text_length = 0U;
+    text_buffer[0U] = '\0';
+    *damage = paint_sheet_bounds();
+    return PAINT_STATUS_OK;
+}
+
+bool paint_take_save_request(void)
+{
+    const bool requested = save_requested;
+
+    save_requested = false;
+    return requested;
+}
+
+void paint_mark_saved(void)
+{
+    image_dirty = false;
+    (void)paint_set_title("PAINT.BMP - Paint");
+}
+
+struct paint_image_info paint_image(void)
+{
+    return (struct paint_image_info){ image_width, image_height,
+        (image_width * 3U + 3U) & ~UINT32_C(3), image_dirty };
+}
+
+enum paint_status paint_copy_bgr24_row(uint32_t row, uint8_t *destination,
+    size_t capacity, size_t *written)
+{
+    if (destination == NULL || written == NULL) {
+        return PAINT_STATUS_NULL_ARGUMENT;
+    }
+    if (!initialized) {
+        return PAINT_STATUS_NOT_INITIALIZED;
+    }
+    const struct paint_image_info image = paint_image();
+
+    if (row >= image.height || capacity < image.row_stride) {
+        return PAINT_STATUS_BAD_INDEX;
+    }
+    const struct framebuffer_state format = framebuffer_get_state();
+
+    for (uint32_t x = 0U; x < image.row_stride; ++x) {
+        destination[x] = 0U;
+    }
+    for (uint32_t x = 0U; x < image.width; ++x) {
+        const uint32_t pixel = canvas_pixels[
+            (size_t)row * PAINT_CANVAS_WIDTH + x];
+        const size_t at = (size_t)x * 3U;
+
+        destination[at] = (uint8_t)(pixel >> format.blue_position);
+        destination[at + 1U] = (uint8_t)(pixel >> format.green_position);
+        destination[at + 2U] = (uint8_t)(pixel >> format.red_position);
+    }
+    *written = image.row_stride;
     return PAINT_STATUS_OK;
 }
 
@@ -1596,7 +2878,27 @@ enum paint_status paint_initialize(struct surface *target,
          index < (size_t)PAINT_CANVAS_WIDTH * PAINT_CANVAS_HEIGHT; ++index) {
         canvas_pixels[index] = pack_rgb(sheet);
     }
+    image_width = PAINT_CANVAS_WIDTH;
+    image_height = PAINT_CANVAS_HEIGHT;
+    undo_valid = false;
+    redo_valid = false;
+    clipboard_valid = false;
+    image_dirty = false;
+    save_requested = false;
     painting = false;
+    selecting = false;
+    select_mode = false;
+    selection_valid = false;
+    shape_mode = false;
+    shape_dragging = false;
+    text_active = false;
+    text_length = 0U;
+    text_buffer[0U] = '\0';
+    resize_dialog_open = false;
+    resize_keep_aspect = true;
+    resize_field = 0U;
+    resize_width_value = image_width;
+    resize_height_value = image_height;
     initialized = true;
     return PAINT_STATUS_OK;
 }
@@ -1607,6 +2909,9 @@ enum paint_status paint_set_tool(enum paint_tool tool)
         return PAINT_STATUS_BAD_INDEX;
     }
     current_tool = tool;
+    select_mode = false;
+    shape_mode = false;
+    text_active = false;
     return PAINT_STATUS_OK;
 }
 
@@ -1616,6 +2921,9 @@ enum paint_status paint_set_shape(size_t shape)
         return PAINT_STATUS_BAD_INDEX;
     }
     current_shape = shape;
+    shape_mode = true;
+    select_mode = false;
+    text_active = false;
     return PAINT_STATUS_OK;
 }
 

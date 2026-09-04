@@ -78,6 +78,7 @@
 #define UI_CAMERA_CAPTURE_WIDTH 320U
 #define UI_CAMERA_CAPTURE_HEIGHT 180U
 #define UI_CAMERA_BMP_HEADER_BYTES 54U
+#define UI_PAINT_BMP_HEADER_BYTES 54U
 #define UI_SETTINGS_CATEGORY_COUNT 12U
 #define UI_WALLPAPER_COUNT 14U
 #define UI_CAMERA_SCENE_WIDTH 704U
@@ -232,6 +233,7 @@ static bool camera_frame_available;
 static uint64_t camera_seen_generation;
 static char camera_status[64U] = "No camera connected";
 static uint8_t camera_bmp_row[UI_CAMERA_CAPTURE_WIDTH * 3U];
+static uint8_t paint_bmp_row[PAINT_MAX_ROW_BYTES];
 static uint32_t camera_preview_row[UI_MAX_WIDTH];
 static uint8_t explorer_copy_buffer[4096U];
 static uint32_t settings_wallpaper_thumbnail_pixels[128U * 72U];
@@ -243,6 +245,7 @@ static uint64_t redraw_tile_hashes[
 static void media_editor_sync_clip(void);
 static enum sapfs_status media_editor_load(void);
 static enum sapfs_status media_editor_save(void);
+static enum sapfs_status paint_save(void);
 enum ui_anim_pending {
     UI_ANIM_PENDING_NONE = 0,
     UI_ANIM_PENDING_OPEN,
@@ -2330,7 +2333,7 @@ static bool file_is_internal(const char *name)
 {
     static const char *const internal[] = {
         "SAPSTUDI.SAP", "STUTEMP.SAP", "STUBACK.SAP",
-        "STUOUT.BMP", "OUTBACK.BMP"
+        "STUOUT.BMP", "OUTBACK.BMP", "PNTTEMP.BMP", "PNTBACK.BMP"
     };
 
     if (!strings_equal(file_directory, ".")) {
@@ -3818,6 +3821,161 @@ static enum sapfs_status studio_export(void)
         (void)files_refresh();
     } else {
         studio_set_status("Export failed / previous output retained");
+    }
+    return status;
+}
+
+static enum sapfs_status paint_write_scratch(void)
+{
+    static const char scratch[] = "PNTTEMP.BMP";
+    const struct paint_image_info image = paint_image();
+    uint8_t header[UI_PAINT_BMP_HEADER_BYTES] = { 0U };
+    const uint32_t file_bytes = UI_PAINT_BMP_HEADER_BYTES +
+        image.row_stride * image.height;
+    sapfs_handle handle = 0U;
+    enum sapfs_status status = studio_remove_if_present(scratch);
+
+    header[0U] = 'B';
+    header[1U] = 'M';
+    studio_store_u32(header, 2U, file_bytes);
+    studio_store_u32(header, 10U, UI_PAINT_BMP_HEADER_BYTES);
+    studio_store_u32(header, 14U, 40U);
+    studio_store_u32(header, 18U, image.width);
+    studio_store_u32(header, 22U, image.height);
+    studio_store_u16(header, 26U, 1U);
+    studio_store_u16(header, 28U, 24U);
+    studio_store_u32(header, 34U, image.row_stride * image.height);
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_create(SAPFS_VOLUME_DATA, scratch);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_open(SAPFS_VOLUME_DATA, scratch,
+            SAPFS_ACCESS_WRITE, &handle);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = studio_write_all(handle, header, sizeof(header));
+    }
+    for (uint32_t row = 0U; row < image.height &&
+         status == SAPFS_STATUS_OK; ++row) {
+        size_t bytes = 0U;
+        const enum paint_status paint_status = paint_copy_bgr24_row(
+            image.height - 1U - row, paint_bmp_row, sizeof(paint_bmp_row),
+            &bytes);
+
+        if (paint_status != PAINT_STATUS_OK || bytes != image.row_stride) {
+            status = SAPFS_STATUS_IO;
+            break;
+        }
+        status = studio_write_all(handle, paint_bmp_row, bytes);
+    }
+    if (handle != 0U) {
+        const enum sapfs_status close_status = sapfs_close(handle);
+
+        if (status == SAPFS_STATUS_OK && close_status != SAPFS_STATUS_OK) {
+            status = close_status;
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_sync(SAPFS_VOLUME_DATA);
+    }
+    if (status != SAPFS_STATUS_OK) {
+        (void)studio_remove_if_present(scratch);
+    }
+    return status;
+}
+
+static enum sapfs_status paint_recover_save(void)
+{
+    static const char output[] = "PAINT.BMP";
+    static const char scratch[] = "PNTTEMP.BMP";
+    static const char backup[] = "PNTBACK.BMP";
+    bool output_exists = false;
+    bool scratch_exists = false;
+    bool backup_exists = false;
+    bool changed = false;
+    enum sapfs_status status = studio_regular_presence(output,
+        &output_exists);
+
+    if (status == SAPFS_STATUS_OK) {
+        status = studio_regular_presence(scratch, &scratch_exists);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = studio_regular_presence(backup, &backup_exists);
+    }
+    if (status == SAPFS_STATUS_OK && !output_exists && backup_exists) {
+        status = sapfs_rename(SAPFS_VOLUME_DATA, backup, output);
+        changed = status == SAPFS_STATUS_OK;
+        backup_exists = status != SAPFS_STATUS_OK;
+    }
+    if (status == SAPFS_STATUS_OK && output_exists && backup_exists) {
+        status = studio_remove_if_present(backup);
+        changed = status == SAPFS_STATUS_OK;
+    }
+    if (status == SAPFS_STATUS_OK && scratch_exists) {
+        status = studio_remove_if_present(scratch);
+        changed = changed || status == SAPFS_STATUS_OK;
+    }
+    if (status == SAPFS_STATUS_OK && changed) {
+        status = sapfs_sync(SAPFS_VOLUME_DATA);
+    }
+    return status;
+}
+
+static enum sapfs_status paint_save(void)
+{
+    static const char output[] = "PAINT.BMP";
+    static const char scratch[] = "PNTTEMP.BMP";
+    static const char backup[] = "PNTBACK.BMP";
+    bool output_exists = false;
+    bool backed_up = false;
+    bool replacement_visible = false;
+    enum sapfs_status status = paint_recover_save();
+
+    if (status == SAPFS_STATUS_OK) {
+        status = studio_regular_presence(output, &output_exists);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = paint_write_scratch();
+    }
+    if (status == SAPFS_STATUS_OK && output_exists) {
+        status = sapfs_rename(SAPFS_VOLUME_DATA, output, backup);
+        backed_up = status == SAPFS_STATUS_OK;
+        if (status == SAPFS_STATUS_OK) {
+            status = sapfs_sync(SAPFS_VOLUME_DATA);
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_rename(SAPFS_VOLUME_DATA, scratch, output);
+        replacement_visible = status == SAPFS_STATUS_OK;
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_sync(SAPFS_VOLUME_DATA);
+    }
+    if (status != SAPFS_STATUS_OK && backed_up) {
+        if (replacement_visible) {
+            (void)sapfs_rename(SAPFS_VOLUME_DATA, output, scratch);
+        }
+        const enum sapfs_status restore = sapfs_rename(SAPFS_VOLUME_DATA,
+            backup, output);
+
+        if (restore == SAPFS_STATUS_OK) {
+            (void)sapfs_sync(SAPFS_VOLUME_DATA);
+            (void)studio_remove_if_present(scratch);
+        } else {
+            status = restore;
+        }
+    } else if (status != SAPFS_STATUS_OK) {
+        (void)studio_remove_if_present(scratch);
+    }
+    if (status == SAPFS_STATUS_OK && output_exists) {
+        status = studio_remove_if_present(backup);
+        if (status == SAPFS_STATUS_OK) {
+            status = sapfs_sync(SAPFS_VOLUME_DATA);
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        paint_mark_saved();
+        (void)files_refresh();
     }
     return status;
 }
@@ -6262,9 +6420,17 @@ static enum ui_status phipia_pointer_press_active(
     case UI_PANEL_CAMERA:
         return phipia_camera_pointer_press(point, damage) ==
             PHIPIA_CAMERA_STATUS_OK ? UI_STATUS_OK : UI_STATUS_BAD_ELEMENT;
-    case UI_PANEL_PAINT:
-        return paint_pointer_press(point, damage) == PAINT_STATUS_OK ?
-            UI_STATUS_OK : UI_STATUS_BAD_ELEMENT;
+    case UI_PANEL_PAINT: {
+        const enum paint_status status = paint_pointer_press(point, damage);
+
+        if (status != PAINT_STATUS_OK) {
+            return UI_STATUS_BAD_ELEMENT;
+        }
+        if (paint_take_save_request() && paint_save() != SAPFS_STATUS_OK) {
+            return UI_STATUS_FILESYSTEM_FAILURE;
+        }
+        return UI_STATUS_OK;
+    }
     case UI_PANEL_STORE:
         return store_pointer_press(point, damage) == STORE_STATUS_OK ?
             UI_STATUS_OK : UI_STATUS_BAD_ELEMENT;
@@ -8031,6 +8197,19 @@ enum ui_status ui_handle_keyboard(const struct keyboard_event *event)
                 (event->scancode == 0x1CU ? '\n' : event->character));
         return ui_event_publish(&ui_event);
     }
+    if (phipia_shell_ready && state.active_panel == UI_PANEL_PAINT &&
+            (event->scancode == 0x0EU || event->scancode == 0x1CU ||
+                (event->control && (event->character == 's' ||
+                    event->character == 'S')) ||
+                (!event->control && event->character >= ' ' &&
+                    event->character <= '~'))) {
+        ui_event.type = UI_EVENT_TEXT_INPUT;
+        ui_event.control = event->control;
+        ui_event.character = event->control ? 's' :
+            (event->scancode == 0x0EU ? '\b' :
+                (event->scancode == 0x1CU ? '\n' : event->character));
+        return ui_event_publish(&ui_event);
+    }
     if (launcher_open) {
         if (!event->pressed) {
             return UI_STATUS_OK;
@@ -8216,9 +8395,26 @@ static enum ui_status set_panel(
             if (!native_panel_slot(panel, &native_slot)) {
                 const uint32_t offset_x = (uint32_t)panel_cascade * 14U;
                 const uint32_t offset_y = (uint32_t)panel_cascade * 11U;
+                const struct ui_rect work = taskbar_is_initialized() ?
+                    taskbar_work_area() : state.layout.surface;
+                const uint32_t maximum_x = work.x +
+                    (work.width > panel_home.width ?
+                        work.width - panel_home.width : 0U);
+                const uint32_t maximum_y = work.y +
+                    (work.height > panel_home.height ?
+                        work.height - panel_home.height : 0U);
+                uint32_t window_x = panel_home.x + offset_x;
+                uint32_t window_y = panel_home.y + offset_y;
+
+                if (window_x > maximum_x) {
+                    window_x = maximum_x;
+                }
+                if (window_y > maximum_y) {
+                    window_y = maximum_y;
+                }
 
                 panel_windows[panel] = (struct ui_rect){
-                    panel_home.x + offset_x, panel_home.y + offset_y,
+                    window_x, window_y,
                     panel_home.width, panel_home.height
                 };
                 panel_cascade = (uint8_t)((panel_cascade + 1U) %
@@ -9177,6 +9373,25 @@ static enum ui_status apply_event(
             return UI_STATUS_OK;
         }
         return UI_STATUS_BAD_ELEMENT;
+    }
+    if (phipia_shell_ready && event->type == UI_EVENT_TEXT_INPUT &&
+            state.active_panel == UI_PANEL_PAINT) {
+        enum paint_status paint_status;
+
+        if (event->control && (event->character == 's' ||
+                event->character == 'S')) {
+            return paint_save() == SAPFS_STATUS_OK ? UI_STATUS_OK :
+                UI_STATUS_FILESYSTEM_FAILURE;
+        }
+        if (event->character == '\b') {
+            paint_status = paint_key_backspace(damage);
+        } else if (event->character == '\n') {
+            paint_status = paint_key_enter(damage);
+        } else {
+            paint_status = paint_text_input(event->character, damage);
+        }
+        return paint_status == PAINT_STATUS_OK ? UI_STATUS_OK :
+            UI_STATUS_BAD_ELEMENT;
     }
     if (event->type == UI_EVENT_POINTER_MOVEMENT) {
         const struct ui_rect old_cursor = cursor_damage_rect_for(state.pointer);

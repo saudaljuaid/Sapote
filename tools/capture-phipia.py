@@ -27,6 +27,7 @@ import fat32_image
 
 PROOF_LINE = b"Sapote: Boot Ledger installed proof passed"
 PROMPT = b"sap> "
+RUNTIME_FAILURE = b"runtime disabled"
 WIDTH = 1024
 HEIGHT = 768
 DOCK_FIXED_ONE = 65536
@@ -194,10 +195,9 @@ def capture_png(qmp, work, output, name):
     ppm.unlink()
 
 
-def wait_for_export(data_image, timeout=20.0):
-    expected_size = 54 + 320 * 180 * 3
+def wait_for_named_file(data_image, name, expected_size, timeout=20.0):
     deadline = time.monotonic() + timeout
-    last_error = "EXPORT.BMP was not visible"
+    last_error = f"{name} was not visible"
 
     # Let the ordinary guest NVMe path finish without competing with repeated
     # 64 MiB host reads while its FAT and FSInfo updates are in flight.
@@ -210,14 +210,20 @@ def wait_for_export(data_image, timeout=20.0):
                 for record in report["files"]
                 if not bool(record["directory"])
             }
-            exported = files.get("EXPORT.BMP")
+            exported = files.get(name)
             if exported is not None and int(exported["size"]) == expected_size:
                 return
-            last_error = "EXPORT.BMP was absent or incomplete"
+            last_error = f"{name} was absent or incomplete"
         except (OSError, fat32_image.Fat32Error) as error:
             last_error = str(error)
         time.sleep(5.0)
-    raise RuntimeError(f"guest export did not synchronize: {last_error}")
+    raise RuntimeError(f"guest file did not synchronize: {last_error}")
+
+
+def wait_for_export(data_image, timeout=20.0):
+    wait_for_named_file(
+        data_image, "EXPORT.BMP", 54 + 320 * 180 * 3, timeout,
+    )
 
 
 def click_export_and_wait(pointer, data_image):
@@ -698,22 +704,55 @@ def capture_phipia_session(args, qmp, pointer, work, output, durable_data):
     pointer.click()
     pointer.settle_guest(0.35)
 
-    # Paint is the third window at (110,62). Its own red swatch, pencil,
-    # continuous pointer capture, and eraser all mutate the backing canvas.
+    # Paint is the third window at (110,62). Maximize it, use the real numeric
+    # resize dialog to make a 320x180 image, and exercise the ribbon against
+    # the backing bitmap: palette, size, shapes, text, selection, clipboard,
+    # zoom, and durable save.
     open_app(DOCK_CANVAS)
     pointer.move_to(901, 78)
     pointer.click()
     pointer.settle_guest(0.40)
+    pointer.move_to(220, 96)
+    pointer.click()
+    pointer.move_to(370, 407)
+    pointer.click()
+    pointer.move_to(500, 328)
+    pointer.click()
+    for _ in range(4):
+        qmp.hmp("sendkey backspace")
+    send_text(qmp, "320", 0.025)
+    pointer.move_to(500, 366)
+    pointer.click()
+    for _ in range(3):
+        qmp.hmp("sendkey backspace")
+    send_text(qmp, "180", 0.025)
+    pointer.move_to(550, 445)
+    pointer.click()
+    pointer.settle_guest(0.35)
     pointer.move_to(955, 84)
     pointer.click()
-    pointer.move_to(282, 82)
+    pointer.move_to(710, 90)
     pointer.click()
-    pointer.drag_to(250, 260, 760, 520)
-    pointer.drag_to(250, 520, 760, 260)
-    pointer.move_to(282, 108)
+    pointer.move_to(507, 75)
     pointer.click()
-    pointer.drag_to(470, 370, 540, 410)
-    pointer.settle_guest(0.35)
+    pointer.drag_to(60, 200, 250, 290)
+    pointer.move_to(334, 82)
+    pointer.click()
+    pointer.move_to(70, 305)
+    pointer.click()
+    send_text(qmp, "Phipia Paint", 0.025)
+    pointer.move_to(160, 90)
+    pointer.click()
+    pointer.drag_to(50, 190, 270, 330)
+    pointer.move_to(95, 103)
+    pointer.click()
+    pointer.move_to(30, 90)
+    pointer.click()
+    pointer.move_to(947, 714)
+    pointer.click()
+    qmp.hmp("sendkey ctrl-s")
+    wait_for_named_file(durable_data, "PAINT.BMP", 54 + 320 * 180 * 3)
+    pointer.settle_guest(0.45)
     snapshot("phipia-paint-working", "paint_drawn")
     pointer.move_to(1001, 16)
     pointer.click()
@@ -1169,9 +1208,13 @@ def main():
                 process.wait()
 
         transcript = serial.read_bytes() if serial.exists() else b""
-        if PROOF_LINE not in transcript or PROMPT not in transcript:
+        if (PROOF_LINE not in transcript or PROMPT not in transcript or
+                RUNTIME_FAILURE in transcript):
             tail = transcript[-4096:].decode("utf-8", errors="replace")
-            raise RuntimeError("recording omitted the installed proof or prompt\n" + tail)
+            raise RuntimeError(
+                "recording omitted the installed proof/prompt or disabled "
+                "the Phipia runtime\n" + tail
+            )
 
         if args.fast_demo:
             print(video)
@@ -1185,6 +1228,7 @@ def main():
         }
         expected_sizes = {
             "PHIPIA.BMP": 54 + 320 * 180 * 3,
+            "PAINT.BMP": 54 + 320 * 180 * 3,
             "SAPSTUDI.SAP": 424,
             "PHIPMED.SAP": 688,
             "EXPORT.BMP": 54 + 320 * 180 * 3,

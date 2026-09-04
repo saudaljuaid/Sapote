@@ -6065,7 +6065,7 @@ _Noreturn void kernel_test_complete_redwood_proof(void)
     };
     static const enum ui_panel_id panels[UI_DOCK_ITEM_COUNT] = {
         UI_PANEL_FILES, UI_PANEL_TERMINAL, UI_PANEL_NOTES, UI_PANEL_STUDIO,
-        UI_PANEL_CAMERA, UI_PANEL_NONE, UI_PANEL_STORE, UI_PANEL_SETTINGS
+        UI_PANEL_CAMERA, UI_PANEL_PAINT, UI_PANEL_STORE, UI_PANEL_SETTINGS
     };
     const struct boot_ledger *ledger = boot_ledger_installed();
     const struct boot_stage_receipt *font;
