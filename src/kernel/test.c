@@ -6286,6 +6286,8 @@ _Noreturn void kernel_test_complete_phipia_proof(void)
         kernel_test_fail("Phipia keyboard panel close failed");
     }
     phipia_proof_process_ui("Phipia keyboard panel close draw failed");
+    phipia_proof_settle_ui(
+        "Phipia keyboard panel close animation did not settle");
     keyboard.scancode = 0x0FU;
     if (ui_handle_keyboard(&keyboard) != UI_STATUS_OK) {
         kernel_test_fail("Phipia keyboard focus-next failed");
@@ -6308,6 +6310,8 @@ _Noreturn void kernel_test_complete_phipia_proof(void)
         kernel_test_fail("Phipia keyboard activation failed");
     }
     phipia_proof_process_ui("Phipia keyboard activation draw failed");
+    phipia_proof_settle_ui(
+        "Phipia keyboard activation animation did not settle");
     if (ui_get_state()->active_panel != UI_PANEL_FILES) {
         kernel_test_fail("Phipia keyboard activation chose wrong panel");
     }
