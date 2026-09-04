@@ -26,7 +26,7 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	network-http-nested network-http-replace network-http-disk-full \
 	network-nic-reset network-system-immutable network-missing-linux-echo \
 	network-missing-linux-uname network-missing-linux-cat network-files \
-	network-notes network-studio network-persistence network-socket-isolation \
+	network-notes network-media-editor network-persistence network-socket-isolation \
 	network-tcp-listen network-tcp-refused network-native \
 	multiprocess multiprocess-slots driver-matrix driver-matrix-builtin audio \
 	nvidia nvidia-builtin native native-lua native-sqlite native-canvas \
@@ -99,9 +99,9 @@ LOGO_CANONICAL_SOURCE := assets/phipia/logo.png
 LOGO_SOURCE := assets/phipia/logo.png
 LOGO_BLOB := $(BUILD_DIR)/logo.srl
 LOGO_MAX_DIMENSION := 280
-STUDIO_ICON_SOURCE := assets/phipia/media-editor.png
-STUDIO_ICON_BLOB := $(BUILD_DIR)/media-editor-icon.srl
-STUDIO_ICON_MAX_DIMENSION := 80
+MEDIA_EDITOR_ICON_SOURCE := assets/phipia/media-editor.png
+MEDIA_EDITOR_ICON_BLOB := $(BUILD_DIR)/media-editor-icon.srl
+MEDIA_EDITOR_ICON_MAX_DIMENSION := 80
 SETTINGS_ICON_SOURCE := assets/settings-icon-dock.png
 SETTINGS_ICON_ORIGINAL := assets/settings-icon.png
 SETTINGS_ICON_BLOB := $(BUILD_DIR)/settings-icon.srl
@@ -157,7 +157,7 @@ PHIPIA_IMAGE := assets/phipia.png
 PHIPIA_DOCK_IMAGE := assets/phipia-dock.png
 PHIPIA_FILES_IMAGE := assets/phipia-files.png
 PHIPIA_NOTES_IMAGE := assets/phipia-notes.png
-PHIPIA_STUDIO_IMAGE := assets/phipia-media-editor.png
+PHIPIA_MEDIA_EDITOR_IMAGE := assets/phipia-media-editor.png
 SETTINGS_ALL_IMAGE := assets/phipia-settings-all.png
 SETTINGS_DESKTOP_IMAGE := assets/phipia-settings-desktop.png
 SETTINGS_LIGHT_IMAGE := assets/phipia-settings-appearance-light.png
@@ -939,9 +939,9 @@ $(LOGO_BLOB): $(LOGO_SOURCE) tools/make-logo-asset.py | $(BUILD_DIR)
 	$(PYTHON) tools/make-logo-asset.py $(LOGO_SOURCE) \
 		$(LOGO_MAX_DIMENSION) $@ --keep-canvas
 
-$(STUDIO_ICON_BLOB): $(STUDIO_ICON_SOURCE) tools/make-logo-asset.py | $(BUILD_DIR)
-	$(PYTHON) tools/make-logo-asset.py $(STUDIO_ICON_SOURCE) \
-		$(STUDIO_ICON_MAX_DIMENSION) $@
+$(MEDIA_EDITOR_ICON_BLOB): $(MEDIA_EDITOR_ICON_SOURCE) tools/make-logo-asset.py | $(BUILD_DIR)
+	$(PYTHON) tools/make-logo-asset.py $(MEDIA_EDITOR_ICON_SOURCE) \
+		$(MEDIA_EDITOR_ICON_MAX_DIMENSION) $@
 
 $(SETTINGS_ICON_BLOB): $(SETTINGS_ICON_SOURCE) tools/make-logo-asset.py | $(BUILD_DIR)
 	$(PYTHON) tools/make-logo-asset.py $(SETTINGS_ICON_SOURCE) \
@@ -994,14 +994,14 @@ $(UI_FONT_BLOB): $(UI_FONT_SOURCE) $(UI_FONT_METRICS) \
 
 $(RUST_LIB): $(RUST_SOURCES) $(RUST_MANIFEST) $(RUST_LOCKFILE) \
 		.cargo/config.toml $(RUST_VENDOR_SOURCES) \
-		$(LOGO_BLOB) $(STUDIO_ICON_BLOB) \
+		$(LOGO_BLOB) $(MEDIA_EDITOR_ICON_BLOB) \
 		$(SETTINGS_ICON_BLOB) $(FILES_ICON_BLOB) $(TERMINAL_ICON_BLOB) \
 		$(CAMERA_ICON_BLOB) $(CANVAS_ICON_BLOB) $(STORE_ICON_BLOB) \
 		$(STORE_UI_ICONS_BLOB) \
 		$(SETTINGS_CATEGORY_ICONS_BLOB) \
 		$(WALLPAPER_BLOB) $(FONT_BLOB) $(UI_FONT_BLOB) | $(BUILD_DIR)
 	PHIPIA_LOGO_BLOB='$(CURDIR)/$(LOGO_BLOB)' \
-	PHIPIA_STUDIO_ICON_BLOB='$(CURDIR)/$(STUDIO_ICON_BLOB)' \
+	PHIPIA_MEDIA_EDITOR_ICON_BLOB='$(CURDIR)/$(MEDIA_EDITOR_ICON_BLOB)' \
 	PHIPIA_SETTINGS_ICON_BLOB='$(CURDIR)/$(SETTINGS_ICON_BLOB)' \
 	PHIPIA_FILES_ICON_BLOB='$(CURDIR)/$(FILES_ICON_BLOB)' \
 	PHIPIA_TERMINAL_ICON_BLOB='$(CURDIR)/$(TERMINAL_ICON_BLOB)' \
@@ -1385,7 +1385,7 @@ verify: toolchain lint
 		https-tests tls-tests zlib-tests
 	$(PYTHON) tools/verify-ui-assets.py
 	@test '$(LOGO_MAX_DIMENSION)' -eq 280
-	@test '$(STUDIO_ICON_MAX_DIMENSION)' -eq 80
+	@test '$(MEDIA_EDITOR_ICON_MAX_DIMENSION)' -eq 80
 	@test '$(SETTINGS_ICON_MAX_DIMENSION)' -eq 80
 	@test '$(FILES_ICON_MAX_DIMENSION)' -eq 80
 	@test '$(TERMINAL_ICON_MAX_DIMENSION)' -eq 80
@@ -2139,7 +2139,7 @@ capture-phipia: iso $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE)
 	cp $(PHIPIA_CAPTURE_DIR)/phipia-notes.png \
 		$(PHIPIA_NOTES_IMAGE)
 	cp $(PHIPIA_CAPTURE_DIR)/phipia-media-editor.png \
-		$(PHIPIA_STUDIO_IMAGE)
+		$(PHIPIA_MEDIA_EDITOR_IMAGE)
 	cp $(PHIPIA_CAPTURE_DIR)/phipia-settings-all.png \
 		$(SETTINGS_ALL_IMAGE)
 	cp $(PHIPIA_CAPTURE_DIR)/phipia-settings-desktop.png \
@@ -2228,7 +2228,7 @@ qemu-test-network-%: $(TEST_BUILD_DIR)/network-%/phipia.iso
 		missing-linux-cat) expected=207 ;; \
 		files) expected=209 ;; \
 		notes) expected=211 ;; \
-		studio) expected=213 ;; \
+		media-editor) expected=213 ;; \
 		persistence) expected=215 ;; \
 		socket-isolation) expected=217 ;; \
 		tcp-listen) expected=219 ;; \
@@ -2243,7 +2243,7 @@ qemu-test-network-%: $(TEST_BUILD_DIR)/network-%/phipia.iso
 			$(MAKE) '$(NETAPP_SYSTEM_IMAGE)' '$(NETAPP_DATA_IMAGE)' || exit 1 ;; \
 		http-length|http-chunked|http-redirect|http-malformed|http-nested|\
 		http-replace|system-immutable|missing-linux-echo|missing-linux-uname|\
-		missing-linux-cat|files|notes|studio|persistence) \
+		missing-linux-cat|files|notes|media-editor|persistence) \
 			$(MAKE) '$(FAT32_SYSTEM_IMAGE)' '$(FAT32_DATA_IMAGE)' || exit 1 ;; \
 	esac; \
 	system='$(FAT32_SYSTEM_IMAGE)'; data='$(FAT32_DATA_IMAGE)'; \

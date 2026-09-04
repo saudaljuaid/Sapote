@@ -1565,32 +1565,32 @@ static enum filesystem_status filesystem_linux_read_open_profile(
         return FILESYSTEM_STATUS_PRIVATE_BUSY;
     }
     if (failure_boundary == 0U &&
-        sapfs_drive(SAPFS_VOLUME_SYSTEM).mounted) {
-        sapfs_handle handle;
+        phipfs_drive(PHIPFS_VOLUME_SYSTEM).mounted) {
+        phipfs_handle handle;
         size_t read_bytes = 0U;
-        uint64_t before = sapfs_completion_count(SAPFS_VOLUME_SYSTEM);
+        uint64_t before = phipfs_completion_count(PHIPFS_VOLUME_SYSTEM);
         uint64_t after;
-        enum sapfs_status open_status = sapfs_open(SAPFS_VOLUME_SYSTEM,
-            fat32_path, SAPFS_ACCESS_READ, &handle);
+        enum phipfs_status open_status = phipfs_open(PHIPFS_VOLUME_SYSTEM,
+            fat32_path, PHIPFS_ACCESS_READ, &handle);
 
-        if (open_status != SAPFS_STATUS_OK) {
-            return open_status == SAPFS_STATUS_NOT_FOUND ?
+        if (open_status != PHIPFS_STATUS_OK) {
+            return open_status == PHIPFS_STATUS_NOT_FOUND ?
                 FILESYSTEM_STATUS_ABSENT : FILESYSTEM_STATUS_NVME_FAILURE;
         }
-        open_status = sapfs_read(handle, destination, destination_bytes,
+        open_status = phipfs_read(handle, destination, destination_bytes,
             &read_bytes);
-        if (sapfs_close(handle) != SAPFS_STATUS_OK &&
-            open_status == SAPFS_STATUS_OK) {
-            open_status = SAPFS_STATUS_STALE_HANDLE;
+        if (phipfs_close(handle) != PHIPFS_STATUS_OK &&
+            open_status == PHIPFS_STATUS_OK) {
+            open_status = PHIPFS_STATUS_STALE_HANDLE;
         }
-        if (open_status != SAPFS_STATUS_OK || read_bytes != destination_bytes ||
+        if (open_status != PHIPFS_STATUS_OK || read_bytes != destination_bytes ||
             linux_profile_validate_payload(profile, destination,
                 destination_bytes, &payload) != LINUX_FAT16_STATUS_OK ||
             payload.deterministic != 1U || payload.byte_count != file_bytes) {
             zero_bytes(destination, destination_bytes);
             return FILESYSTEM_STATUS_LINUX_PAYLOAD;
         }
-        after = sapfs_completion_count(SAPFS_VOLUME_SYSTEM);
+        after = phipfs_completion_count(PHIPFS_VOLUME_SYSTEM);
         if (after <= before || after - before > UINT32_MAX) {
             zero_bytes(destination, destination_bytes);
             return FILESYSTEM_STATUS_OWNERSHIP;

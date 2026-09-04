@@ -64,9 +64,9 @@ struct phipia_ext4_recovery_report {
 };
 
 struct phipia_ext4_mount_diagnostic {
-    enum sapfs_status begin_status;
+    enum phipfs_status begin_status;
     int32_t rust_status;
-    enum sapfs_status close_status;
+    enum phipfs_status close_status;
     int32_t nvme_close_status;
     int32_t nvme_teardown_status;
     uint32_t nvme_resource_mismatches;
@@ -104,41 +104,41 @@ int32_t phipia_ext4_block_write(
 int32_t phipia_ext4_block_flush(uintptr_t context, uint32_t boundary);
 
 void ext4_backend_initialize(void);
-enum sapfs_status ext4_backend_mount(enum sapfs_volume volume);
-enum sapfs_status ext4_backend_last_mount_status(enum sapfs_volume volume);
-bool ext4_backend_mount_diagnostic(enum sapfs_volume volume,
+enum phipfs_status ext4_backend_mount(enum phipfs_volume volume);
+enum phipfs_status ext4_backend_last_mount_status(enum phipfs_volume volume);
+bool ext4_backend_mount_diagnostic(enum phipfs_volume volume,
     struct phipia_ext4_mount_diagnostic *diagnostic);
-enum sapfs_status ext4_backend_unmount(enum sapfs_volume volume);
-enum sapfs_status ext4_backend_sync(enum sapfs_volume volume);
-struct sapfs_drive_info ext4_backend_drive(enum sapfs_volume volume);
-uint64_t ext4_backend_completion_count(enum sapfs_volume volume);
-bool ext4_backend_recovery_report(enum sapfs_volume volume,
+enum phipfs_status ext4_backend_unmount(enum phipfs_volume volume);
+enum phipfs_status ext4_backend_sync(enum phipfs_volume volume);
+struct phipfs_drive_info ext4_backend_drive(enum phipfs_volume volume);
+uint64_t ext4_backend_completion_count(enum phipfs_volume volume);
+bool ext4_backend_recovery_report(enum phipfs_volume volume,
     struct phipia_ext4_recovery_report *report);
-enum sapfs_status ext4_backend_open(enum sapfs_volume volume,
-    const char *path, enum sapfs_access access, sapfs_handle *handle);
-enum sapfs_status ext4_backend_close(sapfs_handle handle);
-enum sapfs_status ext4_backend_read(sapfs_handle handle,
+enum phipfs_status ext4_backend_open(enum phipfs_volume volume,
+    const char *path, enum phipfs_access access, phipfs_handle *handle);
+enum phipfs_status ext4_backend_close(phipfs_handle handle);
+enum phipfs_status ext4_backend_read(phipfs_handle handle,
     uint8_t *destination, size_t capacity, size_t *read_bytes);
-enum sapfs_status ext4_backend_pread(sapfs_handle handle,
+enum phipfs_status ext4_backend_pread(phipfs_handle handle,
     uint8_t *destination, size_t capacity, uint64_t offset,
     size_t *read_bytes);
 /* Private kernel acceptance probe; this is not installed in the VFS table. */
-enum sapfs_status ext4_backend_transaction_probe(enum sapfs_volume volume,
+enum phipfs_status ext4_backend_transaction_probe(enum phipfs_volume volume,
     const char *path, uint64_t offset, const uint8_t *source,
     size_t source_bytes, size_t *written_bytes);
-enum sapfs_status ext4_backend_truncate_probe(enum sapfs_volume volume,
+enum phipfs_status ext4_backend_truncate_probe(enum phipfs_volume volume,
     const char *path, uint64_t size);
-enum sapfs_status ext4_backend_create_file_probe(enum sapfs_volume volume,
+enum phipfs_status ext4_backend_create_file_probe(enum phipfs_volume volume,
     const char *path);
-enum sapfs_status ext4_backend_unlink_file_probe(enum sapfs_volume volume,
+enum phipfs_status ext4_backend_unlink_file_probe(enum phipfs_volume volume,
     const char *path);
-enum sapfs_status ext4_backend_link_file_probe(enum sapfs_volume volume,
+enum phipfs_status ext4_backend_link_file_probe(enum phipfs_volume volume,
     const char *source, const char *destination);
-enum sapfs_status ext4_backend_create_directory_probe(
-    enum sapfs_volume volume, const char *path);
-enum sapfs_status ext4_backend_remove_directory_probe(
-    enum sapfs_volume volume, const char *path);
-enum sapfs_status ext4_backend_rename_probe(enum sapfs_volume volume,
+enum phipfs_status ext4_backend_create_directory_probe(
+    enum phipfs_volume volume, const char *path);
+enum phipfs_status ext4_backend_remove_directory_probe(
+    enum phipfs_volume volume, const char *path);
+enum phipfs_status ext4_backend_rename_probe(enum phipfs_volume volume,
     const char *source, const char *destination);
 /* Private ext4-recovery scenario controls; never installed in the VFS table. */
 bool ext4_backend_test_configure_power_cut(const char *command_line,
@@ -147,33 +147,33 @@ bool ext4_backend_test_power_cut_configured(void);
 bool ext4_backend_test_fail_storage_once(uint32_t operation_ordinal);
 bool ext4_backend_test_storage_failure_observed(
     enum phipia_ext4_test_storage_kind expected_kind);
-enum sapfs_status ext4_backend_write(sapfs_handle handle,
+enum phipfs_status ext4_backend_write(phipfs_handle handle,
     const uint8_t *source, size_t source_bytes, size_t *written_bytes);
-enum sapfs_status ext4_backend_seek(sapfs_handle handle, int64_t offset,
-    enum sapfs_seek_origin origin, uint64_t *position);
-enum sapfs_status ext4_backend_stat_path(enum sapfs_volume volume,
-    const char *path, struct sapfs_stat *stat);
-enum sapfs_status ext4_backend_list(enum sapfs_volume volume,
-    const char *path, struct sapfs_list_entry *entries, size_t capacity,
+enum phipfs_status ext4_backend_seek(phipfs_handle handle, int64_t offset,
+    enum phipfs_seek_origin origin, uint64_t *position);
+enum phipfs_status ext4_backend_stat_path(enum phipfs_volume volume,
+    const char *path, struct phipfs_stat *stat);
+enum phipfs_status ext4_backend_list(enum phipfs_volume volume,
+    const char *path, struct phipfs_list_entry *entries, size_t capacity,
     size_t *entry_count);
-enum sapfs_status ext4_backend_directory_open(enum sapfs_volume volume,
-    const char *path, sapfs_handle *handle);
-enum sapfs_status ext4_backend_directory_read(sapfs_handle handle,
-    struct sapfs_list_entry *entry, bool *present);
-enum sapfs_status ext4_backend_directory_close(sapfs_handle handle);
-enum sapfs_status ext4_backend_create(enum sapfs_volume volume,
+enum phipfs_status ext4_backend_directory_open(enum phipfs_volume volume,
+    const char *path, phipfs_handle *handle);
+enum phipfs_status ext4_backend_directory_read(phipfs_handle handle,
+    struct phipfs_list_entry *entry, bool *present);
+enum phipfs_status ext4_backend_directory_close(phipfs_handle handle);
+enum phipfs_status ext4_backend_create(enum phipfs_volume volume,
     const char *path);
-enum sapfs_status ext4_backend_truncate(enum sapfs_volume volume,
+enum phipfs_status ext4_backend_truncate(enum phipfs_volume volume,
     const char *path, uint64_t size);
-enum sapfs_status ext4_backend_mkdir(enum sapfs_volume volume,
+enum phipfs_status ext4_backend_mkdir(enum phipfs_volume volume,
     const char *path);
-enum sapfs_status ext4_backend_rename(enum sapfs_volume volume,
+enum phipfs_status ext4_backend_rename(enum phipfs_volume volume,
     const char *source, const char *destination);
-enum sapfs_status ext4_backend_unlink(enum sapfs_volume volume,
+enum phipfs_status ext4_backend_unlink(enum phipfs_volume volume,
     const char *path);
-enum sapfs_status ext4_backend_rmdir(enum sapfs_volume volume,
+enum phipfs_status ext4_backend_rmdir(enum phipfs_volume volume,
     const char *path);
-enum sapfs_status ext4_backend_link(enum sapfs_volume volume,
+enum phipfs_status ext4_backend_link(enum phipfs_volume volume,
     const char *source, const char *destination);
 
 #endif

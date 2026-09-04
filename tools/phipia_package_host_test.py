@@ -55,7 +55,7 @@ def main() -> int:
     second = PACKAGE.build_package(copy.deepcopy(spec), executable)
     assert first == second
     assert hashlib.sha256(first).hexdigest().upper() == (
-        "CD3049966571250569DEFEABF062F6BDA4E48B217BBDDB52A17BEBA30BF5C20C")
+        "9A5B5FA3CF2BD46E19824D797099F1408051AB31B67AD96454829920E4A0A80B")
     _, parsed_executable, resources, report = PACKAGE.parse_package(first)
     assert parsed_executable == executable
     assert resources == ()
@@ -88,7 +88,7 @@ def main() -> int:
     resource_package = PACKAGE.build_package(
         resource_spec, executable, (("DATA.TXT", resource),))
     assert hashlib.sha256(resource_package).hexdigest().upper() == (
-        "FADACD4CE9274854CD01CF6F17B1B809D1C9448D1078D9716DD08E4724F87ECA")
+        "97A293EF34F5AC7DAAB1C861295429614F3F4D2B42C8751E43809DEA008A7333")
     _, _, resources, report = PACKAGE.parse_package(resource_package)
     assert resources == (("DATA.TXT", resource),)
     assert report["package_format"] == 2
@@ -103,7 +103,7 @@ def main() -> int:
 
     library = b"\x7fELFauthenticated-dynamic-library"
     catalog = bytearray(2048)
-    catalog[:8] = b"SAPDYNL1"
+    catalog[:8] = b"PHIPDYN1"
     struct.pack_into("<HHIHH", catalog, 8, 1, 64, 2048, 1, 96)
     catalog[64:74] = b"DYNLIB.SO\0"
     catalog[128:160] = hashlib.sha256(library).digest()

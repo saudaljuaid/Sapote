@@ -221,7 +221,7 @@ enum package_state_status package_generation_encode(
 )
 {
     static const uint8_t magic[8] = {
-        'S', 'A', 'P', 'I', 'D', 'B', '0', '1'
+        'P', 'H', 'I', 'P', 'D', 'B', '0', '1'
     };
     static const uint8_t architecture[16] = {
         'x', '8', '6', '_', '6', '4', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0

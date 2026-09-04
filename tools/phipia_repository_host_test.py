@@ -107,7 +107,7 @@ def main() -> int:
 
     first = REPOSITORY.build_repository(repository_spec, private_seed)
     assert hashlib.sha256(first).hexdigest().upper() == (
-        "2034D274ED70A8B8B672E643185ABF75585607BCEF8A0F5B64E68E2FD3AA0C75")
+        "3B0539202AB65C5A3D21F3BA0C366F38734C87DE0DBAECA99A5EC3BBB2506F7F")
     reordered = copy.deepcopy(repository_spec)
     reordered["packages"].reverse()
     reordered["packages"][0]["dependencies"].reverse()
@@ -215,7 +215,7 @@ def main() -> int:
     ]
     assert lock.endswith(b"\n") and b" " not in lock
     assert hashlib.sha256(lock).hexdigest().upper() == (
-        "631A70BC787FA96DB2E153EAECF77C95225455080A2632F8568DA2E7BCED36A3")
+        "CC866126192335D8B4798434A4F9E06CF920184AF2F060242FDA0757D9C5616D")
     assert REPOSITORY.resolve_repository(
         report, ["org.phipia.desktop@^3.0.0"], architecture="x86_64",
         abi_version=1, max_packages=8)[1] == lock

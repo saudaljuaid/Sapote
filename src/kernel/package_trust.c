@@ -8,7 +8,7 @@
 #define TRUST_RECORD_STATUS_REVOKED UINT16_C(2)
 
 static const uint8_t trust_table_magic[8] = {
-    'S', 'A', 'P', 'K', 'E', 'Y', '0', '1'
+    'P', 'H', 'I', 'P', 'K', 'E', 'Y', '1'
 };
 
 static const uint8_t field_prime[32] = {

@@ -158,7 +158,7 @@ static void database_header(
     uint32_t file_count
 )
 {
-    put_magic(database, "SAPIDB01");
+    put_magic(database, "PHIPDB01");
     put_u16(database + 8U, 1U);
     put_u16(database + 10U, PACKAGE_STATE_DATABASE_HEADER_BYTES);
     put_u64(database + 16U, byte_count);
@@ -250,7 +250,7 @@ static void build_authority(
 {
     uint8_t digest[PACKAGE_STATE_SHA256_BYTES];
     clear_bytes(authority, PACKAGE_STATE_AUTHORITY_BYTES);
-    put_magic(authority, "SAPGEN01");
+    put_magic(authority, "PHIPGN01");
     put_u16(authority + 8U, 1U);
     put_u16(authority + 10U, PACKAGE_STATE_AUTHORITY_BYTES);
     put_u64(authority + 16U, get_u64(database + 24U));
@@ -282,7 +282,7 @@ static void build_journal(
 )
 {
     clear_bytes(journal, PACKAGE_STATE_JOURNAL_BYTES);
-    put_magic(journal, "SAPTXN01");
+    put_magic(journal, "PHIPTX01");
     put_u16(journal + 8U, 1U);
     put_u16(journal + 10U, PACKAGE_STATE_JOURNAL_BYTES);
     put_u16(journal + 16U, PACKAGE_STATE_OPERATION_INSTALL);
@@ -339,10 +339,10 @@ static int test_parsers_and_mutations(
 {
     /* Independently emitted by phipia-transaction.py for this exact state. */
     static const uint8_t canonical_database_sha256[PACKAGE_STATE_SHA256_BYTES] = {
-        0x1cU, 0x6cU, 0xc5U, 0x0cU, 0xacU, 0xd1U, 0x34U, 0xa4U,
-        0xd1U, 0x4aU, 0xfdU, 0x66U, 0xcfU, 0x05U, 0x37U, 0x40U,
-        0x79U, 0xd3U, 0x92U, 0xaaU, 0x28U, 0x40U, 0xe4U, 0x6aU,
-        0x68U, 0x32U, 0x12U, 0x5dU, 0xafU, 0x60U, 0x1dU, 0x33U
+        0xa8U, 0x85U, 0xe2U, 0xfeU, 0x09U, 0xbfU, 0x1bU, 0xe9U,
+        0xe7U, 0x82U, 0x31U, 0x67U, 0x27U, 0x6dU, 0xb1U, 0xfaU,
+        0xdbU, 0xf7U, 0x3dU, 0x0cU, 0xbdU, 0xa0U, 0x05U, 0xbbU,
+        0x82U, 0xcfU, 0x6eU, 0xaeU, 0x0eU, 0xbaU, 0x0cU, 0xc4U
     };
     struct package_state_database_view database_view;
     struct package_state_package_view package_view;

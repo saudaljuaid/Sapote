@@ -10,41 +10,41 @@
  * directory iterators.
  */
 struct vfs_backend_ops {
-    enum sapfs_status (*mount)(enum sapfs_volume volume);
-    enum sapfs_status (*unmount)(enum sapfs_volume volume);
-    enum sapfs_status (*sync)(enum sapfs_volume volume);
-    struct sapfs_drive_info (*drive)(enum sapfs_volume volume);
-    uint64_t (*completion_count)(enum sapfs_volume volume);
-    enum sapfs_status (*open)(enum sapfs_volume volume, const char *path,
-        enum sapfs_access access, sapfs_handle *handle);
-    enum sapfs_status (*close)(sapfs_handle handle);
-    enum sapfs_status (*read)(sapfs_handle handle, uint8_t *destination,
+    enum phipfs_status (*mount)(enum phipfs_volume volume);
+    enum phipfs_status (*unmount)(enum phipfs_volume volume);
+    enum phipfs_status (*sync)(enum phipfs_volume volume);
+    struct phipfs_drive_info (*drive)(enum phipfs_volume volume);
+    uint64_t (*completion_count)(enum phipfs_volume volume);
+    enum phipfs_status (*open)(enum phipfs_volume volume, const char *path,
+        enum phipfs_access access, phipfs_handle *handle);
+    enum phipfs_status (*close)(phipfs_handle handle);
+    enum phipfs_status (*read)(phipfs_handle handle, uint8_t *destination,
         size_t capacity, size_t *read_bytes);
-    enum sapfs_status (*pread)(sapfs_handle handle, uint8_t *destination,
+    enum phipfs_status (*pread)(phipfs_handle handle, uint8_t *destination,
         size_t capacity, uint64_t offset, size_t *read_bytes);
-    enum sapfs_status (*write)(sapfs_handle handle, const uint8_t *source,
+    enum phipfs_status (*write)(phipfs_handle handle, const uint8_t *source,
         size_t source_bytes, size_t *written_bytes);
-    enum sapfs_status (*seek)(sapfs_handle handle, int64_t offset,
-        enum sapfs_seek_origin origin, uint64_t *position);
-    enum sapfs_status (*stat_path)(enum sapfs_volume volume,
-        const char *path, struct sapfs_stat *stat);
-    enum sapfs_status (*list)(enum sapfs_volume volume, const char *path,
-        struct sapfs_list_entry *entries, size_t capacity,
+    enum phipfs_status (*seek)(phipfs_handle handle, int64_t offset,
+        enum phipfs_seek_origin origin, uint64_t *position);
+    enum phipfs_status (*stat_path)(enum phipfs_volume volume,
+        const char *path, struct phipfs_stat *stat);
+    enum phipfs_status (*list)(enum phipfs_volume volume, const char *path,
+        struct phipfs_list_entry *entries, size_t capacity,
         size_t *entry_count);
-    enum sapfs_status (*directory_open)(enum sapfs_volume volume,
-        const char *path, sapfs_handle *handle);
-    enum sapfs_status (*directory_read)(sapfs_handle handle,
-        struct sapfs_list_entry *entry, bool *present);
-    enum sapfs_status (*directory_close)(sapfs_handle handle);
-    enum sapfs_status (*create)(enum sapfs_volume volume, const char *path);
-    enum sapfs_status (*truncate)(enum sapfs_volume volume, const char *path,
+    enum phipfs_status (*directory_open)(enum phipfs_volume volume,
+        const char *path, phipfs_handle *handle);
+    enum phipfs_status (*directory_read)(phipfs_handle handle,
+        struct phipfs_list_entry *entry, bool *present);
+    enum phipfs_status (*directory_close)(phipfs_handle handle);
+    enum phipfs_status (*create)(enum phipfs_volume volume, const char *path);
+    enum phipfs_status (*truncate)(enum phipfs_volume volume, const char *path,
         uint64_t size);
-    enum sapfs_status (*mkdir)(enum sapfs_volume volume, const char *path);
-    enum sapfs_status (*rename)(enum sapfs_volume volume, const char *source,
+    enum phipfs_status (*mkdir)(enum phipfs_volume volume, const char *path);
+    enum phipfs_status (*rename)(enum phipfs_volume volume, const char *source,
         const char *destination);
-    enum sapfs_status (*unlink)(enum sapfs_volume volume, const char *path);
-    enum sapfs_status (*rmdir)(enum sapfs_volume volume, const char *path);
-    enum sapfs_status (*link)(enum sapfs_volume volume, const char *source,
+    enum phipfs_status (*unlink)(enum phipfs_volume volume, const char *path);
+    enum phipfs_status (*rmdir)(enum phipfs_volume volume, const char *path);
+    enum phipfs_status (*link)(enum phipfs_volume volume, const char *source,
         const char *destination);
     bool case_sensitive;
 };

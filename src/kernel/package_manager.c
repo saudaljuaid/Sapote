@@ -44,10 +44,10 @@ static uint32_t install_order[PACKAGE_MANAGER_PLAN_MAX_PACKAGES];
 static bool install_solver_busy;
 
 static const uint8_t repository_magic[8] = {
-    'S', 'A', 'P', 'O', 'I', 'D', 'X', '1'
+    'P', 'H', 'I', 'P', 'I', 'D', 'X', '1'
 };
 static const uint8_t package_magic[8] = {
-    'S', 'A', 'P', 'O', 'S', 'P', 'K', '1'
+    'P', 'H', 'I', 'P', 'P', 'K', 'G', '1'
 };
 static const uint8_t architecture_x86_64[6] = {
     'x', '8', '6', '_', '6', '4'

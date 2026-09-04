@@ -68,7 +68,7 @@ jobs:
                       build/tests/native-phip/fixture.log
                       build/tests/native-phip/packet-audit.json
                       build/native-phip/PHIP.APP
-                      build/native-phip/SAP.map
+                      build/native-phip/PHIP.map
                       build/native-phip/repository/repository.sri
                       build/native-phip/repository/packages/**/*.spk
                       build/native-dynamic/DYNROOT.APP

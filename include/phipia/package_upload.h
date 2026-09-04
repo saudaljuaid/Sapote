@@ -13,7 +13,7 @@
 #define PACKAGE_UPLOAD_DIRECTORY "pkgstage"
 #define PACKAGE_UPLOAD_SLOT_LIMIT 4U
 #define PACKAGE_UPLOAD_WRITE_MAX 4096U
-#define PACKAGE_UPLOAD_MAX_BYTES SAPFS_MAX_FILE_BYTES
+#define PACKAGE_UPLOAD_MAX_BYTES PHIPFS_MAX_FILE_BYTES
 
 typedef uint64_t package_upload_token;
 
@@ -35,7 +35,7 @@ enum package_upload_status {
 
 struct package_upload_report {
     enum package_upload_status status;
-    enum sapfs_status filesystem_status;
+    enum phipfs_status filesystem_status;
     package_upload_token token;
     uint64_t byte_count;
     uint8_t sha256[PACKAGE_STATE_SHA256_BYTES];

@@ -243,11 +243,11 @@ def main() -> int:
             *(["-icount", args.icount] if args.icount else []),
             *storage_arguments(args.system, data),
             "-netdev",
-            "dgram,id=sapnet,local.type=inet,local.host=127.0.0.1,"
+            "dgram,id=phipnet,local.type=inet,local.host=127.0.0.1,"
             f"local.port={guest_port},remote.type=inet,remote.host=127.0.0.1,"
             f"remote.port={peer_port}",
             "-device",
-            "virtio-net-pci,id=virtio-net0,netdev=sapnet,"
+            "virtio-net-pci,id=virtio-net0,netdev=phipnet,"
             "mac=52:54:00:12:34:56,disable-legacy=on,mrg_rxbuf=off",
             "-qmp", f"tcp:127.0.0.1:{qmp_port},server=on,wait=off",
             "-serial", f"file:{serial}", "-no-reboot",

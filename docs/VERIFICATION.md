@@ -86,7 +86,7 @@ reboot with the same synchronized image.
 ## Focused checks
 
 The repository also contains focused workflows for BusyBox reproduction,
-storage, networking, drivers, SapStudio, and Phipia capture. BusyBox binaries
+storage, networking, drivers, Media Editor, and Phipia capture. BusyBox binaries
 are built twice and compared, then checked against their ELF shape and syscall
 profiles. Network tests use an offline peer and retain packet captures when
 protocol-level inspection is needed.

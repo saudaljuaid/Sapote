@@ -268,7 +268,7 @@ static bool build_installed_database(
     uint8_t digest[PACKAGE_STATE_SHA256_BYTES];
 
     (void)memset(database, 0, INSTALLED_BYTES);
-    put_magic(database, "SAPIDB01");
+    put_magic(database, "PHIPDB01");
     put_u16(database + 8U, 1U);
     put_u16(database + 10U, PACKAGE_STATE_DATABASE_HEADER_BYTES);
     put_u64(database + 16U, INSTALLED_BYTES);

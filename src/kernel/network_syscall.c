@@ -23,7 +23,7 @@ struct syscall_context {
     bool active;
     uint8_t transfer[NETWORK_SYSCALL_MAX_TRANSFER];
     char primary_text[768];
-    char secondary_text[SAPFS_MAX_PATH + 1U];
+    char secondary_text[PHIPFS_MAX_PATH + 1U];
 };
 
 static struct syscall_context contexts[NETWORK_SYSCALL_MAX_CONTEXTS];
@@ -401,7 +401,7 @@ static enum network_syscall_status dispatch_operation(
             struct network_http_result result;
 
             if (request->primary_length >= sizeof(context->primary_text) ||
-                request->secondary_length > SAPFS_MAX_PATH ||
+                request->secondary_length > PHIPFS_MAX_PATH ||
                 !copy_text(context, request->primary_address,
                     request->primary_length, context->primary_text,
                     sizeof(context->primary_text)) ||

@@ -32,7 +32,7 @@ enum mock_event {
 struct mock_node {
     bool active;
     bool directory;
-    char path[SAPFS_MAX_PATH];
+    char path[PHIPFS_MAX_PATH];
     uint8_t bytes[MOCK_MAX_FILE_BYTES];
     size_t byte_count;
     uint16_t mode;
@@ -176,9 +176,9 @@ static void add_bootstrap_generation(
         (const uint8_t *)"lib", 3U, UINT16_C(0444));
 }
 
-struct sapfs_drive_info sapfs_drive(enum sapfs_volume volume)
+struct phipfs_drive_info phipfs_drive(enum phipfs_volume volume)
 {
-    struct sapfs_drive_info info;
+    struct phipfs_drive_info info;
     memset(&info, 0, sizeof(info));
     info.volume = volume;
     info.present = true;
@@ -189,28 +189,28 @@ struct sapfs_drive_info sapfs_drive(enum sapfs_volume volume)
     return info;
 }
 
-enum sapfs_status sapfs_sync(enum sapfs_volume volume)
+enum phipfs_status phipfs_sync(enum phipfs_volume volume)
 {
     (void)volume;
     event(MOCK_EVENT_SYNC);
     ++sync_attempts;
     if (fail_next_sync || sync_attempts == fail_sync_ordinal) {
         fail_next_sync = false;
-        return SAPFS_STATUS_WRITEBACK;
+        return PHIPFS_STATUS_WRITEBACK;
     }
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_stat_path(
-    enum sapfs_volume volume,
+enum phipfs_status phipfs_stat_path(
+    enum phipfs_volume volume,
     const char *path,
-    struct sapfs_stat *stat
+    struct phipfs_stat *stat
 )
 {
     (void)volume;
     size_t index = find_node(path);
     if (index == MOCK_MAX_NODES) {
-        return SAPFS_STATUS_NOT_FOUND;
+        return PHIPFS_STATUS_NOT_FOUND;
     }
     memset(stat, 0, sizeof(*stat));
     stat->size = nodes[index].byte_count;
@@ -219,24 +219,24 @@ enum sapfs_status sapfs_stat_path(
     stat->links = 1U;
     stat->directory = nodes[index].directory;
     stat->read_only = (nodes[index].mode & UINT16_C(0222)) == 0U;
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_open(
-    enum sapfs_volume volume,
+enum phipfs_status phipfs_open(
+    enum phipfs_volume volume,
     const char *path,
-    enum sapfs_access access,
-    sapfs_handle *handle
+    enum phipfs_access access,
+    phipfs_handle *handle
 )
 {
     (void)volume;
     (void)access;
     size_t node = find_node(path);
     if (node == MOCK_MAX_NODES) {
-        return SAPFS_STATUS_NOT_FOUND;
+        return PHIPFS_STATUS_NOT_FOUND;
     }
     if (nodes[node].directory) {
-        return SAPFS_STATUS_IS_DIRECTORY;
+        return PHIPFS_STATUS_IS_DIRECTORY;
     }
     for (size_t index = 0U; index < MOCK_MAX_HANDLES; ++index) {
         if (!handles[index].active) {
@@ -244,13 +244,13 @@ enum sapfs_status sapfs_open(
             handles[index].node = node;
             handles[index].offset = 0U;
             *handle = index + 1U;
-            return SAPFS_STATUS_OK;
+            return PHIPFS_STATUS_OK;
         }
     }
-    return SAPFS_STATUS_NO_HANDLES;
+    return PHIPFS_STATUS_NO_HANDLES;
 }
 
-static struct mock_handle *mock_handle(sapfs_handle handle)
+static struct mock_handle *mock_handle(phipfs_handle handle)
 {
     if (handle == 0U || handle > MOCK_MAX_HANDLES ||
         !handles[handle - 1U].active) {
@@ -259,18 +259,18 @@ static struct mock_handle *mock_handle(sapfs_handle handle)
     return &handles[handle - 1U];
 }
 
-enum sapfs_status sapfs_close(sapfs_handle handle)
+enum phipfs_status phipfs_close(phipfs_handle handle)
 {
     struct mock_handle *state = mock_handle(handle);
     if (state == NULL) {
-        return SAPFS_STATUS_STALE_HANDLE;
+        return PHIPFS_STATUS_STALE_HANDLE;
     }
     state->active = false;
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_read(
-    sapfs_handle handle,
+enum phipfs_status phipfs_read(
+    phipfs_handle handle,
     uint8_t *destination,
     size_t capacity,
     size_t *read_bytes
@@ -278,7 +278,7 @@ enum sapfs_status sapfs_read(
 {
     struct mock_handle *state = mock_handle(handle);
     if (state == NULL) {
-        return SAPFS_STATUS_STALE_HANDLE;
+        return PHIPFS_STATUS_STALE_HANDLE;
     }
     struct mock_node *node = &nodes[state->node];
     size_t available = node->byte_count - state->offset;
@@ -288,11 +288,11 @@ enum sapfs_status sapfs_read(
     }
     state->offset += count;
     *read_bytes = count;
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_write(
-    sapfs_handle handle,
+enum phipfs_status phipfs_write(
+    phipfs_handle handle,
     const uint8_t *source,
     size_t source_bytes,
     size_t *written_bytes
@@ -300,10 +300,10 @@ enum sapfs_status sapfs_write(
 {
     struct mock_handle *state = mock_handle(handle);
     if (state == NULL) {
-        return SAPFS_STATUS_STALE_HANDLE;
+        return PHIPFS_STATUS_STALE_HANDLE;
     }
     if (source_bytes > MOCK_MAX_FILE_BYTES - state->offset) {
-        return SAPFS_STATUS_FULL;
+        return PHIPFS_STATUS_FULL;
     }
     struct mock_node *node = &nodes[state->node];
     memcpy(node->bytes + state->offset, source, source_bytes);
@@ -315,7 +315,7 @@ enum sapfs_status sapfs_write(
     if (strcmp(node->path, PACKAGE_SERVICE_AUTHORITY_NEW_PATH) == 0) {
         event(MOCK_EVENT_WRITE_AUTHORITY);
     }
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
 static bool direct_child(
@@ -337,10 +337,10 @@ static bool direct_child(
     return true;
 }
 
-enum sapfs_status sapfs_list(
-    enum sapfs_volume volume,
+enum phipfs_status phipfs_list(
+    enum phipfs_volume volume,
     const char *path,
-    struct sapfs_list_entry *entries,
+    struct phipfs_list_entry *entries,
     size_t capacity,
     size_t *entry_count
 )
@@ -348,10 +348,10 @@ enum sapfs_status sapfs_list(
     (void)volume;
     size_t parent = find_node(path);
     if (parent == MOCK_MAX_NODES) {
-        return SAPFS_STATUS_NOT_FOUND;
+        return PHIPFS_STATUS_NOT_FOUND;
     }
     if (!nodes[parent].directory) {
-        return SAPFS_STATUS_NOT_DIRECTORY;
+        return PHIPFS_STATUS_NOT_DIRECTORY;
     }
     size_t count = 0U;
     for (size_t index = 0U; index < MOCK_MAX_NODES; ++index) {
@@ -361,7 +361,7 @@ enum sapfs_status sapfs_list(
             continue;
         }
         if (count == capacity) {
-            return SAPFS_STATUS_DIRECTORY_FULL;
+            return PHIPFS_STATUS_DIRECTORY_FULL;
         }
         memset(&entries[count], 0, sizeof(entries[count]));
         (void)snprintf(entries[count].name, sizeof(entries[count].name),
@@ -373,31 +373,31 @@ enum sapfs_status sapfs_list(
         ++count;
     }
     *entry_count = count;
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_create(enum sapfs_volume volume, const char *path)
+enum phipfs_status phipfs_create(enum phipfs_volume volume, const char *path)
 {
     (void)volume;
     if (find_node(path) != MOCK_MAX_NODES) {
-        return SAPFS_STATUS_EXISTS;
+        return PHIPFS_STATUS_EXISTS;
     }
     return add_node(path, false, NULL, 0U, 0U) ==
-        MOCK_MAX_NODES ? SAPFS_STATUS_FULL : SAPFS_STATUS_OK;
+        MOCK_MAX_NODES ? PHIPFS_STATUS_FULL : PHIPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_mkdir(enum sapfs_volume volume, const char *path)
+enum phipfs_status phipfs_mkdir(enum phipfs_volume volume, const char *path)
 {
     (void)volume;
     if (find_node(path) != MOCK_MAX_NODES) {
-        return SAPFS_STATUS_EXISTS;
+        return PHIPFS_STATUS_EXISTS;
     }
     return add_node(path, true, NULL, 0U, 0U) == MOCK_MAX_NODES ?
-        SAPFS_STATUS_FULL : SAPFS_STATUS_OK;
+        PHIPFS_STATUS_FULL : PHIPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_rename(
-    enum sapfs_volume volume,
+enum phipfs_status phipfs_rename(
+    enum phipfs_volume volume,
     const char *source,
     const char *destination
 )
@@ -405,10 +405,10 @@ enum sapfs_status sapfs_rename(
     (void)volume;
     size_t node = find_node(source);
     if (node == MOCK_MAX_NODES) {
-        return SAPFS_STATUS_NOT_FOUND;
+        return PHIPFS_STATUS_NOT_FOUND;
     }
     if (find_node(destination) != MOCK_MAX_NODES) {
-        return SAPFS_STATUS_EXISTS;
+        return PHIPFS_STATUS_EXISTS;
     }
     (void)snprintf(nodes[node].path, sizeof(nodes[node].path), "%s",
         destination);
@@ -417,45 +417,45 @@ enum sapfs_status sapfs_rename(
     } else if (strcmp(destination, PACKAGE_SERVICE_AUTHORITY_PATH) == 0) {
         event(MOCK_EVENT_RENAME_AUTHORITY);
     }
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_unlink(enum sapfs_volume volume, const char *path)
+enum phipfs_status phipfs_unlink(enum phipfs_volume volume, const char *path)
 {
     (void)volume;
     size_t node = find_node(path);
     if (node == MOCK_MAX_NODES) {
-        return SAPFS_STATUS_NOT_FOUND;
+        return PHIPFS_STATUS_NOT_FOUND;
     }
     if (nodes[node].directory) {
-        return SAPFS_STATUS_IS_DIRECTORY;
+        return PHIPFS_STATUS_IS_DIRECTORY;
     }
     if (strcmp(path, PACKAGE_SERVICE_JOURNAL_PATH) == 0) {
         event(MOCK_EVENT_UNLINK_JOURNAL);
     }
     nodes[node].active = false;
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_rmdir(enum sapfs_volume volume, const char *path)
+enum phipfs_status phipfs_rmdir(enum phipfs_volume volume, const char *path)
 {
     (void)volume;
     size_t node = find_node(path);
     if (node == MOCK_MAX_NODES) {
-        return SAPFS_STATUS_NOT_FOUND;
+        return PHIPFS_STATUS_NOT_FOUND;
     }
     if (!nodes[node].directory) {
-        return SAPFS_STATUS_NOT_DIRECTORY;
+        return PHIPFS_STATUS_NOT_DIRECTORY;
     }
     for (size_t index = 0U; index < MOCK_MAX_NODES; ++index) {
         const char *ignored;
         if (nodes[index].active && direct_child(path, nodes[index].path,
                 &ignored)) {
-            return SAPFS_STATUS_NOT_EMPTY;
+            return PHIPFS_STATUS_NOT_EMPTY;
         }
     }
     nodes[node].active = false;
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
 enum heap_status heap_allocate(uint64_t size, void **pointer)

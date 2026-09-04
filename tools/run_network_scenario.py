@@ -35,7 +35,7 @@ STORAGE = {
     "network-missing-linux-cat",
     "network-files",
     "network-notes",
-    "network-studio",
+    "network-media-editor",
     "network-persistence",
     "network-native",
     "native-https",
@@ -256,9 +256,9 @@ def run(args: argparse.Namespace) -> int:
         )
         wait_ready(ready, fixture)
         qemu.extend([
-            "-netdev", "dgram,id=sapnet,local.type=inet,local.host=127.0.0.1,local.port="
+            "-netdev", "dgram,id=phipnet,local.type=inet,local.host=127.0.0.1,local.port="
             f"{guest_port},remote.type=inet,remote.host=127.0.0.1,remote.port={peer_port}",
-            "-device", "virtio-net-pci,id=virtio-net0,netdev=sapnet,mac=52:54:00:12:34:56,disable-legacy=on,mrg_rxbuf=off",
+            "-device", "virtio-net-pci,id=virtio-net0,netdev=phipnet,mac=52:54:00:12:34:56,disable-legacy=on,mrg_rxbuf=off",
         ])
     if args.scenario == "network-link-down":
         if hasattr(socket, "AF_UNIX"):

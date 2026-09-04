@@ -19,7 +19,7 @@ MANIFEST_BYTES = 1024
 PACKAGE_HEADER_BYTES = 64
 RESOURCE_HEADER_BYTES = 32
 MAX_PACKAGE_RESOURCES = 13
-PACKAGE_MAGIC = b"SAPOSPK1"
+PACKAGE_MAGIC = b"PHIPPKG1"
 MANIFEST_MAGIC = b"PHIPIAA1"
 V3_HEADER_BYTES = 512
 V3_FILE_RECORD_BYTES = 256
@@ -450,7 +450,7 @@ def inspect_dynamic_catalog(report: dict[str, Any],
     if catalog is None or hashlib.sha256(catalog).hexdigest().upper() != \
             report["dynamic_catalog_sha256"]:
         raise PackageError("dynamic catalog resource or digest does not match")
-    if len(catalog) != 2048 or catalog[:8] != b"SAPDYNL1":
+    if len(catalog) != 2048 or catalog[:8] != b"PHIPDYN1":
         raise PackageError("dynamic catalog length or magic is invalid")
     version, header_bytes, total_bytes, count, entry_bytes = struct.unpack_from(
         "<HHIHH", catalog, 8)

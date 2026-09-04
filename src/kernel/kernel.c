@@ -40,12 +40,12 @@ static void initialize_package_trust(void)
 
 static void recover_package_state(void)
 {
-    enum sapfs_status filesystem_status = sapfs_mount(SAPFS_VOLUME_DATA);
+    enum phipfs_status filesystem_status = phipfs_mount(PHIPFS_VOLUME_DATA);
 
-    if (filesystem_status != SAPFS_STATUS_OK &&
-        filesystem_status != SAPFS_STATUS_ALREADY_MOUNTED) {
+    if (filesystem_status != PHIPFS_STATUS_OK &&
+        filesystem_status != PHIPFS_STATUS_ALREADY_MOUNTED) {
         console_write("Phipia: package recovery unavailable: ");
-        console_write(sapfs_status_string(filesystem_status));
+        console_write(phipfs_status_string(filesystem_status));
         console_putc('\n');
         return;
     }
@@ -62,7 +62,7 @@ static void recover_package_state(void)
         console_write("; state ");
         console_write(package_state_status_string(report.state_status));
         console_write("; filesystem ");
-        console_write(sapfs_status_string(report.filesystem_status));
+        console_write(phipfs_status_string(report.filesystem_status));
         console_putc('\n');
         console_panic("unsafe package transaction state");
     }
@@ -82,7 +82,7 @@ static void initialize_package_uploads(void)
         console_write("Phipia: package upload service unavailable: ");
         console_write(package_upload_status_string(status));
         console_write("; filesystem ");
-        console_write(sapfs_status_string(report.filesystem_status));
+        console_write(phipfs_status_string(report.filesystem_status));
         console_putc('\n');
     }
 }
@@ -156,7 +156,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 
     boot_ledger_publish(&installed_ledger);
     console_write("Phipia: Boot Ledger installed proof passed\n");
-    if (!sapfs_self_test(&filesystem_tests)) {
+    if (!phipfs_self_test(&filesystem_tests)) {
         console_panic("FAT32 store self-test failed");
     }
     console_write("Phipia: FAT32 store controls ");
@@ -168,7 +168,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
             installed_context.information.command_line_length)) {
         console_panic("invalid ext4 power-cut configuration");
     }
-    sapfs_initialize();
+    phipfs_initialize();
     if (installed_context.test_scenario == KERNEL_TEST_NORMAL) {
         recover_package_state();
         initialize_package_uploads();

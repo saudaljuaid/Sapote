@@ -42,7 +42,7 @@ enum package_service_status {
 
 struct package_service_report {
     enum package_service_status status;
-    enum sapfs_status filesystem_status;
+    enum phipfs_status filesystem_status;
     enum package_state_status state_status;
     enum package_state_recovery_choice choice;
     uint64_t generation;

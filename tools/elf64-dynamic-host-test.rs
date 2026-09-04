@@ -489,7 +489,7 @@ fn dependency_order_is_needed_stable_bounded_and_cycle_checked() {
 
 fn catalog(names: &[&str]) -> Vec<u8> {
     let mut bytes = vec![0u8; elf64_dynamic::CATALOG_BYTES];
-    bytes[..8].copy_from_slice(b"SAPDYNL1");
+    bytes[..8].copy_from_slice(b"PHIPDYN1");
     put_u16(&mut bytes, 8, 1);
     put_u16(&mut bytes, 10, 64);
     put_u32(&mut bytes, 12, elf64_dynamic::CATALOG_BYTES as u32);

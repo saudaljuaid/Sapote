@@ -14,9 +14,9 @@
 - Added Files and Notes over the writable FAT32 data volume.
 - Added the Camera application and double-buffered frame-provider interface.
   The default QEMU profile reports that no camera is connected.
-- Added the native SapStudio window with BMP import, timeline editing, project
+- Added the native Media Editor window with BMP import, timeline editing, project
   persistence, and BMP export.
-- Updated the vendored SapStudio source to commit
+- Updated the vendored Media Editor source to commit
   `034ba9336f6dee3cd5a524a42b740b41013ca852`.
 - Added high-resolution screenshots and a 25-second QEMU demonstration.
 

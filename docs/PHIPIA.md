@@ -12,7 +12,7 @@ converted into a compact album during the build and validated before display.
 Wallpaper restoration uses cached row copies so pointer and window movement do
 not repaint the complete screen.
 
-The 3D Dock contains Files, Terminal, Notes, SapStudio, Camera, Canvas, Store,
+The 3D Dock contains Files, Terminal, Notes, Media Editor, Camera, Canvas, Store,
 and Settings.
 It uses fixed-point arithmetic for icon magnification, neighbor movement,
 reflections, tooltips, press feedback, and launch bounce. Dark appearance
@@ -83,9 +83,9 @@ Terminal exposes Phipia's shell, filesystem and networking commands, and the
 measured BusyBox profiles. `fetch` displays the Phipia mark and basic system
 information.
 
-### SapStudio
+### Media Editor
 
-SapStudio provides a source browser, viewer, inspector, timeline, tracks,
+Media Editor provides a source browser, viewer, inspector, timeline, tracks,
 clips, and a playhead. It can import an uncompressed 24-bit BMP from the data
 volume, trim and save a project, and export the selected frame as a 24-bit BMP
 up to 320×180.
@@ -99,15 +99,15 @@ Phipia's integrated workspace exposes the BMP workflow described above.
 `make capture-phipia` boots the production ISO with separate system and data
 volumes. QMP sends pointer and keyboard input to the guest while the capture
 opens applications, changes the Dock appearance and wallpaper, edits a note,
-and uses SapStudio. Camera remains closed because the QEMU machine has no
+and uses Media Editor. Camera remains closed because the QEMU machine has no
 camera source.
 
-The same session saves the note and SapStudio project, exports a BMP, and
+The same session saves the note and Media Editor project, exports a BMP, and
 checks the retained data image after shutdown.
 
 ## Limits
 
 Phipia has six integrated applications, six windows, one supported display
-geometry, and printable-ASCII text. Its integrated Camera and SapStudio
+geometry, and printable-ASCII text. Its integrated Camera and Media Editor
 workspaces use the bounded capture and BMP workflows described above. Native
 applications use the separate window and input ABI.

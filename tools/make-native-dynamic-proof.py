@@ -39,7 +39,7 @@ def bounded_file(path: Path, field: str) -> bytes:
 
 def make_catalog(library: bytes) -> bytes:
     catalog = bytearray(CATALOG_BYTES)
-    catalog[:8] = b"SAPDYNL1"
+    catalog[:8] = b"PHIPDYN1"
     struct.pack_into("<HHIHH", catalog, 8, 1, 64, CATALOG_BYTES, 1,
                      CATALOG_ENTRY_BYTES)
     catalog[64:128] = text_field(LIBRARY_NAME, 64, "library SONAME")

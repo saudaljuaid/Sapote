@@ -23,7 +23,7 @@ checking the package's publisher signature, identity, version, ABI, dependency
 and conflict records, file layout, per-file digest, mode, kind, and SONAME.
 
 `package_trust.c` supplies the guest Ed25519 verifier and immutable key-table
-lookup. Its `SAPKEY01` platform boundary copies a canonical, bounded table into
+lookup. Its `PHIPKEY1` platform boundary copies a canonical, bounded table into
 caller-owned storage, checks the exact version, length, record size, reserved
 bytes, and record-table SHA-256, and then admits only sorted unique keys whose
 SHA-256 IDs match. The digest detects corruption; trust comes from the platform

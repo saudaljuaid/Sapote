@@ -53,115 +53,115 @@ static int path_index(const char *path)
     return path[at] - '0';
 }
 
-enum sapfs_status sapfs_mkdir(enum sapfs_volume volume, const char *path)
+enum phipfs_status phipfs_mkdir(enum phipfs_volume volume, const char *path)
 {
-    if (volume != SAPFS_VOLUME_DATA || path == NULL) {
-        return SAPFS_STATUS_INVALID_ARGUMENT;
+    if (volume != PHIPFS_VOLUME_DATA || path == NULL) {
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
     }
     if (path[0] != 'p' || path[1] != 'k' || path[2] != 'g') {
-        return SAPFS_STATUS_PATH;
+        return PHIPFS_STATUS_PATH;
     }
     if (directory_present) {
-        return SAPFS_STATUS_EXISTS;
+        return PHIPFS_STATUS_EXISTS;
     }
     directory_present = true;
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_unlink(enum sapfs_volume volume, const char *path)
+enum phipfs_status phipfs_unlink(enum phipfs_volume volume, const char *path)
 {
     int index = path_index(path);
 
-    if (volume != SAPFS_VOLUME_DATA || index < 0) {
-        return SAPFS_STATUS_INVALID_ARGUMENT;
+    if (volume != PHIPFS_VOLUME_DATA || index < 0) {
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
     }
     if (!files[index].present) {
-        return SAPFS_STATUS_NOT_FOUND;
+        return PHIPFS_STATUS_NOT_FOUND;
     }
     if (fail_next_unlink) {
         fail_next_unlink = false;
-        return SAPFS_STATUS_IO;
+        return PHIPFS_STATUS_IO;
     }
     if (files[index].open) {
-        return SAPFS_STATUS_BUSY;
+        return PHIPFS_STATUS_BUSY;
     }
     files[index].present = false;
     files[index].size = 0U;
     files[index].offset = 0U;
     ++unlink_count;
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_sync(enum sapfs_volume volume)
+enum phipfs_status phipfs_sync(enum phipfs_volume volume)
 {
-    if (volume != SAPFS_VOLUME_DATA) {
-        return SAPFS_STATUS_INVALID_ARGUMENT;
+    if (volume != PHIPFS_VOLUME_DATA) {
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
     }
     ++sync_count;
     if (fail_next_sync) {
         fail_next_sync = false;
-        return SAPFS_STATUS_IO;
+        return PHIPFS_STATUS_IO;
     }
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_create(enum sapfs_volume volume, const char *path)
+enum phipfs_status phipfs_create(enum phipfs_volume volume, const char *path)
 {
     int index = path_index(path);
 
-    if (volume != SAPFS_VOLUME_DATA || index < 0 || !directory_present) {
-        return SAPFS_STATUS_INVALID_ARGUMENT;
+    if (volume != PHIPFS_VOLUME_DATA || index < 0 || !directory_present) {
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
     }
     if (files[index].present) {
-        return SAPFS_STATUS_EXISTS;
+        return PHIPFS_STATUS_EXISTS;
     }
     files[index] = (struct mock_file){0};
     files[index].present = true;
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_open(
-    enum sapfs_volume volume,
+enum phipfs_status phipfs_open(
+    enum phipfs_volume volume,
     const char *path,
-    enum sapfs_access access,
-    sapfs_handle *handle
+    enum phipfs_access access,
+    phipfs_handle *handle
 )
 {
     int index = path_index(path);
 
-    if (volume != SAPFS_VOLUME_DATA || index < 0 || handle == NULL ||
-        (access != SAPFS_ACCESS_READ && access != SAPFS_ACCESS_WRITE)) {
-        return SAPFS_STATUS_INVALID_ARGUMENT;
+    if (volume != PHIPFS_VOLUME_DATA || index < 0 || handle == NULL ||
+        (access != PHIPFS_ACCESS_READ && access != PHIPFS_ACCESS_WRITE)) {
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
     }
     *handle = 0U;
     if (fail_next_open) {
         fail_next_open = false;
-        return SAPFS_STATUS_IO;
+        return PHIPFS_STATUS_IO;
     }
     if (!files[index].present) {
-        return SAPFS_STATUS_NOT_FOUND;
+        return PHIPFS_STATUS_NOT_FOUND;
     }
     if (files[index].open) {
-        return SAPFS_STATUS_BUSY;
+        return PHIPFS_STATUS_BUSY;
     }
     files[index].open = true;
-    files[index].offset = access == SAPFS_ACCESS_WRITE ? files[index].size : 0U;
-    *handle = (sapfs_handle)(index + 1);
-    return SAPFS_STATUS_OK;
+    files[index].offset = access == PHIPFS_ACCESS_WRITE ? files[index].size : 0U;
+    *handle = (phipfs_handle)(index + 1);
+    return PHIPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_close(sapfs_handle handle)
+enum phipfs_status phipfs_close(phipfs_handle handle)
 {
     if (handle == 0U || handle > PACKAGE_UPLOAD_SLOT_LIMIT ||
         !files[handle - 1U].open) {
-        return SAPFS_STATUS_STALE_HANDLE;
+        return PHIPFS_STATUS_STALE_HANDLE;
     }
     files[handle - 1U].open = false;
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_write(
-    sapfs_handle handle,
+enum phipfs_status phipfs_write(
+    phipfs_handle handle,
     const uint8_t *source,
     size_t source_bytes,
     size_t *written_bytes
@@ -170,20 +170,20 @@ enum sapfs_status sapfs_write(
     if (written_bytes == NULL || handle == 0U ||
         handle > PACKAGE_UPLOAD_SLOT_LIMIT || !files[handle - 1U].open ||
         (source == NULL && source_bytes != 0U)) {
-        return SAPFS_STATUS_INVALID_ARGUMENT;
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
     }
     struct mock_file *file = &files[handle - 1U];
     size_t allowed = source_bytes;
 
     *written_bytes = 0U;
     if (file->offset >= write_failure_at) {
-        return SAPFS_STATUS_IO;
+        return PHIPFS_STATUS_IO;
     }
     if (allowed > write_failure_at - file->offset) {
         allowed = write_failure_at - file->offset;
     }
     if (allowed > MOCK_FILE_BYTES - file->offset) {
-        return SAPFS_STATUS_FULL;
+        return PHIPFS_STATUS_FULL;
     }
     for (size_t index = 0U; index < allowed; ++index) {
         file->bytes[file->offset + index] = source[index];
@@ -193,11 +193,11 @@ enum sapfs_status sapfs_write(
         file->size = file->offset;
     }
     *written_bytes = allowed;
-    return allowed == source_bytes ? SAPFS_STATUS_OK : SAPFS_STATUS_IO;
+    return allowed == source_bytes ? PHIPFS_STATUS_OK : PHIPFS_STATUS_IO;
 }
 
-enum sapfs_status sapfs_pread(
-    sapfs_handle handle,
+enum phipfs_status phipfs_pread(
+    phipfs_handle handle,
     uint8_t *destination,
     size_t capacity,
     uint64_t offset,
@@ -207,7 +207,7 @@ enum sapfs_status sapfs_pread(
     if (read_bytes == NULL || handle == 0U ||
         handle > PACKAGE_UPLOAD_SLOT_LIMIT || !files[handle - 1U].open ||
         (destination == NULL && capacity != 0U)) {
-        return SAPFS_STATUS_INVALID_ARGUMENT;
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
     }
     struct mock_file *file = &files[handle - 1U];
     size_t available = offset < file->size ? file->size - (size_t)offset : 0U;
@@ -219,7 +219,7 @@ enum sapfs_status sapfs_pread(
         destination[index] = file->bytes[(size_t)offset + index];
     }
     *read_bytes = capacity;
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
 static int initialize_test(void)

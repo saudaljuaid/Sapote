@@ -3454,7 +3454,7 @@ struct http_response {
 struct http_sink {
     uint8_t *memory;
     size_t capacity;
-    sapfs_handle file;
+    phipfs_handle file;
     uint32_t total;
     bool file_backed;
 };
@@ -3803,10 +3803,10 @@ static enum network_status http_parse_headers(
 
 static bool destination_valid(const char *path)
 {
-    const size_t length = string_length_bounded(path, SAPFS_MAX_PATH);
+    const size_t length = string_length_bounded(path, PHIPFS_MAX_PATH);
     size_t component = 0U;
 
-    if (length == 0U || length > SAPFS_MAX_PATH || path[0] == '/') {
+    if (length == 0U || length > PHIPFS_MAX_PATH || path[0] == '/') {
         return false;
     }
     for (size_t index = 0U; index <= length; ++index) {
@@ -3827,15 +3827,15 @@ static bool destination_valid(const char *path)
 
 static bool download_sibling_paths(
     const char *destination,
-    char temporary[SAPFS_MAX_PATH + 1U],
-    char backup[SAPFS_MAX_PATH + 1U]
+    char temporary[PHIPFS_MAX_PATH + 1U],
+    char backup[PHIPFS_MAX_PATH + 1U]
 )
 {
-    const size_t length = string_length_bounded(destination, SAPFS_MAX_PATH);
+    const size_t length = string_length_bounded(destination, PHIPFS_MAX_PATH);
     size_t slash = SIZE_MAX;
     size_t prefix;
-    static const char temp_name[] = "SAPDL.TMP";
-    static const char backup_name[] = "SAPDL.BAK";
+    static const char temp_name[] = "PHIPDL.TMP";
+    static const char backup_name[] = "PHIPDL.BAK";
 
     for (size_t index = 0U; index < length; ++index) {
         if (destination[index] == '/') {
@@ -3843,8 +3843,8 @@ static bool download_sibling_paths(
         }
     }
     prefix = slash == SIZE_MAX ? 0U : slash + 1U;
-    if (prefix + sizeof(temp_name) - 1U > SAPFS_MAX_PATH ||
-        prefix + sizeof(backup_name) - 1U > SAPFS_MAX_PATH) {
+    if (prefix + sizeof(temp_name) - 1U > PHIPFS_MAX_PATH ||
+        prefix + sizeof(backup_name) - 1U > PHIPFS_MAX_PATH) {
         return false;
     }
     for (size_t index = 0U; index < prefix; ++index) {
@@ -3857,9 +3857,9 @@ static bool download_sibling_paths(
         !string_equal(destination, backup);
 }
 
-static enum network_status filesystem_status(enum sapfs_status status)
+static enum network_status filesystem_status(enum phipfs_status status)
 {
-    return status == SAPFS_STATUS_FULL ? NETWORK_STATUS_TOO_LARGE :
+    return status == PHIPFS_STATUS_FULL ? NETWORK_STATUS_TOO_LARGE :
         NETWORK_STATUS_FILESYSTEM;
 }
 
@@ -3870,15 +3870,15 @@ static enum network_status http_write_bytes(
 )
 {
     size_t written = 0U;
-    enum sapfs_status status;
+    enum phipfs_status status;
 
     if (sink == NULL || bytes == NULL ||
         length > NETWORK_HTTP_MAX_DOWNLOAD_BYTES - sink->total) {
         return NETWORK_STATUS_TOO_LARGE;
     }
     if (sink->file_backed) {
-        status = sapfs_write(sink->file, bytes, length, &written);
-        if (status != SAPFS_STATUS_OK || written != length) {
+        status = phipfs_write(sink->file, bytes, length, &written);
+        if (status != PHIPFS_STATUS_OK || written != length) {
             return filesystem_status(status);
         }
     } else {
@@ -4137,40 +4137,40 @@ static enum network_status finalize_download(
     const char *backup
 )
 {
-    struct sapfs_stat existing;
-    enum sapfs_status status = sapfs_stat_path(SAPFS_VOLUME_DATA,
+    struct phipfs_stat existing;
+    enum phipfs_status status = phipfs_stat_path(PHIPFS_VOLUME_DATA,
         destination, &existing);
-    bool had_existing = status == SAPFS_STATUS_OK;
+    bool had_existing = status == PHIPFS_STATUS_OK;
 
     if (had_existing && existing.directory) {
         return NETWORK_STATUS_FILESYSTEM;
     }
-    if (status != SAPFS_STATUS_OK && status != SAPFS_STATUS_NOT_FOUND) {
+    if (status != PHIPFS_STATUS_OK && status != PHIPFS_STATUS_NOT_FOUND) {
         return filesystem_status(status);
     }
-    (void)sapfs_unlink(SAPFS_VOLUME_DATA, backup);
-    if (had_existing && sapfs_rename(SAPFS_VOLUME_DATA, destination,
-            backup) != SAPFS_STATUS_OK) {
+    (void)phipfs_unlink(PHIPFS_VOLUME_DATA, backup);
+    if (had_existing && phipfs_rename(PHIPFS_VOLUME_DATA, destination,
+            backup) != PHIPFS_STATUS_OK) {
         return NETWORK_STATUS_FILESYSTEM;
     }
-    if (sapfs_rename(SAPFS_VOLUME_DATA, temporary, destination) !=
-            SAPFS_STATUS_OK) {
+    if (phipfs_rename(PHIPFS_VOLUME_DATA, temporary, destination) !=
+            PHIPFS_STATUS_OK) {
         if (had_existing) {
-            (void)sapfs_rename(SAPFS_VOLUME_DATA, backup, destination);
+            (void)phipfs_rename(PHIPFS_VOLUME_DATA, backup, destination);
         }
         return NETWORK_STATUS_FILESYSTEM;
     }
-    if (sapfs_sync(SAPFS_VOLUME_DATA) != SAPFS_STATUS_OK) {
+    if (phipfs_sync(PHIPFS_VOLUME_DATA) != PHIPFS_STATUS_OK) {
         if (had_existing) {
-            (void)sapfs_rename(SAPFS_VOLUME_DATA, destination, temporary);
-            (void)sapfs_rename(SAPFS_VOLUME_DATA, backup, destination);
-            (void)sapfs_sync(SAPFS_VOLUME_DATA);
+            (void)phipfs_rename(PHIPFS_VOLUME_DATA, destination, temporary);
+            (void)phipfs_rename(PHIPFS_VOLUME_DATA, backup, destination);
+            (void)phipfs_sync(PHIPFS_VOLUME_DATA);
         }
         return NETWORK_STATUS_FILESYSTEM;
     }
     if (had_existing) {
-        if (sapfs_unlink(SAPFS_VOLUME_DATA, backup) != SAPFS_STATUS_OK ||
-            sapfs_sync(SAPFS_VOLUME_DATA) != SAPFS_STATUS_OK) {
+        if (phipfs_unlink(PHIPFS_VOLUME_DATA, backup) != PHIPFS_STATUS_OK ||
+            phipfs_sync(PHIPFS_VOLUME_DATA) != PHIPFS_STATUS_OK) {
             return NETWORK_STATUS_FILESYSTEM;
         }
     }
@@ -4188,8 +4188,8 @@ enum network_status network_http_download(
 {
     char current[768];
     char seen[NETWORK_HTTP_MAX_REDIRECTS + 1U][768];
-    char temporary[SAPFS_MAX_PATH + 1U];
-    char backup[SAPFS_MAX_PATH + 1U];
+    char temporary[PHIPFS_MAX_PATH + 1U];
+    char backup[PHIPFS_MAX_PATH + 1U];
     uint64_t deadline;
     uint64_t request_started;
     size_t url_length;
@@ -4258,19 +4258,19 @@ enum network_status network_http_download(
                 response.status < 400U ? NETWORK_STATUS_OK :
                 NETWORK_STATUS_HTTP_FAILURE;
         }
-        (void)sapfs_unlink(SAPFS_VOLUME_DATA, temporary);
-        if (sapfs_create(SAPFS_VOLUME_DATA, temporary) != SAPFS_STATUS_OK) {
+        (void)phipfs_unlink(PHIPFS_VOLUME_DATA, temporary);
+        if (phipfs_create(PHIPFS_VOLUME_DATA, temporary) != PHIPFS_STATUS_OK) {
             (void)network_close(owner, stream.handle);
             return NETWORK_STATUS_FILESYSTEM;
         }
-        sapfs_handle file;
-        enum sapfs_status fs_status = sapfs_open(SAPFS_VOLUME_DATA, temporary,
-            SAPFS_ACCESS_WRITE, &file);
+        phipfs_handle file;
+        enum phipfs_status fs_status = phipfs_open(PHIPFS_VOLUME_DATA, temporary,
+            PHIPFS_ACCESS_WRITE, &file);
         struct http_sink sink = {
             NULL, 0U, file, 0U, true
         };
-        if (fs_status != SAPFS_STATUS_OK) {
-            (void)sapfs_unlink(SAPFS_VOLUME_DATA, temporary);
+        if (fs_status != PHIPFS_STATUS_OK) {
+            (void)phipfs_unlink(PHIPFS_VOLUME_DATA, temporary);
             (void)network_close(owner, stream.handle);
             return filesystem_status(fs_status);
         }
@@ -4284,26 +4284,26 @@ enum network_status network_http_download(
             status = http_connection_body(&stream, &sink);
         }
         result->body_bytes = sink.total;
-        fs_status = sapfs_close(file);
+        fs_status = phipfs_close(file);
         (void)network_tcp_shutdown(owner, stream.handle,
             NETWORK_DEFAULT_READ_TIMEOUT_NS);
         (void)network_close(owner, stream.handle);
-        if (status != NETWORK_STATUS_OK || fs_status != SAPFS_STATUS_OK ||
+        if (status != NETWORK_STATUS_OK || fs_status != PHIPFS_STATUS_OK ||
             (response.content_length_present &&
                 result->body_bytes != response.content_length)) {
-            (void)sapfs_unlink(SAPFS_VOLUME_DATA, temporary);
+            (void)phipfs_unlink(PHIPFS_VOLUME_DATA, temporary);
             return status != NETWORK_STATUS_OK ? status :
                 NETWORK_STATUS_FILESYSTEM;
         }
         const uint64_t synchronize_started = clock_monotonic_ns();
 
-        if (sapfs_sync(SAPFS_VOLUME_DATA) != SAPFS_STATUS_OK) {
-            (void)sapfs_unlink(SAPFS_VOLUME_DATA, temporary);
+        if (phipfs_sync(PHIPFS_VOLUME_DATA) != PHIPFS_STATUS_OK) {
+            (void)phipfs_unlink(PHIPFS_VOLUME_DATA, temporary);
             return NETWORK_STATUS_FILESYSTEM;
         }
         status = finalize_download(destination, temporary, backup);
         if (status != NETWORK_STATUS_OK) {
-            (void)sapfs_unlink(SAPFS_VOLUME_DATA, temporary);
+            (void)phipfs_unlink(PHIPFS_VOLUME_DATA, temporary);
             return status;
         }
         result->synchronize_ns = clock_monotonic_ns() - synchronize_started;

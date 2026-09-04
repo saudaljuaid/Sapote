@@ -518,8 +518,8 @@ static enum kernel_test_scenario scenario_from_value(
     if (token_equals(value, length, "network-notes")) {
         return KERNEL_TEST_NETWORK_NOTES;
     }
-    if (token_equals(value, length, "network-studio")) {
-        return KERNEL_TEST_NETWORK_STUDIO;
+    if (token_equals(value, length, "network-media-editor")) {
+        return KERNEL_TEST_NETWORK_MEDIA_EDITOR;
     }
     if (token_equals(value, length, "network-persistence")) {
         return KERNEL_TEST_NETWORK_PERSISTENCE;
@@ -768,7 +768,7 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
     case KERNEL_TEST_NETWORK_MISSING_LINUX_CAT: return UINT8_C(0x67);
     case KERNEL_TEST_NETWORK_FILES: return UINT8_C(0x68);
     case KERNEL_TEST_NETWORK_NOTES: return UINT8_C(0x69);
-    case KERNEL_TEST_NETWORK_STUDIO: return UINT8_C(0x6A);
+    case KERNEL_TEST_NETWORK_MEDIA_EDITOR: return UINT8_C(0x6A);
     case KERNEL_TEST_NETWORK_PERSISTENCE: return UINT8_C(0x6B);
     case KERNEL_TEST_NETWORK_SOCKET_ISOLATION: return UINT8_C(0x6C);
     case KERNEL_TEST_NETWORK_TCP_LISTEN: return UINT8_C(0x6D);
@@ -4737,7 +4737,7 @@ void kernel_test_run(
     case KERNEL_TEST_NETWORK_MISSING_LINUX_CAT:
     case KERNEL_TEST_NETWORK_FILES:
     case KERNEL_TEST_NETWORK_NOTES:
-    case KERNEL_TEST_NETWORK_STUDIO:
+    case KERNEL_TEST_NETWORK_MEDIA_EDITOR:
     case KERNEL_TEST_NETWORK_PERSISTENCE:
     case KERNEL_TEST_NETWORK_SOCKET_ISOLATION:
     case KERNEL_TEST_NETWORK_TCP_LISTEN:
@@ -4802,9 +4802,9 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
     struct phipia_ext4_mount_diagnostic mount_diagnostic = {0};
     struct phipia_ext4_recovery_report clean_remount = {0};
     struct phipia_ext4_recovery_report recovery = {0};
-    const struct sapfs_drive_info drive = sapfs_drive(SAPFS_VOLUME_SYSTEM);
-    struct sapfs_stat stat = {0};
-    sapfs_handle handle = 0U;
+    const struct phipfs_drive_info drive = phipfs_drive(PHIPFS_VOLUME_SYSTEM);
+    struct phipfs_stat stat = {0};
+    phipfs_handle handle = 0U;
     uint8_t bytes[sizeof(expected)] = {0};
     uint8_t appended = 0U;
     size_t read_bytes = 0U;
@@ -4812,7 +4812,7 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
     bool contents_match = true;
     bool transaction_already_visible = false;
     const bool power_cut = ext4_backend_test_power_cut_configured();
-    const uint64_t before = sapfs_completion_count(SAPFS_VOLUME_SYSTEM);
+    const uint64_t before = phipfs_completion_count(PHIPFS_VOLUME_SYSTEM);
 
     if (active_scenario != KERNEL_TEST_EXT4_RECOVERY) {
         kernel_test_fail("ext4 recovery completion used outside its scenario");
@@ -4835,13 +4835,13 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
         kernel_test_fail("ext4 namespace proof skips are invalid");
     }
     if (!drive.present || !drive.mounted || !drive.read_only || !drive.healthy) {
-        if (!ext4_backend_mount_diagnostic(SAPFS_VOLUME_SYSTEM,
+        if (!ext4_backend_mount_diagnostic(PHIPFS_VOLUME_SYSTEM,
                 &mount_diagnostic)) {
             kernel_test_fail("ext4 mount diagnostic is unavailable");
         }
         console_write("ST EXT4 RECOVERY mount status ");
         console_write_u64((uint64_t)ext4_backend_last_mount_status(
-            SAPFS_VOLUME_SYSTEM));
+            PHIPFS_VOLUME_SYSTEM));
         console_write(" begin ");
         console_write_u64((uint64_t)mount_diagnostic.begin_status);
         console_write(" rust ");
@@ -4860,7 +4860,7 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
         console_putc('\n');
         kernel_test_fail("ext4 recovered drive state is invalid");
     }
-    if (!ext4_backend_recovery_report(SAPFS_VOLUME_SYSTEM, &recovery)) {
+    if (!ext4_backend_recovery_report(PHIPFS_VOLUME_SYSTEM, &recovery)) {
         kernel_test_fail("ext4 recovery report is unavailable");
     }
     if (recovery.performed) {
@@ -4877,13 +4877,13 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
         recovery.consumed_slots != 0U) {
         kernel_test_fail("clean ext4 mount reported journal recovery");
     }
-    if (sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "system/README.TXT", &stat) !=
-            SAPFS_STATUS_OK || stat.directory || !stat.read_only ||
+    if (phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "system/README.TXT", &stat) !=
+            PHIPFS_STATUS_OK || stat.directory || !stat.read_only ||
         (stat.size != sizeof(expected) - 1U && stat.size != UINT64_C(4097)) ||
-        sapfs_open(SAPFS_VOLUME_SYSTEM, "system/README.TXT",
-            SAPFS_ACCESS_READ, &handle) != SAPFS_STATUS_OK ||
-        sapfs_pread(handle, bytes, sizeof(expected) - 1U, 0U, &read_bytes) !=
-            SAPFS_STATUS_OK || read_bytes != sizeof(expected) - 1U) {
+        phipfs_open(PHIPFS_VOLUME_SYSTEM, "system/README.TXT",
+            PHIPFS_ACCESS_READ, &handle) != PHIPFS_STATUS_OK ||
+        phipfs_pread(handle, bytes, sizeof(expected) - 1U, 0U, &read_bytes) !=
+            PHIPFS_STATUS_OK || read_bytes != sizeof(expected) - 1U) {
         kernel_test_fail("ext4 recovered namespace could not be read");
     }
     transaction_already_visible = stat.size == UINT64_C(4097);
@@ -4894,156 +4894,156 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
     }
     if (!contents_match ||
         (transaction_already_visible &&
-            (sapfs_pread(handle, &appended, sizeof(appended), UINT64_C(4096),
-                &read_bytes) != SAPFS_STATUS_OK || read_bytes != 1U ||
+            (phipfs_pread(handle, &appended, sizeof(appended), UINT64_C(4096),
+                &read_bytes) != PHIPFS_STATUS_OK || read_bytes != 1U ||
              appended != transaction_byte)) ||
-        sapfs_close(handle) != SAPFS_STATUS_OK ||
-        sapfs_close(handle) != SAPFS_STATUS_STALE_HANDLE ||
-        sapfs_completion_count(SAPFS_VOLUME_SYSTEM) <= before) {
+        phipfs_close(handle) != PHIPFS_STATUS_OK ||
+        phipfs_close(handle) != PHIPFS_STATUS_STALE_HANDLE ||
+        phipfs_completion_count(PHIPFS_VOLUME_SYSTEM) <= before) {
         kernel_test_fail("ext4 recovery read leaked or changed data");
     }
-    if (sapfs_open(SAPFS_VOLUME_SYSTEM, "system/README.TXT",
-            SAPFS_ACCESS_WRITE, &handle) != SAPFS_STATUS_READ_ONLY ||
-        sapfs_create(SAPFS_VOLUME_SYSTEM, "system/ATTACK.TXT") !=
-            SAPFS_STATUS_READ_ONLY) {
+    if (phipfs_open(PHIPFS_VOLUME_SYSTEM, "system/README.TXT",
+            PHIPFS_ACCESS_WRITE, &handle) != PHIPFS_STATUS_READ_ONLY ||
+        phipfs_create(PHIPFS_VOLUME_SYSTEM, "system/ATTACK.TXT") !=
+            PHIPFS_STATUS_READ_ONLY) {
         kernel_test_fail("ext4 recovery escaped the read-only VFS gate");
     }
-    if (sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK) {
+    if (phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK) {
         kernel_test_fail("clean ext4 sync failed");
     }
     if (!power_cut && !transaction_already_visible) {
         if (!ext4_backend_test_fail_storage_once(3U) ||
-            ext4_backend_transaction_probe(SAPFS_VOLUME_SYSTEM,
+            ext4_backend_transaction_probe(PHIPFS_VOLUME_SYSTEM,
                 "system/README.TXT", UINT64_C(4096), &transaction_byte,
-                sizeof(transaction_byte), &written_bytes) != SAPFS_STATUS_IO ||
+                sizeof(transaction_byte), &written_bytes) != PHIPFS_STATUS_IO ||
             !ext4_backend_test_storage_failure_observed(
                 PHIPIA_EXT4_TEST_STORAGE_WRITE) ||
             !ext4_backend_test_fail_storage_once(3U) ||
-            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_IO ||
+            phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_IO ||
             !ext4_backend_test_storage_failure_observed(
                 PHIPIA_EXT4_TEST_STORAGE_FLUSH)) {
             kernel_test_fail("ext4 pending allocation failure retry is invalid");
         }
     }
     if (!transaction_already_visible &&
-        (ext4_backend_transaction_probe(SAPFS_VOLUME_SYSTEM,
+        (ext4_backend_transaction_probe(PHIPFS_VOLUME_SYSTEM,
             "system/README.TXT", UINT64_C(4096), &transaction_byte,
-            sizeof(transaction_byte), &written_bytes) != SAPFS_STATUS_OK ||
+            sizeof(transaction_byte), &written_bytes) != PHIPFS_STATUS_OK ||
          written_bytes != sizeof(transaction_byte))) {
         kernel_test_fail("ext4 private journal transaction probe failed");
     }
     if (!power_cut && !transaction_already_visible) {
         if (!ext4_backend_test_fail_storage_once(1U) ||
-            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_IO ||
+            phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_IO ||
             !ext4_backend_test_storage_failure_observed(
                 PHIPIA_EXT4_TEST_STORAGE_WRITE) ||
             !ext4_backend_test_fail_storage_once(2U) ||
-            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_IO ||
+            phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_IO ||
             !ext4_backend_test_storage_failure_observed(
                 PHIPIA_EXT4_TEST_STORAGE_FLUSH)) {
             kernel_test_fail("ext4 sync retry is invalid");
         }
     }
-    if (sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
-        sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "system/README.TXT", &stat) !=
-            SAPFS_STATUS_OK || stat.size != UINT64_C(4097) ||
-        sapfs_open(SAPFS_VOLUME_SYSTEM, "system/README.TXT",
-            SAPFS_ACCESS_READ, &handle) != SAPFS_STATUS_OK ||
-        sapfs_pread(handle, &appended, sizeof(appended), UINT64_C(4096),
-            &read_bytes) != SAPFS_STATUS_OK || read_bytes != 1U ||
+    if (phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
+        phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "system/README.TXT", &stat) !=
+            PHIPFS_STATUS_OK || stat.size != UINT64_C(4097) ||
+        phipfs_open(PHIPFS_VOLUME_SYSTEM, "system/README.TXT",
+            PHIPFS_ACCESS_READ, &handle) != PHIPFS_STATUS_OK ||
+        phipfs_pread(handle, &appended, sizeof(appended), UINT64_C(4096),
+            &read_bytes) != PHIPFS_STATUS_OK || read_bytes != 1U ||
         appended != transaction_byte ||
-        sapfs_close(handle) != SAPFS_STATUS_OK ||
-        sapfs_open(SAPFS_VOLUME_SYSTEM, "system/README.TXT",
-            SAPFS_ACCESS_WRITE, &handle) != SAPFS_STATUS_READ_ONLY) {
+        phipfs_close(handle) != PHIPFS_STATUS_OK ||
+        phipfs_open(PHIPFS_VOLUME_SYSTEM, "system/README.TXT",
+            PHIPFS_ACCESS_WRITE, &handle) != PHIPFS_STATUS_READ_ONLY) {
         kernel_test_fail("ext4 private journal transaction probe failed");
     }
     if (!power_cut && !transaction_already_visible) {
-        if (ext4_backend_truncate_probe(SAPFS_VOLUME_SYSTEM,
+        if (ext4_backend_truncate_probe(PHIPFS_VOLUME_SYSTEM,
                 "system/README.TXT", sizeof(expected) - 1U) !=
-                SAPFS_STATUS_OK ||
-            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
-            sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "system/README.TXT", &stat) !=
-                SAPFS_STATUS_OK || stat.size != sizeof(expected) - 1U ||
-            sapfs_open(SAPFS_VOLUME_SYSTEM, "system/README.TXT",
-                SAPFS_ACCESS_READ, &handle) != SAPFS_STATUS_OK ||
-            sapfs_pread(handle, &appended, sizeof(appended), UINT64_C(4096),
-                &read_bytes) != SAPFS_STATUS_OK || read_bytes != 0U ||
-            sapfs_close(handle) != SAPFS_STATUS_OK) {
+                PHIPFS_STATUS_OK ||
+            phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
+            phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "system/README.TXT", &stat) !=
+                PHIPFS_STATUS_OK || stat.size != sizeof(expected) - 1U ||
+            phipfs_open(PHIPFS_VOLUME_SYSTEM, "system/README.TXT",
+                PHIPFS_ACCESS_READ, &handle) != PHIPFS_STATUS_OK ||
+            phipfs_pread(handle, &appended, sizeof(appended), UINT64_C(4096),
+                &read_bytes) != PHIPFS_STATUS_OK || read_bytes != 0U ||
+            phipfs_close(handle) != PHIPFS_STATUS_OK) {
             kernel_test_fail("ext4 private truncate revocation probe failed");
         }
         written_bytes = 0U;
-        if (ext4_backend_transaction_probe(SAPFS_VOLUME_SYSTEM,
+        if (ext4_backend_transaction_probe(PHIPFS_VOLUME_SYSTEM,
                 "system/README.TXT", UINT64_C(4096), &transaction_byte,
-                sizeof(transaction_byte), &written_bytes) != SAPFS_STATUS_OK ||
+                sizeof(transaction_byte), &written_bytes) != PHIPFS_STATUS_OK ||
             written_bytes != sizeof(transaction_byte) ||
-            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
-            sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "system/README.TXT", &stat) !=
-                SAPFS_STATUS_OK || stat.size != UINT64_C(4097)) {
+            phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
+            phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "system/README.TXT", &stat) !=
+                PHIPFS_STATUS_OK || stat.size != UINT64_C(4097)) {
             kernel_test_fail("ext4 post-truncate marker re-arm failed");
         }
-        if (ext4_backend_create_file_probe(SAPFS_VOLUME_SYSTEM,
-                "data/user/JRNLPROBE.TMP") != SAPFS_STATUS_OK ||
-            sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.TMP",
-                &stat) != SAPFS_STATUS_OK || stat.directory || stat.size != 0U ||
-            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
-            ext4_backend_link_file_probe(SAPFS_VOLUME_SYSTEM,
+        if (ext4_backend_create_file_probe(PHIPFS_VOLUME_SYSTEM,
+                "data/user/JRNLPROBE.TMP") != PHIPFS_STATUS_OK ||
+            phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.TMP",
+                &stat) != PHIPFS_STATUS_OK || stat.directory || stat.size != 0U ||
+            phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
+            ext4_backend_link_file_probe(PHIPFS_VOLUME_SYSTEM,
                 "data/user/JRNLPROBE.TMP", "data/user/JRNLPROBE.LNK") !=
-                    SAPFS_STATUS_OK ||
-            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
-            ext4_backend_unlink_file_probe(SAPFS_VOLUME_SYSTEM,
-                "data/user/JRNLPROBE.TMP") != SAPFS_STATUS_OK ||
-            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
-            sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.TMP",
-                &stat) != SAPFS_STATUS_NOT_FOUND ||
-            sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.LNK",
-                &stat) != SAPFS_STATUS_OK || stat.directory || stat.size != 0U ||
-            ext4_backend_rename_probe(SAPFS_VOLUME_SYSTEM,
+                    PHIPFS_STATUS_OK ||
+            phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
+            ext4_backend_unlink_file_probe(PHIPFS_VOLUME_SYSTEM,
+                "data/user/JRNLPROBE.TMP") != PHIPFS_STATUS_OK ||
+            phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
+            phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.TMP",
+                &stat) != PHIPFS_STATUS_NOT_FOUND ||
+            phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.LNK",
+                &stat) != PHIPFS_STATUS_OK || stat.directory || stat.size != 0U ||
+            ext4_backend_rename_probe(PHIPFS_VOLUME_SYSTEM,
                 "data/user/JRNLPROBE.LNK", "data/user/JRNLPROBE.REN") !=
-                    SAPFS_STATUS_OK ||
-            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
-            sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.LNK",
-                &stat) != SAPFS_STATUS_NOT_FOUND ||
-            sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.REN",
-                &stat) != SAPFS_STATUS_OK || stat.directory || stat.size != 0U ||
-            ext4_backend_unlink_file_probe(SAPFS_VOLUME_SYSTEM,
-                "data/user/JRNLPROBE.REN") != SAPFS_STATUS_OK ||
-            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
-            sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.REN",
-                &stat) != SAPFS_STATUS_NOT_FOUND ||
-            ext4_backend_create_directory_probe(SAPFS_VOLUME_SYSTEM,
-                "data/user/JRNLPROBE.DIR") != SAPFS_STATUS_OK ||
-            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
-            sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.DIR",
-                &stat) != SAPFS_STATUS_OK || !stat.directory ||
-            ext4_backend_rename_probe(SAPFS_VOLUME_SYSTEM,
+                    PHIPFS_STATUS_OK ||
+            phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
+            phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.LNK",
+                &stat) != PHIPFS_STATUS_NOT_FOUND ||
+            phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.REN",
+                &stat) != PHIPFS_STATUS_OK || stat.directory || stat.size != 0U ||
+            ext4_backend_unlink_file_probe(PHIPFS_VOLUME_SYSTEM,
+                "data/user/JRNLPROBE.REN") != PHIPFS_STATUS_OK ||
+            phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
+            phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.REN",
+                &stat) != PHIPFS_STATUS_NOT_FOUND ||
+            ext4_backend_create_directory_probe(PHIPFS_VOLUME_SYSTEM,
+                "data/user/JRNLPROBE.DIR") != PHIPFS_STATUS_OK ||
+            phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
+            phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.DIR",
+                &stat) != PHIPFS_STATUS_OK || !stat.directory ||
+            ext4_backend_rename_probe(PHIPFS_VOLUME_SYSTEM,
                 "data/user/JRNLPROBE.DIR", "data/user/JRNLPROBE.RDR") !=
-                    SAPFS_STATUS_OK ||
-            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
-            sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.DIR",
-                &stat) != SAPFS_STATUS_NOT_FOUND ||
-            sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.RDR",
-                &stat) != SAPFS_STATUS_OK || !stat.directory ||
-            ext4_backend_create_file_probe(SAPFS_VOLUME_SYSTEM,
-                "data/user/JRNLPROBE.RDR/CHILD.TMP") != SAPFS_STATUS_OK ||
-            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
-            ext4_backend_remove_directory_probe(SAPFS_VOLUME_SYSTEM,
-                "data/user/JRNLPROBE.RDR") != SAPFS_STATUS_NOT_EMPTY ||
-            sapfs_stat_path(SAPFS_VOLUME_SYSTEM,
+                    PHIPFS_STATUS_OK ||
+            phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
+            phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.DIR",
+                &stat) != PHIPFS_STATUS_NOT_FOUND ||
+            phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.RDR",
+                &stat) != PHIPFS_STATUS_OK || !stat.directory ||
+            ext4_backend_create_file_probe(PHIPFS_VOLUME_SYSTEM,
+                "data/user/JRNLPROBE.RDR/CHILD.TMP") != PHIPFS_STATUS_OK ||
+            phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
+            ext4_backend_remove_directory_probe(PHIPFS_VOLUME_SYSTEM,
+                "data/user/JRNLPROBE.RDR") != PHIPFS_STATUS_NOT_EMPTY ||
+            phipfs_stat_path(PHIPFS_VOLUME_SYSTEM,
                 "data/user/JRNLPROBE.RDR/CHILD.TMP", &stat) !=
-                    SAPFS_STATUS_OK || stat.directory ||
-            ext4_backend_unlink_file_probe(SAPFS_VOLUME_SYSTEM,
-                "data/user/JRNLPROBE.RDR/CHILD.TMP") != SAPFS_STATUS_OK ||
-            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
-            ext4_backend_remove_directory_probe(SAPFS_VOLUME_SYSTEM,
-                "data/user/JRNLPROBE.RDR") != SAPFS_STATUS_OK ||
-            sapfs_sync(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
-            sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.RDR",
-                &stat) != SAPFS_STATUS_NOT_FOUND) {
+                    PHIPFS_STATUS_OK || stat.directory ||
+            ext4_backend_unlink_file_probe(PHIPFS_VOLUME_SYSTEM,
+                "data/user/JRNLPROBE.RDR/CHILD.TMP") != PHIPFS_STATUS_OK ||
+            phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
+            ext4_backend_remove_directory_probe(PHIPFS_VOLUME_SYSTEM,
+                "data/user/JRNLPROBE.RDR") != PHIPFS_STATUS_OK ||
+            phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
+            phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.RDR",
+                &stat) != PHIPFS_STATUS_NOT_FOUND) {
             kernel_test_fail("ext4 private namespace journal probe failed");
         }
     }
-    if (sapfs_unmount(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
-        sapfs_drive(SAPFS_VOLUME_SYSTEM).mounted ||
+    if (phipfs_unmount(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
+        phipfs_drive(PHIPFS_VOLUME_SYSTEM).mounted ||
         !nvme_filesystem_session_resources_released() ||
         heap_verify() != HEAP_STATUS_OK) {
         kernel_test_fail("ext4 recovered mount did not release cleanly");
@@ -5051,21 +5051,21 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
     const struct heap_state heap_before_remount = heap_get_state();
     const struct frame_allocator_stats frames_before_remount =
         frame_allocator_get_stats();
-    if (sapfs_mount(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
-        !ext4_backend_recovery_report(SAPFS_VOLUME_SYSTEM, &clean_remount) ||
+    if (phipfs_mount(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
+        !ext4_backend_recovery_report(PHIPFS_VOLUME_SYSTEM, &clean_remount) ||
         clean_remount.performed || clean_remount.transactions != 0U ||
         clean_remount.replayed_blocks != 0U ||
         clean_remount.consumed_slots != 0U ||
-        sapfs_stat_path(SAPFS_VOLUME_SYSTEM, "system/README.TXT", &stat) !=
-            SAPFS_STATUS_OK || stat.directory ||
+        phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "system/README.TXT", &stat) !=
+            PHIPFS_STATUS_OK || stat.directory ||
         stat.size != UINT64_C(4097) ||
-        sapfs_open(SAPFS_VOLUME_SYSTEM, "system/README.TXT",
-            SAPFS_ACCESS_READ, &handle) != SAPFS_STATUS_OK ||
-        sapfs_pread(handle, &appended, sizeof(appended), UINT64_C(4096),
-            &read_bytes) != SAPFS_STATUS_OK || read_bytes != 1U ||
-        appended != transaction_byte || sapfs_close(handle) != SAPFS_STATUS_OK ||
-        sapfs_unmount(SAPFS_VOLUME_SYSTEM) != SAPFS_STATUS_OK ||
-        sapfs_drive(SAPFS_VOLUME_SYSTEM).mounted ||
+        phipfs_open(PHIPFS_VOLUME_SYSTEM, "system/README.TXT",
+            PHIPFS_ACCESS_READ, &handle) != PHIPFS_STATUS_OK ||
+        phipfs_pread(handle, &appended, sizeof(appended), UINT64_C(4096),
+            &read_bytes) != PHIPFS_STATUS_OK || read_bytes != 1U ||
+        appended != transaction_byte || phipfs_close(handle) != PHIPFS_STATUS_OK ||
+        phipfs_unmount(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
+        phipfs_drive(PHIPFS_VOLUME_SYSTEM).mounted ||
         !nvme_filesystem_session_resources_released() ||
         heap_verify() != HEAP_STATUS_OK ||
         paging_verify() != PAGING_STATUS_OK) {
@@ -5109,8 +5109,8 @@ _Noreturn void kernel_test_complete_native(void)
 {
     static const uint8_t expected[] = "native ABI v1\n";
     struct native_process_result result = { 0 };
-    struct sapfs_stat output;
-    sapfs_handle file;
+    struct phipfs_stat output;
+    phipfs_handle file;
     uint8_t bytes[sizeof(expected) - 1U];
     size_t read_bytes = 0U;
     bool content_matches = true;
@@ -5165,18 +5165,18 @@ _Noreturn void kernel_test_complete_native(void)
     console_write_u64(result.context_cycles_with_fpu /
         result.context_transition_samples);
     console_putc('\n');
-    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "NATIVET/FOUND.TXT", &output) !=
-            SAPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
-        sapfs_open(SAPFS_VOLUME_DATA, "NATIVET/FOUND.TXT", SAPFS_ACCESS_READ,
-            &file) != SAPFS_STATUS_OK ||
-        sapfs_read(file, bytes, sizeof(bytes), &read_bytes) != SAPFS_STATUS_OK ||
+    if (phipfs_stat_path(PHIPFS_VOLUME_DATA, "NATIVET/FOUND.TXT", &output) !=
+            PHIPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
+        phipfs_open(PHIPFS_VOLUME_DATA, "NATIVET/FOUND.TXT", PHIPFS_ACCESS_READ,
+            &file) != PHIPFS_STATUS_OK ||
+        phipfs_read(file, bytes, sizeof(bytes), &read_bytes) != PHIPFS_STATUS_OK ||
         read_bytes != sizeof(bytes)) {
         kernel_test_fail("native Ring 3 file result is missing");
     }
     for (size_t index = 0U; index < sizeof(bytes); ++index) {
         content_matches = content_matches && bytes[index] == expected[index];
     }
-    if (sapfs_close(file) != SAPFS_STATUS_OK || !content_matches) {
+    if (phipfs_close(file) != PHIPFS_STATUS_OK || !content_matches) {
         kernel_test_fail("native Ring 3 file result is wrong");
     }
     console_write("Phipia: native general loader, SDK, TLS, threads and FPU passed\n");
@@ -5188,8 +5188,8 @@ _Noreturn void kernel_test_complete_native_lua(void)
     static const uint8_t expected[] =
         "input=phipia\nsum=5050\nmath=ok\n";
     struct native_process_result result;
-    struct sapfs_stat output;
-    sapfs_handle file;
+    struct phipfs_stat output;
+    phipfs_handle file;
     uint8_t bytes[sizeof(expected) - 1U];
     size_t read_bytes = 0U;
     bool content_matches = true;
@@ -5203,19 +5203,19 @@ _Noreturn void kernel_test_complete_native_lua(void)
         !native_process_resources_released()) {
         kernel_test_fail("Lua did not exit with a clean resource census");
     }
-    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "LUA/RESULT.TXT", &output) !=
-            SAPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
-        sapfs_open(SAPFS_VOLUME_DATA, "LUA/RESULT.TXT", SAPFS_ACCESS_READ,
-            &file) != SAPFS_STATUS_OK ||
-        sapfs_read(file, bytes, sizeof(bytes), &read_bytes) != SAPFS_STATUS_OK ||
+    if (phipfs_stat_path(PHIPFS_VOLUME_DATA, "LUA/RESULT.TXT", &output) !=
+            PHIPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
+        phipfs_open(PHIPFS_VOLUME_DATA, "LUA/RESULT.TXT", PHIPFS_ACCESS_READ,
+            &file) != PHIPFS_STATUS_OK ||
+        phipfs_read(file, bytes, sizeof(bytes), &read_bytes) != PHIPFS_STATUS_OK ||
         read_bytes != sizeof(bytes)) {
         kernel_test_fail("Lua result file is missing");
     }
     for (size_t index = 0U; index < sizeof(bytes); ++index) {
         content_matches = content_matches && bytes[index] == expected[index];
     }
-    if (sapfs_close(file) != SAPFS_STATUS_OK || !content_matches ||
-        sapfs_sync(SAPFS_VOLUME_DATA) != SAPFS_STATUS_OK) {
+    if (phipfs_close(file) != PHIPFS_STATUS_OK || !content_matches ||
+        phipfs_sync(PHIPFS_VOLUME_DATA) != PHIPFS_STATUS_OK) {
         kernel_test_fail("Lua result file is wrong or could not be synchronized");
     }
     console_write("Phipia: upstream Lua used stdin, Data, math and stdout\n");
@@ -5227,20 +5227,20 @@ _Noreturn void kernel_test_complete_native_sqlite(void)
     static const uint8_t expected[] =
         "rows=3\nsum=66\nintegrity=ok\n";
     struct native_process_result result;
-    struct sapfs_stat database;
-    struct sapfs_stat journal;
-    struct sapfs_stat output;
-    sapfs_handle file;
+    struct phipfs_stat database;
+    struct phipfs_stat journal;
+    struct phipfs_stat output;
+    phipfs_handle file;
     uint8_t bytes[sizeof(expected) - 1U];
     size_t read_bytes = 0U;
     bool content_matches = true;
-    const enum sapfs_status before = sapfs_stat_path(SAPFS_VOLUME_DATA,
+    const enum phipfs_status before = phipfs_stat_path(PHIPFS_VOLUME_DATA,
         "SQLITE/PORT.DB", &database);
 
     if (active_scenario != KERNEL_TEST_NATIVE_SQLITE) {
         kernel_test_fail("SQLite completion used outside its scenario");
     }
-    if (before != SAPFS_STATUS_OK && before != SAPFS_STATUS_NOT_FOUND) {
+    if (before != PHIPFS_STATUS_OK && before != PHIPFS_STATUS_NOT_FOUND) {
         kernel_test_fail("SQLite database census failed before launch");
     }
     if (native_process_launch("SQLITE.MAN", &result) != NATIVE_PROCESS_OK ||
@@ -5249,33 +5249,33 @@ _Noreturn void kernel_test_complete_native_sqlite(void)
         !native_process_resources_released()) {
         kernel_test_fail("SQLite did not exit with a clean resource census");
     }
-    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "SQLITE/PORT.JRN", &journal) !=
-            SAPFS_STATUS_NOT_FOUND) {
+    if (phipfs_stat_path(PHIPFS_VOLUME_DATA, "SQLITE/PORT.JRN", &journal) !=
+            PHIPFS_STATUS_NOT_FOUND) {
         kernel_test_fail("SQLite left a rollback journal after clean close");
     }
-    if (before == SAPFS_STATUS_NOT_FOUND) {
-        if (sapfs_stat_path(SAPFS_VOLUME_DATA, "SQLITE/PORT.DB", &database) !=
-                SAPFS_STATUS_OK || database.directory || database.size == 0U ||
-            sapfs_unmount(SAPFS_VOLUME_DATA) != SAPFS_STATUS_OK) {
+    if (before == PHIPFS_STATUS_NOT_FOUND) {
+        if (phipfs_stat_path(PHIPFS_VOLUME_DATA, "SQLITE/PORT.DB", &database) !=
+                PHIPFS_STATUS_OK || database.directory || database.size == 0U ||
+            phipfs_unmount(PHIPFS_VOLUME_DATA) != PHIPFS_STATUS_OK) {
             kernel_test_fail("SQLite first phase did not synchronize its database");
         }
         console_write("Phipia: upstream SQLite synchronized reboot phase\n");
         cpu_out8(UINT16_C(0x0064), UINT8_C(0xFE));
         kernel_test_fail("platform reset did not restart SQLite scenario");
     }
-    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "SQLITE/RESULT.TXT", &output) !=
-            SAPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
-        sapfs_open(SAPFS_VOLUME_DATA, "SQLITE/RESULT.TXT", SAPFS_ACCESS_READ,
-            &file) != SAPFS_STATUS_OK ||
-        sapfs_read(file, bytes, sizeof(bytes), &read_bytes) != SAPFS_STATUS_OK ||
+    if (phipfs_stat_path(PHIPFS_VOLUME_DATA, "SQLITE/RESULT.TXT", &output) !=
+            PHIPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
+        phipfs_open(PHIPFS_VOLUME_DATA, "SQLITE/RESULT.TXT", PHIPFS_ACCESS_READ,
+            &file) != PHIPFS_STATUS_OK ||
+        phipfs_read(file, bytes, sizeof(bytes), &read_bytes) != PHIPFS_STATUS_OK ||
         read_bytes != sizeof(bytes)) {
         kernel_test_fail("SQLite reboot result is missing");
     }
     for (size_t index = 0U; index < sizeof(bytes); ++index) {
         content_matches = content_matches && bytes[index] == expected[index];
     }
-    if (sapfs_close(file) != SAPFS_STATUS_OK || !content_matches ||
-        sapfs_sync(SAPFS_VOLUME_DATA) != SAPFS_STATUS_OK) {
+    if (phipfs_close(file) != PHIPFS_STATUS_OK || !content_matches ||
+        phipfs_sync(PHIPFS_VOLUME_DATA) != PHIPFS_STATUS_OK) {
         kernel_test_fail("SQLite reboot result is wrong or could not be synchronized");
     }
     console_write("Phipia: upstream SQLite retained and verified three rows after reboot\n");
@@ -5341,9 +5341,9 @@ _Noreturn void kernel_test_complete_native_network(void)
 {
     static const uint8_t expected[] = "hello from the Phipia network\n";
     struct native_process_result result = { 0 };
-    struct sapfs_stat output;
+    struct phipfs_stat output;
     struct network_state network;
-    sapfs_handle file;
+    phipfs_handle file;
     uint8_t bytes[sizeof(expected) - 1U];
     size_t read_bytes = 0U;
     bool matches = true;
@@ -5382,18 +5382,18 @@ _Noreturn void kernel_test_complete_native_network(void)
         network.timers != 0U) {
         kernel_test_fail("native network handles survived process teardown");
     }
-    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "NETAPP/HTTP.TXT", &output) !=
-            SAPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
-        sapfs_open(SAPFS_VOLUME_DATA, "NETAPP/HTTP.TXT", SAPFS_ACCESS_READ,
-            &file) != SAPFS_STATUS_OK ||
-        sapfs_read(file, bytes, sizeof(bytes), &read_bytes) != SAPFS_STATUS_OK ||
+    if (phipfs_stat_path(PHIPFS_VOLUME_DATA, "NETAPP/HTTP.TXT", &output) !=
+            PHIPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
+        phipfs_open(PHIPFS_VOLUME_DATA, "NETAPP/HTTP.TXT", PHIPFS_ACCESS_READ,
+            &file) != PHIPFS_STATUS_OK ||
+        phipfs_read(file, bytes, sizeof(bytes), &read_bytes) != PHIPFS_STATUS_OK ||
         read_bytes != sizeof(bytes)) {
         kernel_test_fail("native HTTP body is missing from Data");
     }
     for (size_t index = 0U; index < sizeof(bytes); ++index) {
         matches = matches && bytes[index] == expected[index];
     }
-    if (sapfs_close(file) != SAPFS_STATUS_OK || !matches) {
+    if (phipfs_close(file) != PHIPFS_STATUS_OK || !matches) {
         kernel_test_fail("native HTTP body framing or contents are wrong");
     }
     console_write("Phipia: native DNS, TCP, UDP, timeout, reset and cancellation passed\n");
@@ -5405,8 +5405,8 @@ _Noreturn void kernel_test_complete_native_rust(void)
 {
     static const uint8_t expected[] = "native Rust no_std ABI v1\n";
     struct native_process_result result;
-    struct sapfs_stat output;
-    sapfs_handle file;
+    struct phipfs_stat output;
+    phipfs_handle file;
     uint8_t bytes[sizeof(expected) - 1U];
     size_t read_bytes = 0U;
     bool matches = true;
@@ -5420,18 +5420,18 @@ _Noreturn void kernel_test_complete_native_rust(void)
         result.thread_switches == 0U || !native_process_resources_released()) {
         kernel_test_fail("Rust application did not exit with a clean census");
     }
-    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "RUSTAPP/RUST.TXT", &output) !=
-            SAPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
-        sapfs_open(SAPFS_VOLUME_DATA, "RUSTAPP/RUST.TXT", SAPFS_ACCESS_READ,
-            &file) != SAPFS_STATUS_OK ||
-        sapfs_read(file, bytes, sizeof(bytes), &read_bytes) != SAPFS_STATUS_OK ||
+    if (phipfs_stat_path(PHIPFS_VOLUME_DATA, "RUSTAPP/RUST.TXT", &output) !=
+            PHIPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
+        phipfs_open(PHIPFS_VOLUME_DATA, "RUSTAPP/RUST.TXT", PHIPFS_ACCESS_READ,
+            &file) != PHIPFS_STATUS_OK ||
+        phipfs_read(file, bytes, sizeof(bytes), &read_bytes) != PHIPFS_STATUS_OK ||
         read_bytes != sizeof(bytes)) {
         kernel_test_fail("Rust application output is missing");
     }
     for (size_t index = 0U; index < sizeof(bytes); ++index) {
         matches = matches && bytes[index] == expected[index];
     }
-    if (sapfs_close(file) != SAPFS_STATUS_OK || !matches) {
+    if (phipfs_close(file) != PHIPFS_STATUS_OK || !matches) {
         kernel_test_fail("Rust application output is wrong");
     }
     console_write("Phipia: no_std Rust application used native ABI v1 services\n");
@@ -5576,8 +5576,8 @@ _Noreturn void kernel_test_complete_native_sdl(void)
     static const char state_path[] = "SDLPROOF/SDL/B54465F3/STATE.BIN";
     struct native_process_result first = { 0 };
     struct native_process_result second = { 0 };
-    struct sapfs_stat state;
-    sapfs_handle file;
+    struct phipfs_stat state;
+    phipfs_handle file;
     uint8_t bytes[4];
     size_t read_bytes = 0U;
 
@@ -5603,12 +5603,12 @@ _Noreturn void kernel_test_complete_native_sdl(void)
         ui_native_window_is_open(0U) || ui_native_window_is_open(1U)) {
         kernel_test_fail("second SDL process did not leave a clean census");
     }
-    if (sapfs_stat_path(SAPFS_VOLUME_DATA, state_path, &state) !=
-            SAPFS_STATUS_OK || state.directory || state.size != sizeof(bytes) ||
-        sapfs_open(SAPFS_VOLUME_DATA, state_path, SAPFS_ACCESS_READ, &file) !=
-            SAPFS_STATUS_OK ||
-        sapfs_read(file, bytes, sizeof(bytes), &read_bytes) != SAPFS_STATUS_OK ||
-        read_bytes != sizeof(bytes) || sapfs_close(file) != SAPFS_STATUS_OK ||
+    if (phipfs_stat_path(PHIPFS_VOLUME_DATA, state_path, &state) !=
+            PHIPFS_STATUS_OK || state.directory || state.size != sizeof(bytes) ||
+        phipfs_open(PHIPFS_VOLUME_DATA, state_path, PHIPFS_ACCESS_READ, &file) !=
+            PHIPFS_STATUS_OK ||
+        phipfs_read(file, bytes, sizeof(bytes), &read_bytes) != PHIPFS_STATUS_OK ||
+        read_bytes != sizeof(bytes) || phipfs_close(file) != PHIPFS_STATUS_OK ||
         bytes[0] != 2U || bytes[1] != 0U || bytes[2] != 0U || bytes[3] != 0U) {
         kernel_test_fail("SDL preference state did not survive process relaunch");
     }
@@ -5650,9 +5650,9 @@ _Noreturn void kernel_test_complete_native_https(void)
     static const uint8_t expected[] =
         "hello from the Phipia HTTPS peer\n";
     struct native_process_result proof = { 0 };
-    struct sapfs_stat output;
+    struct phipfs_stat output;
     struct network_state network;
-    sapfs_handle file;
+    phipfs_handle file;
     uint8_t bytes[sizeof(expected) - 1U];
     size_t read_bytes = 0U;
     bool matches = true;
@@ -5674,18 +5674,18 @@ _Noreturn void kernel_test_complete_native_https(void)
         network.timers != 0U) {
         kernel_test_fail("native HTTPS network resources survived teardown");
     }
-    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "HTTPSAPP/HTTPS.TXT", &output) !=
-            SAPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
-        sapfs_open(SAPFS_VOLUME_DATA, "HTTPSAPP/HTTPS.TXT", SAPFS_ACCESS_READ,
-            &file) != SAPFS_STATUS_OK ||
-        sapfs_read(file, bytes, sizeof(bytes), &read_bytes) != SAPFS_STATUS_OK ||
+    if (phipfs_stat_path(PHIPFS_VOLUME_DATA, "HTTPSAPP/HTTPS.TXT", &output) !=
+            PHIPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
+        phipfs_open(PHIPFS_VOLUME_DATA, "HTTPSAPP/HTTPS.TXT", PHIPFS_ACCESS_READ,
+            &file) != PHIPFS_STATUS_OK ||
+        phipfs_read(file, bytes, sizeof(bytes), &read_bytes) != PHIPFS_STATUS_OK ||
         read_bytes != sizeof(bytes)) {
         kernel_test_fail("authenticated HTTPS body is missing from Data");
     }
     for (size_t index = 0U; index < sizeof(bytes); ++index) {
         matches = matches && bytes[index] == expected[index];
     }
-    if (sapfs_close(file) != SAPFS_STATUS_OK || !matches) {
+    if (phipfs_close(file) != PHIPFS_STATUS_OK || !matches) {
         kernel_test_fail("authenticated HTTPS body contents are wrong");
     }
     console_write("Phipia: HTTPS strong hardware entropy passed\n");
@@ -5707,10 +5707,10 @@ _Noreturn void kernel_test_complete_native_sap(void)
     size_t database_bytes = 0U;
 
     if (active_scenario != KERNEL_TEST_NATIVE_SAP) {
-        kernel_test_fail("native sap completion used outside its scenario");
+        kernel_test_fail("native phip completion used outside its scenario");
     }
     if (random_get_state().capability != RANDOM_CAPABILITY_INITIALIZED) {
-        kernel_test_fail("native sap did not retain strong hardware entropy");
+        kernel_test_fail("native phip did not retain strong hardware entropy");
     }
     if (native_process_launch("PHIP.MAN", &proof) != NATIVE_PROCESS_OK ||
         !proof.exited || proof.faulted || proof.exit_status != 0 ||
@@ -5722,7 +5722,7 @@ _Noreturn void kernel_test_complete_native_sap(void)
     network = network_get_state();
     if (network.udp_sockets != 0U || network.tcp_connections != 0U ||
         network.timers != 0U) {
-        kernel_test_fail("native sap network resources survived teardown");
+        kernel_test_fail("native phip network resources survived teardown");
     }
     if (package_service_snapshot(database, sizeof(database), &database_bytes,
             &service) != PACKAGE_SERVICE_STATUS_OK ||
@@ -5740,7 +5740,7 @@ _Noreturn void kernel_test_complete_native_sap(void)
         !package_text_equals(&package.version, "1.0.0") ||
         !package_text_equals(&file.path, "bin/proof.app") ||
         file.owner_index != 0U || file.length == 0U) {
-        kernel_test_fail("native sap installed authority is not canonical");
+        kernel_test_fail("native phip installed authority is not canonical");
     }
     console_write(
         "Phipia: signed HTTPS package install and cleanup passed\n");
@@ -6051,20 +6051,20 @@ _Noreturn void kernel_test_complete_phipia_proof(void)
 {
     static const enum ui_element_id ids[UI_DOCK_ITEM_COUNT] = {
         UI_ELEMENT_DOCK_FILES, UI_ELEMENT_DOCK_TERMINAL,
-        UI_ELEMENT_DOCK_NOTES, UI_ELEMENT_DOCK_STUDIO,
+        UI_ELEMENT_DOCK_NOTES, UI_ELEMENT_DOCK_MEDIA_EDITOR,
         UI_ELEMENT_DOCK_CAMERA, UI_ELEMENT_DOCK_CANVAS,
         UI_ELEMENT_DOCK_STORE,
         UI_ELEMENT_DOCK_SETTINGS
     };
     static const enum ui_action actions[UI_DOCK_ITEM_COUNT] = {
         UI_ACTION_OPEN_FILES, UI_ACTION_OPEN_TERMINAL,
-        UI_ACTION_OPEN_NOTES, UI_ACTION_OPEN_STUDIO,
+        UI_ACTION_OPEN_NOTES, UI_ACTION_OPEN_MEDIA_EDITOR,
         UI_ACTION_OPEN_CAMERA, UI_ACTION_OPEN_CANVAS,
         UI_ACTION_OPEN_STORE,
         UI_ACTION_OPEN_SETTINGS
     };
     static const enum ui_panel_id panels[UI_DOCK_ITEM_COUNT] = {
-        UI_PANEL_FILES, UI_PANEL_TERMINAL, UI_PANEL_NOTES, UI_PANEL_STUDIO,
+        UI_PANEL_FILES, UI_PANEL_TERMINAL, UI_PANEL_NOTES, UI_PANEL_MEDIA_EDITOR,
         UI_PANEL_CAMERA, UI_PANEL_PAINT, UI_PANEL_STORE, UI_PANEL_SETTINGS
     };
     const struct boot_ledger *ledger = boot_ledger_installed();
@@ -7090,24 +7090,24 @@ static bool fat32_read_file(
     size_t *file_bytes
 )
 {
-    sapfs_handle handle;
-    struct sapfs_stat stat;
+    phipfs_handle handle;
+    struct phipfs_stat stat;
     size_t read_bytes = 0U;
-    enum sapfs_status status;
+    enum phipfs_status status;
 
     if (path == NULL || buffer == NULL || file_bytes == NULL ||
-        sapfs_stat_path(SAPFS_VOLUME_DATA, path, &stat) != SAPFS_STATUS_OK ||
+        phipfs_stat_path(PHIPFS_VOLUME_DATA, path, &stat) != PHIPFS_STATUS_OK ||
         stat.directory || stat.size > capacity ||
-        sapfs_open(SAPFS_VOLUME_DATA, path, SAPFS_ACCESS_READ, &handle) !=
-            SAPFS_STATUS_OK) {
+        phipfs_open(PHIPFS_VOLUME_DATA, path, PHIPFS_ACCESS_READ, &handle) !=
+            PHIPFS_STATUS_OK) {
         return false;
     }
-    status = sapfs_read(handle, buffer, capacity, &read_bytes);
-    if (sapfs_close(handle) != SAPFS_STATUS_OK) {
+    status = phipfs_read(handle, buffer, capacity, &read_bytes);
+    if (phipfs_close(handle) != PHIPFS_STATUS_OK) {
         return false;
     }
     *file_bytes = read_bytes;
-    return status == SAPFS_STATUS_OK && read_bytes == stat.size;
+    return status == PHIPFS_STATUS_OK && read_bytes == stat.size;
 }
 
 static bool fat32_file_equals(
@@ -7145,8 +7145,8 @@ static void fat32_feed(const char *line)
 
 static void fat32_require_base(bool data_required)
 {
-    struct sapfs_drive_info system = sapfs_drive(SAPFS_VOLUME_SYSTEM);
-    struct sapfs_drive_info data = sapfs_drive(SAPFS_VOLUME_DATA);
+    struct phipfs_drive_info system = phipfs_drive(PHIPFS_VOLUME_SYSTEM);
+    struct phipfs_drive_info data = phipfs_drive(PHIPFS_VOLUME_DATA);
 
     if (!installed_phipia_proof_ready() || !shell_is_active() ||
         !system.present || !system.healthy || !system.mounted ||
@@ -7196,7 +7196,7 @@ static void fat32_data_scenario(void)
 static void fat32_nested_scenario(void)
 {
     static const uint8_t expected[] = "nested\n";
-    struct sapfs_stat stat;
+    struct phipfs_stat stat;
 
     fat32_require_base(true);
     fat32_feed("mkdir projects");
@@ -7208,8 +7208,8 @@ static void fat32_nested_scenario(void)
     fat32_feed("cd ..");
     if (!fat32_file_equals("projects/cuts/notes.txt", expected,
             sizeof(expected) - 1U) ||
-        sapfs_stat_path(SAPFS_VOLUME_DATA, "projects/cuts", &stat) !=
-            SAPFS_STATUS_OK || !stat.directory) {
+        phipfs_stat_path(PHIPFS_VOLUME_DATA, "projects/cuts", &stat) !=
+            PHIPFS_STATUS_OK || !stat.directory) {
         kernel_test_fail("nested FAT32 traversal changed");
     }
     console_write("\nST FAT32 NESTED dot dotdot traversal enumeration exact\n");
@@ -7217,7 +7217,7 @@ static void fat32_nested_scenario(void)
 
 static void fat32_growth_scenario(void)
 {
-    struct sapfs_stat stat;
+    struct phipfs_stat stat;
     uint8_t buffer[1024];
     size_t bytes = 0U;
 
@@ -7227,8 +7227,8 @@ static void fat32_growth_scenario(void)
         fat32_feed("append growth.bin \"0123456789012345678901234567890123456789012345678901234567890123456789\"");
     }
     fat32_feed("stat growth.bin");
-    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "growth.bin", &stat) !=
-            SAPFS_STATUS_OK || stat.size != 568U || stat.cluster_count != 2U ||
+    if (phipfs_stat_path(PHIPFS_VOLUME_DATA, "growth.bin", &stat) !=
+            PHIPFS_STATUS_OK || stat.size != 568U || stat.cluster_count != 2U ||
         !fat32_read_file("growth.bin", buffer, sizeof(buffer), &bytes) ||
         bytes != stat.size) {
         kernel_test_fail("multi-cluster FAT32 growth changed");
@@ -7252,7 +7252,7 @@ static void fat32_random_scenario(void)
 
 static void fat32_truncate_scenario(void)
 {
-    struct sapfs_stat stat;
+    struct phipfs_stat stat;
     uint8_t buffer[800];
     size_t bytes = 0U;
 
@@ -7261,8 +7261,8 @@ static void fat32_truncate_scenario(void)
     fat32_feed("truncate trim.bin 648");
     fat32_feed("writeat trim.bin 0 \"prefix\"");
     fat32_feed("truncate trim.bin 100");
-    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "trim.bin", &stat) !=
-            SAPFS_STATUS_OK || stat.size != 100U || stat.cluster_count != 1U) {
+    if (phipfs_stat_path(PHIPFS_VOLUME_DATA, "trim.bin", &stat) !=
+            PHIPFS_STATUS_OK || stat.size != 100U || stat.cluster_count != 1U) {
         kernel_test_fail("FAT32 truncation did not release its tail");
     }
     fat32_feed("truncate trim.bin 700");
@@ -7281,27 +7281,27 @@ static void fat32_truncate_scenario(void)
 static void fat32_rename_scenario(void)
 {
     static const uint8_t expected[] = "move me\n";
-    struct sapfs_stat stat;
+    struct phipfs_stat stat;
 
     fat32_require_base(true);
     fat32_feed("mkdir a");
     fat32_feed("mkdir b");
     fat32_feed("mkdir a/child");
-    if (sapfs_rename(SAPFS_VOLUME_DATA, "a", "a/child/a") !=
-            SAPFS_STATUS_PATH) {
+    if (phipfs_rename(PHIPFS_VOLUME_DATA, "a", "a/child/a") !=
+            PHIPFS_STATUS_PATH) {
         kernel_test_fail("FAT32 accepted a directory move into itself");
     }
     fat32_feed("write a/note.txt \"move me\"");
     fat32_feed("mv a/note.txt b/moved.txt");
     fat32_feed("mv b archive");
     fat32_feed("touch conflict.txt");
-    if (sapfs_rename(SAPFS_VOLUME_DATA, "conflict.txt",
-            "archive/moved.txt") != SAPFS_STATUS_EXISTS) {
+    if (phipfs_rename(PHIPFS_VOLUME_DATA, "conflict.txt",
+            "archive/moved.txt") != PHIPFS_STATUS_EXISTS) {
         kernel_test_fail("FAT32 rename conflict was not rejected");
     }
     fat32_feed("ls archive");
-    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "a/note.txt", &stat) !=
-            SAPFS_STATUS_NOT_FOUND ||
+    if (phipfs_stat_path(PHIPFS_VOLUME_DATA, "a/note.txt", &stat) !=
+            PHIPFS_STATUS_NOT_FOUND ||
         !fat32_file_equals("archive/moved.txt", expected,
             sizeof(expected) - 1U)) {
         kernel_test_fail("FAT32 rename or move changed ownership");
@@ -7311,22 +7311,22 @@ static void fat32_rename_scenario(void)
 
 static void fat32_delete_scenario(void)
 {
-    struct sapfs_stat first;
-    struct sapfs_stat second;
+    struct phipfs_stat first;
+    struct phipfs_stat second;
 
     fat32_require_base(true);
     fat32_feed("write first.bin \"one\"");
-    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "first.bin", &first) !=
-            SAPFS_STATUS_OK) {
+    if (phipfs_stat_path(PHIPFS_VOLUME_DATA, "first.bin", &first) !=
+            PHIPFS_STATUS_OK) {
         kernel_test_fail("FAT32 deletion setup failed");
     }
     fat32_feed("rm first.bin");
     fat32_feed("write second.bin \"two\"");
     fat32_feed("mkdir kept");
     fat32_feed("write kept/live.txt \"live\"");
-    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "second.bin", &second) !=
-            SAPFS_STATUS_OK || first.first_cluster != second.first_cluster ||
-        sapfs_rmdir(SAPFS_VOLUME_DATA, "kept") != SAPFS_STATUS_NOT_EMPTY) {
+    if (phipfs_stat_path(PHIPFS_VOLUME_DATA, "second.bin", &second) !=
+            PHIPFS_STATUS_OK || first.first_cluster != second.first_cluster ||
+        phipfs_rmdir(PHIPFS_VOLUME_DATA, "kept") != PHIPFS_STATUS_NOT_EMPTY) {
         kernel_test_fail("FAT32 deletion did not reuse or protect ownership");
     }
     fat32_feed("rm kept/live.txt");
@@ -7336,22 +7336,22 @@ static void fat32_delete_scenario(void)
 
 static void fat32_full_scenario(void)
 {
-    struct sapfs_stat stat;
+    struct phipfs_stat stat;
 
     fat32_require_base(true);
-    if (sapfs_drive(SAPFS_VOLUME_DATA).free_bytes != 0U) {
+    if (phipfs_drive(PHIPFS_VOLUME_DATA).free_bytes != 0U) {
         kernel_test_fail("full FAT32 fixture retained free clusters");
     }
     fat32_feed("write recovery.txt \"blocked\"");
-    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "recovery.txt", &stat) !=
-            SAPFS_STATUS_OK || stat.size != 0U) {
+    if (phipfs_stat_path(PHIPFS_VOLUME_DATA, "recovery.txt", &stat) !=
+            PHIPFS_STATUS_OK || stat.size != 0U) {
         kernel_test_fail("full-volume refusal exposed partial contents");
     }
     fat32_feed("rm tiny.bin");
     fat32_feed("write recovery.txt \"recovered\"");
     fat32_feed("sync");
-    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "recovery.txt", &stat) !=
-            SAPFS_STATUS_OK || stat.size != 10U) {
+    if (phipfs_stat_path(PHIPFS_VOLUME_DATA, "recovery.txt", &stat) !=
+            PHIPFS_STATUS_OK || stat.size != 10U) {
         kernel_test_fail("full FAT32 volume did not recover after deletion");
     }
     console_write("\nST FAT32 FULL refusal no leak deletion recovered\n");
@@ -7359,7 +7359,7 @@ static void fat32_full_scenario(void)
 
 static void fat32_unavailable_scenario(bool corrupt)
 {
-    struct sapfs_drive_info data = sapfs_drive(SAPFS_VOLUME_DATA);
+    struct phipfs_drive_info data = phipfs_drive(PHIPFS_VOLUME_DATA);
     const uint32_t before =
         linux_userland_completed(LINUX_USERLAND_PROFILE_ECHO);
 
@@ -7381,26 +7381,26 @@ static void fat32_unavailable_scenario(bool corrupt)
 static void fat32_persistence_scenario(void)
 {
     static const uint8_t expected[] = "first cut\nsecond line\n";
-    struct sapfs_stat stat;
-    enum sapfs_status status;
+    struct phipfs_stat stat;
+    enum phipfs_status status;
 
     fat32_require_base(true);
-    status = sapfs_stat_path(SAPFS_VOLUME_DATA, "projects/notes.txt", &stat);
-    if (status == SAPFS_STATUS_NOT_FOUND) {
+    status = phipfs_stat_path(PHIPFS_VOLUME_DATA, "projects/notes.txt", &stat);
+    if (status == PHIPFS_STATUS_NOT_FOUND) {
         fat32_feed("mkdir projects");
         fat32_feed("write projects/notes.txt \"first cut\"");
         fat32_feed("append projects/notes.txt \"second line\"");
         fat32_feed("sync");
         if (!fat32_file_equals("projects/notes.txt", expected,
                 sizeof(expected) - 1U) ||
-            sapfs_unmount(SAPFS_VOLUME_DATA) != SAPFS_STATUS_OK) {
+            phipfs_unmount(PHIPFS_VOLUME_DATA) != PHIPFS_STATUS_OK) {
             kernel_test_fail("clean persistence write phase failed");
         }
         console_write("\nST FAT32 PERSISTENCE synchronized reboot phase\n");
         cpu_out8(UINT16_C(0x0064), UINT8_C(0xFE));
         kernel_test_fail("platform reset did not restart QEMU");
     }
-    if (status != SAPFS_STATUS_OK ||
+    if (status != PHIPFS_STATUS_OK ||
         !fat32_file_equals("projects/notes.txt", expected,
             sizeof(expected) - 1U)) {
         kernel_test_fail("clean reboot did not retain FAT32 contents");
@@ -7441,16 +7441,16 @@ static void fat32_cache_scenario(void)
 
 static void fat32_immutable_scenario(void)
 {
-    sapfs_handle handle;
+    phipfs_handle handle;
     const uint32_t before =
         linux_userland_completed(LINUX_USERLAND_PROFILE_ECHO);
 
     fat32_require_base(true);
     fat32_feed("linux echo");
-    if (sapfs_create(SAPFS_VOLUME_SYSTEM, "ATTACK.TXT") !=
-            SAPFS_STATUS_READ_ONLY ||
-        sapfs_open(SAPFS_VOLUME_SYSTEM, "BUSYBOX", SAPFS_ACCESS_WRITE,
-            &handle) != SAPFS_STATUS_READ_ONLY ||
+    if (phipfs_create(PHIPFS_VOLUME_SYSTEM, "ATTACK.TXT") !=
+            PHIPFS_STATUS_READ_ONLY ||
+        phipfs_open(PHIPFS_VOLUME_SYSTEM, "BUSYBOX", PHIPFS_ACCESS_WRITE,
+            &handle) != PHIPFS_STATUS_READ_ONLY ||
         linux_userland_completed(LINUX_USERLAND_PROFILE_ECHO) != before + 1U) {
         kernel_test_fail("immutable FAT32 system volume accepted a write");
     }
@@ -7459,37 +7459,37 @@ static void fat32_immutable_scenario(void)
 
 static void fat32_handles_scenario(void)
 {
-    sapfs_handle handles[SAPFS_MAX_HANDLES];
-    sapfs_handle extra;
+    phipfs_handle handles[PHIPFS_MAX_HANDLES];
+    phipfs_handle extra;
     size_t bytes = 0U;
     uint8_t byte = 0U;
 
     fat32_require_base(true);
     fat32_feed("write handle.txt \"generation\"");
-    if (sapfs_open(SAPFS_VOLUME_DATA, "handle.txt", SAPFS_ACCESS_READ,
-            &handles[0]) != SAPFS_STATUS_OK ||
-        sapfs_write(handles[0], &byte, 1U, &bytes) != SAPFS_STATUS_ACCESS ||
-        sapfs_read(handles[0], NULL, 1U, &bytes) !=
-            SAPFS_STATUS_INVALID_ARGUMENT ||
-        sapfs_unlink(SAPFS_VOLUME_DATA, "handle.txt") != SAPFS_STATUS_BUSY ||
-        sapfs_close(handles[0]) != SAPFS_STATUS_OK ||
-        sapfs_close(handles[0]) != SAPFS_STATUS_STALE_HANDLE ||
-        sapfs_read(handles[0], &byte, 1U, &bytes) !=
-            SAPFS_STATUS_STALE_HANDLE) {
+    if (phipfs_open(PHIPFS_VOLUME_DATA, "handle.txt", PHIPFS_ACCESS_READ,
+            &handles[0]) != PHIPFS_STATUS_OK ||
+        phipfs_write(handles[0], &byte, 1U, &bytes) != PHIPFS_STATUS_ACCESS ||
+        phipfs_read(handles[0], NULL, 1U, &bytes) !=
+            PHIPFS_STATUS_INVALID_ARGUMENT ||
+        phipfs_unlink(PHIPFS_VOLUME_DATA, "handle.txt") != PHIPFS_STATUS_BUSY ||
+        phipfs_close(handles[0]) != PHIPFS_STATUS_OK ||
+        phipfs_close(handles[0]) != PHIPFS_STATUS_STALE_HANDLE ||
+        phipfs_read(handles[0], &byte, 1U, &bytes) !=
+            PHIPFS_STATUS_STALE_HANDLE) {
         kernel_test_fail("FAT32 handle generation controls changed");
     }
-    for (size_t index = 0U; index < SAPFS_MAX_HANDLES; ++index) {
-        if (sapfs_open(SAPFS_VOLUME_DATA, "handle.txt", SAPFS_ACCESS_READ,
-                &handles[index]) != SAPFS_STATUS_OK) {
+    for (size_t index = 0U; index < PHIPFS_MAX_HANDLES; ++index) {
+        if (phipfs_open(PHIPFS_VOLUME_DATA, "handle.txt", PHIPFS_ACCESS_READ,
+                &handles[index]) != PHIPFS_STATUS_OK) {
             kernel_test_fail("FAT32 handle table filled early");
         }
     }
-    if (sapfs_open(SAPFS_VOLUME_DATA, "handle.txt", SAPFS_ACCESS_READ,
-            &extra) != SAPFS_STATUS_NO_HANDLES) {
+    if (phipfs_open(PHIPFS_VOLUME_DATA, "handle.txt", PHIPFS_ACCESS_READ,
+            &extra) != PHIPFS_STATUS_NO_HANDLES) {
         kernel_test_fail("FAT32 handle table exceeded its fixed bound");
     }
-    for (size_t index = 0U; index < SAPFS_MAX_HANDLES; ++index) {
-        if (sapfs_close(handles[index]) != SAPFS_STATUS_OK) {
+    for (size_t index = 0U; index < PHIPFS_MAX_HANDLES; ++index) {
+        if (phipfs_close(handles[index]) != PHIPFS_STATUS_OK) {
             kernel_test_fail("FAT32 handle teardown leaked ownership");
         }
     }
@@ -7813,10 +7813,10 @@ static network_handle network_announce_port(
     network_handle knock;
     uint8_t message[6];
 
-    message[0] = (uint8_t)'S';
-    message[1] = (uint8_t)'A';
-    message[2] = (uint8_t)'P';
-    message[3] = (uint8_t)'L';
+    message[0] = (uint8_t)'P';
+    message[1] = (uint8_t)'H';
+    message[2] = (uint8_t)'I';
+    message[3] = (uint8_t)'P';
     message[4] = (uint8_t)(announced >> 8U);
     message[5] = (uint8_t)announced;
     if (network_udp_open(NETWORK_TEST_OWNER, &knock) != NETWORK_STATUS_OK ||
@@ -8303,24 +8303,24 @@ _Noreturn void kernel_test_complete_network(void)
         break;
     case KERNEL_TEST_NETWORK_HTTP_MALFORMED: {
         struct network_http_result result;
-        struct sapfs_stat stat;
+        struct phipfs_stat stat;
 
         fat32_require_base(true);
         network_require_dhcp();
         if (network_http_download(NETWORK_TEST_OWNER,
                 "http://phipia.test/welcome.txt", "BADHTTP.TXT", false,
                 UINT64_C(5000000000), &result) == NETWORK_STATUS_OK ||
-            sapfs_stat_path(SAPFS_VOLUME_DATA, "BADHTTP.TXT", &stat) !=
-                SAPFS_STATUS_NOT_FOUND) {
+            phipfs_stat_path(PHIPFS_VOLUME_DATA, "BADHTTP.TXT", &stat) !=
+                PHIPFS_STATUS_NOT_FOUND) {
             kernel_test_fail("malformed HTTP response was accepted");
         }
         break;
     }
     case KERNEL_TEST_NETWORK_HTTP_NESTED:
         fat32_require_base(true);
-        if (sapfs_mkdir(SAPFS_VOLUME_DATA, "DOWNLDS") != SAPFS_STATUS_OK &&
-            sapfs_stat_path(SAPFS_VOLUME_DATA, "DOWNLDS",
-                &(struct sapfs_stat){0}) != SAPFS_STATUS_OK) {
+        if (phipfs_mkdir(PHIPFS_VOLUME_DATA, "DOWNLDS") != PHIPFS_STATUS_OK &&
+            phipfs_stat_path(PHIPFS_VOLUME_DATA, "DOWNLDS",
+                &(struct phipfs_stat){0}) != PHIPFS_STATUS_OK) {
             kernel_test_fail("download directory was not available");
         }
         network_download("DOWNLDS/WELCOME.TXT");
@@ -8375,14 +8375,14 @@ _Noreturn void kernel_test_complete_network(void)
         break;
     }
     case KERNEL_TEST_NETWORK_SYSTEM_IMMUTABLE: {
-        sapfs_handle handle;
+        phipfs_handle handle;
 
         fat32_require_base(true);
         network_http_download_scenario(
             "http://phipia.test/welcome.txt", "IMMUTABL.TXT",
             false, 0U);
-        if (sapfs_open(SAPFS_VOLUME_SYSTEM, "BUSYBOX", SAPFS_ACCESS_WRITE,
-                &handle) != SAPFS_STATUS_READ_ONLY) {
+        if (phipfs_open(PHIPFS_VOLUME_SYSTEM, "BUSYBOX", PHIPFS_ACCESS_WRITE,
+                &handle) != PHIPFS_STATUS_READ_ONLY) {
             kernel_test_fail("networking weakened the immutable system volume");
         }
         break;
@@ -8410,13 +8410,13 @@ _Noreturn void kernel_test_complete_network(void)
         network_linux_cat_twice();
         break;
     case KERNEL_TEST_NETWORK_FILES: {
-        struct sapfs_list_entry entries[4];
+        struct phipfs_list_entry entries[4];
         size_t count = 0U;
 
         fat32_require_base(true);
         network_require_dhcp();
-        if (sapfs_list(SAPFS_VOLUME_DATA, ".", entries, 4U, &count) !=
-                SAPFS_STATUS_OK || ui_flush() != UI_STATUS_OK) {
+        if (phipfs_list(PHIPFS_VOLUME_DATA, ".", entries, 4U, &count) !=
+                PHIPFS_STATUS_OK || ui_flush() != UI_STATUS_OK) {
             kernel_test_fail("networking regressed Files");
         }
         break;
@@ -8429,29 +8429,29 @@ _Noreturn void kernel_test_complete_network(void)
             kernel_test_fail("networking regressed Notes");
         }
         break;
-    case KERNEL_TEST_NETWORK_STUDIO:
+    case KERNEL_TEST_NETWORK_MEDIA_EDITOR:
         fat32_require_base(true);
         network_require_dhcp();
         if (!ui_is_active() || ui_flush() != UI_STATUS_OK) {
-            kernel_test_fail("networking regressed SapStudio");
+            kernel_test_fail("networking regressed Media Editor");
         }
         break;
     case KERNEL_TEST_NETWORK_PERSISTENCE: {
-        struct sapfs_stat stat;
-        enum sapfs_status status;
+        struct phipfs_stat stat;
+        enum phipfs_status status;
 
         fat32_require_base(true);
-        status = sapfs_stat_path(SAPFS_VOLUME_DATA, "network.txt", &stat);
-        if (status == SAPFS_STATUS_NOT_FOUND) {
+        status = phipfs_stat_path(PHIPFS_VOLUME_DATA, "network.txt", &stat);
+        if (status == PHIPFS_STATUS_NOT_FOUND) {
             network_download("network.txt");
-            if (sapfs_unmount(SAPFS_VOLUME_DATA) != SAPFS_STATUS_OK) {
+            if (phipfs_unmount(PHIPFS_VOLUME_DATA) != PHIPFS_STATUS_OK) {
                 kernel_test_fail("network download did not unmount cleanly");
             }
             console_write("\nST NETWORK PERSISTENCE synchronized reboot phase\n");
             cpu_out8(UINT16_C(0x0064), UINT8_C(0xFE));
             kernel_test_fail("platform reset did not restart QEMU");
         }
-        if (status != SAPFS_STATUS_OK ||
+        if (status != PHIPFS_STATUS_OK ||
             !fat32_file_equals("network.txt", network_welcome,
                 sizeof(network_welcome) - 1U)) {
             kernel_test_fail("network download did not persist after reboot");
@@ -9262,8 +9262,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "network-files";
     case KERNEL_TEST_NETWORK_NOTES:
         return "network-notes";
-    case KERNEL_TEST_NETWORK_STUDIO:
-        return "network-studio";
+    case KERNEL_TEST_NETWORK_MEDIA_EDITOR:
+        return "network-media-editor";
     case KERNEL_TEST_NETWORK_PERSISTENCE:
         return "network-persistence";
     case KERNEL_TEST_NETWORK_SOCKET_ISOLATION:

@@ -11,7 +11,7 @@
 
 struct upload_slot {
     struct package_state_sha256_context sha256;
-    sapfs_handle file;
+    phipfs_handle file;
     uint64_t owner;
     uint64_t byte_count;
     uint8_t digest[PACKAGE_STATE_SHA256_BYTES];
@@ -47,13 +47,13 @@ static bool equal_bytes(const uint8_t *left, const uint8_t *right, size_t count)
     return difference == 0U;
 }
 
-static void slot_path(size_t index, char path[SAPFS_MAX_PATH])
+static void slot_path(size_t index, char path[PHIPFS_MAX_PATH])
 {
     static const char prefix[] = PACKAGE_UPLOAD_DIRECTORY "/u";
     static const char suffix[] = ".spk";
     size_t cursor = 0U;
 
-    zero_bytes(path, SAPFS_MAX_PATH);
+    zero_bytes(path, PHIPFS_MAX_PATH);
     for (size_t at = 0U; at < sizeof(prefix) - 1U; ++at) {
         path[cursor++] = prefix[at];
     }
@@ -73,14 +73,14 @@ static void report_clear(struct package_upload_report *report)
     if (report != NULL) {
         zero_bytes(report, sizeof(*report));
         report->status = PACKAGE_UPLOAD_STATUS_STATE;
-        report->filesystem_status = SAPFS_STATUS_OK;
+        report->filesystem_status = PHIPFS_STATUS_OK;
     }
 }
 
 static enum package_upload_status finish(
     struct package_upload_report *report,
     enum package_upload_status status,
-    enum sapfs_status filesystem_status,
+    enum phipfs_status filesystem_status,
     const struct upload_slot *slot,
     size_t index
 )
@@ -104,14 +104,14 @@ static enum package_upload_status finish(
 static enum package_upload_status initialization_failure(
     struct package_upload_report *report,
     enum package_upload_status status,
-    enum sapfs_status filesystem_status,
+    enum phipfs_status filesystem_status,
     bool changed
 )
 {
     if (changed) {
-        enum sapfs_status sync_status = sapfs_sync(SAPFS_VOLUME_DATA);
+        enum phipfs_status sync_status = phipfs_sync(PHIPFS_VOLUME_DATA);
 
-        if (sync_status != SAPFS_STATUS_OK) {
+        if (sync_status != PHIPFS_STATUS_OK) {
             status = PACKAGE_UPLOAD_STATUS_DURABILITY;
             filesystem_status = sync_status;
         }
@@ -171,39 +171,39 @@ enum package_upload_status package_upload_initialize(
         return PACKAGE_UPLOAD_STATUS_NULL_ARGUMENT;
     }
     if (servicing) {
-        return finish(report, PACKAGE_UPLOAD_STATUS_BUSY, SAPFS_STATUS_OK,
+        return finish(report, PACKAGE_UPLOAD_STATUS_BUSY, PHIPFS_STATUS_OK,
             NULL, 0U);
     }
     servicing = true;
     if (initialized) {
         servicing = false;
-        return finish(report, PACKAGE_UPLOAD_STATUS_OK, SAPFS_STATUS_OK,
+        return finish(report, PACKAGE_UPLOAD_STATUS_OK, PHIPFS_STATUS_OK,
             NULL, 0U);
     }
-    enum sapfs_status fs_status = sapfs_mkdir(SAPFS_VOLUME_DATA,
+    enum phipfs_status fs_status = phipfs_mkdir(PHIPFS_VOLUME_DATA,
         PACKAGE_UPLOAD_DIRECTORY);
 
-    if (fs_status == SAPFS_STATUS_OK) {
+    if (fs_status == PHIPFS_STATUS_OK) {
         changed = true;
-    } else if (fs_status != SAPFS_STATUS_EXISTS) {
+    } else if (fs_status != PHIPFS_STATUS_EXISTS) {
         return initialization_failure(report,
             PACKAGE_UPLOAD_STATUS_FILESYSTEM, fs_status, changed);
     }
     for (size_t index = 0U; index < PACKAGE_UPLOAD_SLOT_LIMIT; ++index) {
-        char path[SAPFS_MAX_PATH];
+        char path[PHIPFS_MAX_PATH];
 
         slot_path(index, path);
-        fs_status = sapfs_unlink(SAPFS_VOLUME_DATA, path);
-        if (fs_status == SAPFS_STATUS_OK) {
+        fs_status = phipfs_unlink(PHIPFS_VOLUME_DATA, path);
+        if (fs_status == PHIPFS_STATUS_OK) {
             changed = true;
-        } else if (fs_status != SAPFS_STATUS_NOT_FOUND) {
+        } else if (fs_status != PHIPFS_STATUS_NOT_FOUND) {
             return initialization_failure(report,
                 PACKAGE_UPLOAD_STATUS_FILESYSTEM, fs_status, changed);
         }
     }
     if (changed) {
-        fs_status = sapfs_sync(SAPFS_VOLUME_DATA);
-        if (fs_status != SAPFS_STATUS_OK) {
+        fs_status = phipfs_sync(PHIPFS_VOLUME_DATA);
+        if (fs_status != PHIPFS_STATUS_OK) {
             servicing = false;
             return finish(report, PACKAGE_UPLOAD_STATUS_DURABILITY, fs_status,
                 NULL, 0U);
@@ -215,7 +215,7 @@ enum package_upload_status package_upload_initialize(
     }
     initialized = true;
     servicing = false;
-    return finish(report, PACKAGE_UPLOAD_STATUS_OK, SAPFS_STATUS_OK, NULL, 0U);
+    return finish(report, PACKAGE_UPLOAD_STATUS_OK, PHIPFS_STATUS_OK, NULL, 0U);
 }
 
 enum package_upload_status package_upload_open(
@@ -224,8 +224,8 @@ enum package_upload_status package_upload_open(
 )
 {
     size_t index = PACKAGE_UPLOAD_SLOT_LIMIT;
-    char path[SAPFS_MAX_PATH];
-    sapfs_handle file;
+    char path[PHIPFS_MAX_PATH];
+    phipfs_handle file;
 
     report_clear(report);
     if (report == NULL || owner == 0U) {
@@ -233,10 +233,10 @@ enum package_upload_status package_upload_open(
     }
     if (!initialized) {
         return finish(report, PACKAGE_UPLOAD_STATUS_NOT_INITIALIZED,
-            SAPFS_STATUS_OK, NULL, 0U);
+            PHIPFS_STATUS_OK, NULL, 0U);
     }
     if (servicing) {
-        return finish(report, PACKAGE_UPLOAD_STATUS_BUSY, SAPFS_STATUS_OK,
+        return finish(report, PACKAGE_UPLOAD_STATUS_BUSY, PHIPFS_STATUS_OK,
             NULL, 0U);
     }
     servicing = true;
@@ -249,27 +249,27 @@ enum package_upload_status package_upload_open(
     }
     if (index == PACKAGE_UPLOAD_SLOT_LIMIT) {
         servicing = false;
-        return finish(report, PACKAGE_UPLOAD_STATUS_NO_SLOT, SAPFS_STATUS_OK,
+        return finish(report, PACKAGE_UPLOAD_STATUS_NO_SLOT, PHIPFS_STATUS_OK,
             NULL, 0U);
     }
     slot_path(index, path);
-    enum sapfs_status fs_status = sapfs_create(SAPFS_VOLUME_DATA, path);
+    enum phipfs_status fs_status = phipfs_create(PHIPFS_VOLUME_DATA, path);
 
-    if (fs_status != SAPFS_STATUS_OK) {
+    if (fs_status != PHIPFS_STATUS_OK) {
         servicing = false;
         return finish(report, PACKAGE_UPLOAD_STATUS_FILESYSTEM, fs_status,
             NULL, 0U);
     }
-    fs_status = sapfs_open(SAPFS_VOLUME_DATA, path, SAPFS_ACCESS_WRITE, &file);
-    if (fs_status != SAPFS_STATUS_OK) {
-        enum sapfs_status cleanup_status = sapfs_unlink(SAPFS_VOLUME_DATA,
+    fs_status = phipfs_open(PHIPFS_VOLUME_DATA, path, PHIPFS_ACCESS_WRITE, &file);
+    if (fs_status != PHIPFS_STATUS_OK) {
+        enum phipfs_status cleanup_status = phipfs_unlink(PHIPFS_VOLUME_DATA,
             path);
 
-        if (cleanup_status == SAPFS_STATUS_OK) {
-            cleanup_status = sapfs_sync(SAPFS_VOLUME_DATA);
+        if (cleanup_status == PHIPFS_STATUS_OK) {
+            cleanup_status = phipfs_sync(PHIPFS_VOLUME_DATA);
         }
-        if (cleanup_status != SAPFS_STATUS_OK &&
-            cleanup_status != SAPFS_STATUS_NOT_FOUND) {
+        if (cleanup_status != PHIPFS_STATUS_OK &&
+            cleanup_status != PHIPFS_STATUS_NOT_FOUND) {
             initialized = false;
         }
         servicing = false;
@@ -288,16 +288,16 @@ enum package_upload_status package_upload_open(
     slot->file_present = true;
     if (package_state_sha256_initialize(&slot->sha256) !=
             PACKAGE_STATE_STATUS_OK) {
-        (void)sapfs_close(file);
-        (void)sapfs_unlink(SAPFS_VOLUME_DATA, path);
-        (void)sapfs_sync(SAPFS_VOLUME_DATA);
+        (void)phipfs_close(file);
+        (void)phipfs_unlink(PHIPFS_VOLUME_DATA, path);
+        (void)phipfs_sync(PHIPFS_VOLUME_DATA);
         release_slot(slot);
         servicing = false;
-        return finish(report, PACKAGE_UPLOAD_STATUS_STATE, SAPFS_STATUS_OK,
+        return finish(report, PACKAGE_UPLOAD_STATUS_STATE, PHIPFS_STATUS_OK,
             NULL, 0U);
     }
     servicing = false;
-    return finish(report, PACKAGE_UPLOAD_STATUS_OK, SAPFS_STATUS_OK, slot,
+    return finish(report, PACKAGE_UPLOAD_STATUS_OK, PHIPFS_STATUS_OK, slot,
         index);
 }
 
@@ -324,29 +324,29 @@ enum package_upload_status package_upload_write(
         &index);
 
     if (status != PACKAGE_UPLOAD_STATUS_OK) {
-        return finish(report, status, SAPFS_STATUS_OK, NULL, 0U);
+        return finish(report, status, PHIPFS_STATUS_OK, NULL, 0U);
     }
     if (servicing) {
-        return finish(report, PACKAGE_UPLOAD_STATUS_BUSY, SAPFS_STATUS_OK,
+        return finish(report, PACKAGE_UPLOAD_STATUS_BUSY, PHIPFS_STATUS_OK,
             slot, index);
     }
     if (!slot->file_open || slot->sealed || slot->poisoned) {
-        return finish(report, PACKAGE_UPLOAD_STATUS_STATE, SAPFS_STATUS_OK,
+        return finish(report, PACKAGE_UPLOAD_STATUS_STATE, PHIPFS_STATUS_OK,
             slot, index);
     }
     if (byte_count > PACKAGE_UPLOAD_WRITE_MAX ||
         byte_count > PACKAGE_UPLOAD_MAX_BYTES - slot->byte_count) {
-        return finish(report, PACKAGE_UPLOAD_STATUS_RANGE, SAPFS_STATUS_OK,
+        return finish(report, PACKAGE_UPLOAD_STATUS_RANGE, PHIPFS_STATUS_OK,
             slot, index);
     }
     servicing = true;
     while (total < byte_count) {
         size_t written = 0U;
-        enum sapfs_status fs_status = sapfs_write(slot->file, bytes + total,
+        enum phipfs_status fs_status = phipfs_write(slot->file, bytes + total,
             byte_count - total, &written);
 
         if (written > byte_count - total ||
-            (fs_status == SAPFS_STATUS_OK && written == 0U)) {
+            (fs_status == PHIPFS_STATUS_OK && written == 0U)) {
             slot->poisoned = true;
             *written_bytes = total;
             servicing = false;
@@ -360,12 +360,12 @@ enum package_upload_status package_upload_write(
                 *written_bytes = total;
                 servicing = false;
                 return finish(report, PACKAGE_UPLOAD_STATUS_STATE,
-                    SAPFS_STATUS_OK, slot, index);
+                    PHIPFS_STATUS_OK, slot, index);
             }
             total += written;
             slot->byte_count += written;
         }
-        if (fs_status != SAPFS_STATUS_OK) {
+        if (fs_status != PHIPFS_STATUS_OK) {
             slot->poisoned = true;
             *written_bytes = total;
             servicing = false;
@@ -375,7 +375,7 @@ enum package_upload_status package_upload_write(
     }
     *written_bytes = total;
     servicing = false;
-    return finish(report, PACKAGE_UPLOAD_STATUS_OK, SAPFS_STATUS_OK, slot,
+    return finish(report, PACKAGE_UPLOAD_STATUS_OK, PHIPFS_STATUS_OK, slot,
         index);
 }
 
@@ -399,22 +399,22 @@ enum package_upload_status package_upload_seal(
         &index);
 
     if (status != PACKAGE_UPLOAD_STATUS_OK) {
-        return finish(report, status, SAPFS_STATUS_OK, NULL, 0U);
+        return finish(report, status, PHIPFS_STATUS_OK, NULL, 0U);
     }
     if (servicing) {
-        return finish(report, PACKAGE_UPLOAD_STATUS_BUSY, SAPFS_STATUS_OK,
+        return finish(report, PACKAGE_UPLOAD_STATUS_BUSY, PHIPFS_STATUS_OK,
             slot, index);
     }
     if (!slot->file_open || slot->sealed || slot->poisoned) {
-        return finish(report, PACKAGE_UPLOAD_STATUS_STATE, SAPFS_STATUS_OK,
+        return finish(report, PACKAGE_UPLOAD_STATUS_STATE, PHIPFS_STATUS_OK,
             slot, index);
     }
     servicing = true;
-    enum sapfs_status fs_status = sapfs_close(slot->file);
+    enum phipfs_status fs_status = phipfs_close(slot->file);
 
     slot->file_open = false;
     slot->file = 0U;
-    if (fs_status != SAPFS_STATUS_OK) {
+    if (fs_status != PHIPFS_STATUS_OK) {
         slot->poisoned = true;
         servicing = false;
         return finish(report, PACKAGE_UPLOAD_STATUS_FILESYSTEM, fs_status,
@@ -424,7 +424,7 @@ enum package_upload_status package_upload_seal(
             PACKAGE_STATE_STATUS_OK) {
         slot->poisoned = true;
         servicing = false;
-        return finish(report, PACKAGE_UPLOAD_STATUS_STATE, SAPFS_STATUS_OK,
+        return finish(report, PACKAGE_UPLOAD_STATUS_STATE, PHIPFS_STATUS_OK,
             slot, index);
     }
     for (size_t at = 0U; at < sizeof(digest); ++at) {
@@ -433,17 +433,17 @@ enum package_upload_status package_upload_seal(
     if (slot->byte_count != expected_bytes) {
         slot->poisoned = true;
         servicing = false;
-        return finish(report, PACKAGE_UPLOAD_STATUS_LENGTH, SAPFS_STATUS_OK,
+        return finish(report, PACKAGE_UPLOAD_STATUS_LENGTH, PHIPFS_STATUS_OK,
             slot, index);
     }
     if (!equal_bytes(digest, expected_sha256, sizeof(digest))) {
         slot->poisoned = true;
         servicing = false;
-        return finish(report, PACKAGE_UPLOAD_STATUS_DIGEST, SAPFS_STATUS_OK,
+        return finish(report, PACKAGE_UPLOAD_STATUS_DIGEST, PHIPFS_STATUS_OK,
             slot, index);
     }
-    fs_status = sapfs_sync(SAPFS_VOLUME_DATA);
-    if (fs_status != SAPFS_STATUS_OK) {
+    fs_status = phipfs_sync(PHIPFS_VOLUME_DATA);
+    if (fs_status != PHIPFS_STATUS_OK) {
         slot->poisoned = true;
         servicing = false;
         return finish(report, PACKAGE_UPLOAD_STATUS_DURABILITY, fs_status,
@@ -452,7 +452,7 @@ enum package_upload_status package_upload_seal(
     slot->sealed = true;
     slot->durable = true;
     servicing = false;
-    return finish(report, PACKAGE_UPLOAD_STATUS_OK, SAPFS_STATUS_OK, slot,
+    return finish(report, PACKAGE_UPLOAD_STATUS_OK, PHIPFS_STATUS_OK, slot,
         index);
 }
 
@@ -468,8 +468,8 @@ enum package_upload_status package_upload_read(
 {
     struct upload_slot *slot;
     size_t index;
-    char path[SAPFS_MAX_PATH];
-    sapfs_handle file;
+    char path[PHIPFS_MAX_PATH];
+    phipfs_handle file;
 
     report_clear(report);
     if (report == NULL || read_bytes == NULL ||
@@ -481,35 +481,35 @@ enum package_upload_status package_upload_read(
         &index);
 
     if (status != PACKAGE_UPLOAD_STATUS_OK) {
-        return finish(report, status, SAPFS_STATUS_OK, NULL, 0U);
+        return finish(report, status, PHIPFS_STATUS_OK, NULL, 0U);
     }
     if (servicing) {
-        return finish(report, PACKAGE_UPLOAD_STATUS_BUSY, SAPFS_STATUS_OK,
+        return finish(report, PACKAGE_UPLOAD_STATUS_BUSY, PHIPFS_STATUS_OK,
             slot, index);
     }
     if (!slot->sealed || !slot->durable || slot->poisoned || slot->file_open) {
-        return finish(report, PACKAGE_UPLOAD_STATUS_STATE, SAPFS_STATUS_OK,
+        return finish(report, PACKAGE_UPLOAD_STATUS_STATE, PHIPFS_STATUS_OK,
             slot, index);
     }
     if (capacity > PACKAGE_UPLOAD_WRITE_MAX || offset > slot->byte_count) {
-        return finish(report, PACKAGE_UPLOAD_STATUS_RANGE, SAPFS_STATUS_OK,
+        return finish(report, PACKAGE_UPLOAD_STATUS_RANGE, PHIPFS_STATUS_OK,
             slot, index);
     }
     servicing = true;
     slot_path(index, path);
-    enum sapfs_status fs_status = sapfs_open(SAPFS_VOLUME_DATA, path,
-        SAPFS_ACCESS_READ, &file);
+    enum phipfs_status fs_status = phipfs_open(PHIPFS_VOLUME_DATA, path,
+        PHIPFS_ACCESS_READ, &file);
 
-    if (fs_status == SAPFS_STATUS_OK) {
-        fs_status = sapfs_pread(file, bytes, capacity, offset, read_bytes);
-        enum sapfs_status close_status = sapfs_close(file);
+    if (fs_status == PHIPFS_STATUS_OK) {
+        fs_status = phipfs_pread(file, bytes, capacity, offset, read_bytes);
+        enum phipfs_status close_status = phipfs_close(file);
 
-        if (fs_status == SAPFS_STATUS_OK && close_status != SAPFS_STATUS_OK) {
+        if (fs_status == PHIPFS_STATUS_OK && close_status != PHIPFS_STATUS_OK) {
             fs_status = close_status;
         }
     }
     servicing = false;
-    return finish(report, fs_status == SAPFS_STATUS_OK ?
+    return finish(report, fs_status == PHIPFS_STATUS_OK ?
         PACKAGE_UPLOAD_STATUS_OK : PACKAGE_UPLOAD_STATUS_FILESYSTEM,
         fs_status, slot, index);
 }
@@ -531,13 +531,13 @@ enum package_upload_status package_upload_inspect(
         &index);
 
     if (status != PACKAGE_UPLOAD_STATUS_OK) {
-        return finish(report, status, SAPFS_STATUS_OK, NULL, 0U);
+        return finish(report, status, PHIPFS_STATUS_OK, NULL, 0U);
     }
     if (!slot->sealed || !slot->durable || slot->poisoned || slot->file_open) {
-        return finish(report, PACKAGE_UPLOAD_STATUS_STATE, SAPFS_STATUS_OK,
+        return finish(report, PACKAGE_UPLOAD_STATUS_STATE, PHIPFS_STATUS_OK,
             slot, index);
     }
-    return finish(report, PACKAGE_UPLOAD_STATUS_OK, SAPFS_STATUS_OK, slot,
+    return finish(report, PACKAGE_UPLOAD_STATUS_OK, PHIPFS_STATUS_OK, slot,
         index);
 }
 
@@ -549,7 +549,7 @@ enum package_upload_status package_upload_close(
 {
     struct upload_slot *slot;
     size_t index;
-    char path[SAPFS_MAX_PATH];
+    char path[PHIPFS_MAX_PATH];
 
     report_clear(report);
     if (report == NULL) {
@@ -559,40 +559,40 @@ enum package_upload_status package_upload_close(
         &index);
 
     if (status != PACKAGE_UPLOAD_STATUS_OK) {
-        return finish(report, status, SAPFS_STATUS_OK, NULL, 0U);
+        return finish(report, status, PHIPFS_STATUS_OK, NULL, 0U);
     }
     if (servicing) {
-        return finish(report, PACKAGE_UPLOAD_STATUS_BUSY, SAPFS_STATUS_OK,
+        return finish(report, PACKAGE_UPLOAD_STATUS_BUSY, PHIPFS_STATUS_OK,
             slot, index);
     }
     servicing = true;
     if (slot->file_open) {
-        (void)sapfs_close(slot->file);
+        (void)phipfs_close(slot->file);
         slot->file_open = false;
         slot->file = 0U;
     }
     slot_path(index, path);
     if (slot->file_present) {
-        enum sapfs_status fs_status = sapfs_unlink(SAPFS_VOLUME_DATA, path);
+        enum phipfs_status fs_status = phipfs_unlink(PHIPFS_VOLUME_DATA, path);
 
-        if (fs_status != SAPFS_STATUS_OK &&
-            fs_status != SAPFS_STATUS_NOT_FOUND) {
+        if (fs_status != PHIPFS_STATUS_OK &&
+            fs_status != PHIPFS_STATUS_NOT_FOUND) {
             servicing = false;
             return finish(report, PACKAGE_UPLOAD_STATUS_FILESYSTEM, fs_status,
                 slot, index);
         }
         slot->file_present = false;
     }
-    enum sapfs_status fs_status = sapfs_sync(SAPFS_VOLUME_DATA);
+    enum phipfs_status fs_status = phipfs_sync(PHIPFS_VOLUME_DATA);
 
-    if (fs_status != SAPFS_STATUS_OK) {
+    if (fs_status != PHIPFS_STATUS_OK) {
         servicing = false;
         return finish(report, PACKAGE_UPLOAD_STATUS_DURABILITY, fs_status,
             slot, index);
     }
     release_slot(slot);
     servicing = false;
-    return finish(report, PACKAGE_UPLOAD_STATUS_OK, SAPFS_STATUS_OK, NULL, 0U);
+    return finish(report, PACKAGE_UPLOAD_STATUS_OK, PHIPFS_STATUS_OK, NULL, 0U);
 }
 
 bool package_upload_resources_released(void)

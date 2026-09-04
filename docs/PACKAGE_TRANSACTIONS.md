@@ -60,14 +60,14 @@ retain the old generation until the new one is complete and authoritative.
 
 ## Installed database version 1
 
-The database is at most 32 MiB and starts with `SAPIDB01`. Integers are
+The database is at most 32 MiB and starts with `PHIPDB01`. Integers are
 little-endian. Fixed-width text is ASCII, NUL-terminated, and zero-tailed. Tables
 are contiguous in package, dependency-edge, and owned-file order. SHA-256 covers
 every byte following the 512-byte header.
 
 | Header offset | Bytes | Field |
 | ---: | ---: | --- |
-| 0 | 8 | `SAPIDB01` magic |
+| 0 | 8 | `PHIPDB01` magic |
 | 8 | 2 | format version (`1`) |
 | 10 | 2 | header bytes (`512`) |
 | 12 | 4 | flags (`0`) |
@@ -134,11 +134,11 @@ An executable must be `0555`; other current package-v3 kinds may be `0444` or
 
 ## Authoritative-generation record
 
-The authority record is exactly 128 bytes and starts with `SAPGEN01`.
+The authority record is exactly 128 bytes and starts with `PHIPGN01`.
 
 | Offset | Bytes | Field |
 | ---: | ---: | --- |
-| 0 | 8 | `SAPGEN01` magic |
+| 0 | 8 | `PHIPGN01` magic |
 | 8 | 2 | version (`1`) |
 | 10 | 2 | record bytes (`128`) |
 | 12 | 4 | flags (`0`) |
@@ -163,7 +163,7 @@ independently durable phase writes.
 
 | Offset | Bytes | Field |
 | ---: | ---: | --- |
-| 0 | 8 | `SAPTXN01` magic |
+| 0 | 8 | `PHIPTX01` magic |
 | 8 | 2 | version (`1`) |
 | 10 | 2 | journal bytes (`512`) |
 | 12 | 4 | flags (`0`) |

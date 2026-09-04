@@ -144,7 +144,7 @@ struct native_thread {
 };
 
 struct native_directory_resource {
-    sapfs_directory_handle iterator;
+    phipfs_directory_handle iterator;
     bool active;
 };
 
@@ -779,49 +779,49 @@ static int64_t audio_error(enum audio_native_status status)
     }
 }
 
-static int64_t filesystem_error(enum sapfs_status status)
+static int64_t filesystem_error(enum phipfs_status status)
 {
     switch (status) {
-    case SAPFS_STATUS_OK:
+    case PHIPFS_STATUS_OK:
         return 0;
-    case SAPFS_STATUS_NOT_FOUND:
+    case PHIPFS_STATUS_NOT_FOUND:
         return -PHIPIA_ENOENT;
-    case SAPFS_STATUS_EXISTS:
+    case PHIPFS_STATUS_EXISTS:
         return -PHIPIA_EEXIST;
-    case SAPFS_STATUS_READ_ONLY:
+    case PHIPFS_STATUS_READ_ONLY:
         return -PHIPIA_EROFS;
-    case SAPFS_STATUS_ACCESS:
+    case PHIPFS_STATUS_ACCESS:
         return -PHIPIA_EACCES;
-    case SAPFS_STATUS_NOT_DIRECTORY:
+    case PHIPFS_STATUS_NOT_DIRECTORY:
         return -PHIPIA_ENOTDIR;
-    case SAPFS_STATUS_IS_DIRECTORY:
+    case PHIPFS_STATUS_IS_DIRECTORY:
         return -PHIPIA_EISDIR;
-    case SAPFS_STATUS_NOT_EMPTY:
+    case PHIPFS_STATUS_NOT_EMPTY:
         return -PHIPIA_ENOTEMPTY;
-    case SAPFS_STATUS_BUSY:
+    case PHIPFS_STATUS_BUSY:
         return -PHIPIA_EBUSY;
-    case SAPFS_STATUS_NO_HANDLES:
+    case PHIPFS_STATUS_NO_HANDLES:
         return -PHIPIA_ENOMEM;
-    case SAPFS_STATUS_STALE_HANDLE:
+    case PHIPFS_STATUS_STALE_HANDLE:
         return -PHIPIA_ESTALE;
-    case SAPFS_STATUS_FULL:
-    case SAPFS_STATUS_DIRECTORY_FULL:
+    case PHIPFS_STATUS_FULL:
+    case PHIPFS_STATUS_DIRECTORY_FULL:
         return -PHIPIA_ENOSPC;
-    case SAPFS_STATUS_NAME:
+    case PHIPFS_STATUS_NAME:
         return -PHIPIA_ENAMETOOLONG;
-    case SAPFS_STATUS_PATH:
-    case SAPFS_STATUS_INVALID_ARGUMENT:
-    case SAPFS_STATUS_RANGE:
+    case PHIPFS_STATUS_PATH:
+    case PHIPFS_STATUS_INVALID_ARGUMENT:
+    case PHIPFS_STATUS_RANGE:
         return -PHIPIA_EINVAL;
-    case SAPFS_STATUS_ABSENT:
-    case SAPFS_STATUS_NOT_MOUNTED:
+    case PHIPFS_STATUS_ABSENT:
+    case PHIPFS_STATUS_NOT_MOUNTED:
         return -PHIPIA_ENOENT;
-    case SAPFS_STATUS_CORRUPT:
-    case SAPFS_STATUS_IO:
-    case SAPFS_STATUS_WRITEBACK:
-    case SAPFS_STATUS_RESET:
-    case SAPFS_STATUS_ALREADY_MOUNTED:
-    case SAPFS_STATUS_COUNT:
+    case PHIPFS_STATUS_CORRUPT:
+    case PHIPFS_STATUS_IO:
+    case PHIPFS_STATUS_WRITEBACK:
+    case PHIPFS_STATUS_RESET:
+    case PHIPFS_STATUS_ALREADY_MOUNTED:
+    case PHIPFS_STATUS_COUNT:
     default:
         return -PHIPIA_EIO;
     }
@@ -829,7 +829,7 @@ static int64_t filesystem_error(enum sapfs_status status)
 
 static int64_t package_upload_error(
     enum package_upload_status status,
-    enum sapfs_status filesystem_status
+    enum phipfs_status filesystem_status
 )
 {
     switch (status) {
@@ -876,7 +876,7 @@ static int64_t package_control_error(
         return -PHIPIA_ESTALE;
     case PACKAGE_CONTROL_STATUS_UPLOAD:
         return report == NULL ? -PHIPIA_EIO : package_upload_error(
-            report->upload_status, SAPFS_STATUS_IO);
+            report->upload_status, PHIPFS_STATUS_IO);
     case PACKAGE_CONTROL_STATUS_MANAGER:
         if (report == NULL) {
             return -PHIPIA_EIO;
@@ -1003,14 +1003,14 @@ static bool close_resource(
     }
     switch (type) {
     case PHIPIA_HANDLE_FILE:
-        return sapfs_close((sapfs_handle)resource->words[0]) == SAPFS_STATUS_OK;
+        return phipfs_close((phipfs_handle)resource->words[0]) == PHIPFS_STATUS_OK;
     case PHIPIA_HANDLE_DIRECTORY:
         if (resource->words[0] >= NATIVE_HANDLE_LIMIT) {
             return false;
         }
-        if (sapfs_directory_close(
+        if (phipfs_directory_close(
                 process->directories[resource->words[0]].iterator) !=
-                SAPFS_STATUS_OK) {
+                PHIPFS_STATUS_OK) {
             return false;
         }
         zero_bytes(&process->directories[resource->words[0]],
@@ -1074,7 +1074,7 @@ static bool safe_relative_path(const char *path, size_t length)
 {
     size_t component_start = 0U;
 
-    if (path == NULL || length == 0U || length >= SAPFS_MAX_PATH ||
+    if (path == NULL || length == 0U || length >= PHIPFS_MAX_PATH ||
         path[0] == '/' || path[0] == '\\') {
         return false;
     }
@@ -1108,11 +1108,11 @@ static bool safe_relative_path(const char *path, size_t length)
 static bool path_from_user(
     struct native_process *process,
     const struct phipia_path *path,
-    char output[SAPFS_MAX_PATH],
-    enum sapfs_volume *volume
+    char output[PHIPFS_MAX_PATH],
+    enum phipfs_volume *volume
 )
 {
-    char relative[SAPFS_MAX_PATH];
+    char relative[PHIPFS_MAX_PATH];
     size_t namespace_length;
 
     if (process == NULL || path == NULL || output == NULL || volume == NULL ||
@@ -1123,7 +1123,7 @@ static bool path_from_user(
         return false;
     }
     relative[path->length] = '\0';
-    zero_bytes(output, SAPFS_MAX_PATH);
+    zero_bytes(output, PHIPFS_MAX_PATH);
     if (path->volume == PHIPIA_VOLUME_SYSTEM) {
         size_t resource_length;
 
@@ -1138,7 +1138,7 @@ static bool path_from_user(
             copy_bytes(output, process->manifest.resource_directory,
                 resource_length + 1U);
         } else {
-            if (resource_length + 1U + path->length >= SAPFS_MAX_PATH) {
+            if (resource_length + 1U + path->length >= PHIPFS_MAX_PATH) {
                 return false;
             }
             copy_bytes(output, process->manifest.resource_directory,
@@ -1147,7 +1147,7 @@ static bool path_from_user(
             copy_bytes(output + resource_length + 1U, relative,
                 path->length + 1U);
         }
-        *volume = SAPFS_VOLUME_SYSTEM;
+        *volume = PHIPFS_VOLUME_SYSTEM;
         return true;
     }
     if (path->volume != PHIPIA_VOLUME_DATA ||
@@ -1158,7 +1158,7 @@ static bool path_from_user(
     namespace_length = bounded_length(process->manifest.data_namespace,
         sizeof(process->manifest.data_namespace));
     if (namespace_length == 0U ||
-        namespace_length + 1U + path->length >= SAPFS_MAX_PATH) {
+        namespace_length + 1U + path->length >= PHIPFS_MAX_PATH) {
         return false;
     }
     copy_bytes(output, process->manifest.data_namespace, namespace_length);
@@ -1169,7 +1169,7 @@ static bool path_from_user(
         copy_bytes(output + namespace_length + 1U, relative,
             path->length + 1U);
     }
-    *volume = SAPFS_VOLUME_DATA;
+    *volume = PHIPFS_VOLUME_DATA;
     return true;
 }
 
@@ -1180,21 +1180,21 @@ static bool read_system_file(
     size_t *read_bytes
 )
 {
-    sapfs_handle handle;
+    phipfs_handle handle;
     size_t total = 0U;
 
     if (path == NULL || destination == NULL || read_bytes == NULL ||
-        sapfs_open(SAPFS_VOLUME_SYSTEM, path, SAPFS_ACCESS_READ, &handle) !=
-            SAPFS_STATUS_OK) {
+        phipfs_open(PHIPFS_VOLUME_SYSTEM, path, PHIPFS_ACCESS_READ, &handle) !=
+            PHIPFS_STATUS_OK) {
         return false;
     }
     while (total < capacity) {
         size_t completed = 0U;
-        enum sapfs_status status = sapfs_read(handle, destination + total,
+        enum phipfs_status status = phipfs_read(handle, destination + total,
             capacity - total, &completed);
 
-        if (status != SAPFS_STATUS_OK) {
-            (void)sapfs_close(handle);
+        if (status != PHIPFS_STATUS_OK) {
+            (void)phipfs_close(handle);
             return false;
         }
         total += completed;
@@ -1202,7 +1202,7 @@ static bool read_system_file(
             break;
         }
     }
-    if (sapfs_close(handle) != SAPFS_STATUS_OK) {
+    if (phipfs_close(handle) != PHIPFS_STATUS_OK) {
         return false;
     }
     *read_bytes = total;
@@ -1317,7 +1317,7 @@ static bool dynamic_name_equal(
 static bool dynamic_name_path(
     const struct native_process *process,
     const struct elf64_dynamic_name *name,
-    char path[static SAPFS_MAX_PATH]
+    char path[static PHIPFS_MAX_PATH]
 )
 {
     size_t catalog_length;
@@ -1334,10 +1334,10 @@ static bool dynamic_name_path(
             prefix_length = index + 1U;
         }
     }
-    if (prefix_length + name->length >= SAPFS_MAX_PATH) {
+    if (prefix_length + name->length >= PHIPFS_MAX_PATH) {
         return false;
     }
-    zero_bytes(path, SAPFS_MAX_PATH);
+    zero_bytes(path, PHIPFS_MAX_PATH);
     copy_bytes(path, process->manifest.dynamic_catalog, prefix_length);
     copy_bytes(path + prefix_length, name->bytes, name->length);
     return true;
@@ -1493,7 +1493,7 @@ static enum native_process_status dynamic_read_catalog(
 )
 {
     char path[NATIVE_MANIFEST_PATH_BYTES + 1U];
-    struct sapfs_stat stat;
+    struct phipfs_stat stat;
     uint8_t *bytes = NULL;
     size_t read_bytes = 0U;
     const size_t length = bounded_length(process->manifest.dynamic_catalog,
@@ -1505,7 +1505,7 @@ static enum native_process_status dynamic_read_catalog(
     }
     zero_bytes(path, sizeof(path));
     copy_bytes(path, process->manifest.dynamic_catalog, length);
-    if (sapfs_stat_path(SAPFS_VOLUME_SYSTEM, path, &stat) != SAPFS_STATUS_OK ||
+    if (phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, path, &stat) != PHIPFS_STATUS_OK ||
         stat.directory || stat.size != ELF64_DYNAMIC_CATALOG_BYTES) {
         return result;
     }
@@ -1533,8 +1533,8 @@ static enum native_process_status dynamic_load_library(
 {
     const struct elf64_dynamic_catalog_entry *catalog =
         dynamic_catalog_entry(load, name);
-    char path[SAPFS_MAX_PATH];
-    struct sapfs_stat stat;
+    char path[PHIPFS_MAX_PATH];
+    struct phipfs_stat stat;
     size_t read_bytes = 0U;
     size_t index;
 
@@ -1542,7 +1542,7 @@ static enum native_process_status dynamic_load_library(
         load->library_count + 1U >= ELF64_DYNAMIC_MAX_OBJECTS) {
         return NATIVE_PROCESS_IMAGE_REFUSED;
     }
-    if (sapfs_stat_path(SAPFS_VOLUME_SYSTEM, path, &stat) != SAPFS_STATUS_OK ||
+    if (phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, path, &stat) != PHIPFS_STATUS_OK ||
         stat.directory || stat.size == 0U ||
         stat.size > NATIVE_ELF_MAX_FILE_BYTES) {
         return NATIVE_PROCESS_IMAGE_REFUSED;
@@ -2574,10 +2574,10 @@ static enum native_process_status load_process(
 )
 {
     uint8_t manifest_bytes[NATIVE_MANIFEST_BYTES];
-    struct sapfs_stat executable_stat;
+    struct phipfs_stat executable_stat;
     uint8_t *elf = NULL;
-    char executable[SAPFS_MAX_PATH];
-    char data_namespace[SAPFS_MAX_PATH];
+    char executable[PHIPFS_MAX_PATH];
+    char data_namespace[PHIPFS_MAX_PATH];
     size_t manifest_read = 0U;
     size_t elf_read = 0U;
     size_t executable_length;
@@ -2605,8 +2605,8 @@ static enum native_process_status load_process(
     }
     zero_bytes(executable, sizeof(executable));
     copy_bytes(executable, manifest_bytes + 112U, executable_length);
-    if (sapfs_stat_path(SAPFS_VOLUME_SYSTEM, executable, &executable_stat) !=
-            SAPFS_STATUS_OK || executable_stat.directory ||
+    if (phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, executable, &executable_stat) !=
+            PHIPFS_STATUS_OK || executable_stat.directory ||
         executable_stat.size == 0U ||
         executable_stat.size > NATIVE_ELF_MAX_FILE_BYTES) {
         return NATIVE_PROCESS_EXECUTABLE_OPEN;
@@ -2666,11 +2666,11 @@ static enum native_process_status load_process(
     copy_bytes(data_namespace, process->manifest.data_namespace,
         namespace_length);
     {
-        const enum sapfs_status mkdir_status = sapfs_mkdir(SAPFS_VOLUME_DATA,
+        const enum phipfs_status mkdir_status = phipfs_mkdir(PHIPFS_VOLUME_DATA,
             data_namespace);
 
-        if (mkdir_status != SAPFS_STATUS_OK &&
-            mkdir_status != SAPFS_STATUS_EXISTS) {
+        if (mkdir_status != PHIPFS_STATUS_OK &&
+            mkdir_status != PHIPFS_STATUS_EXISTS) {
             result = NATIVE_PROCESS_DATA_NAMESPACE;
             goto finish;
         }
@@ -3082,12 +3082,12 @@ static int64_t syscall_file_open(
 {
     struct phipia_file_open_request request;
     struct native_resource resource = {{0U, 0U, 0U, 0U}};
-    char path[SAPFS_MAX_PATH];
-    enum sapfs_volume volume;
-    enum sapfs_access access;
-    sapfs_handle file;
+    char path[PHIPFS_MAX_PATH];
+    enum phipfs_volume volume;
+    enum phipfs_access access;
+    phipfs_handle file;
     phipia_handle_t handle;
-    enum sapfs_status status;
+    enum phipfs_status status;
 
     if (!copy_from_user(process, &request, request_address,
             sizeof(request))) {
@@ -3100,7 +3100,7 @@ static int64_t syscall_file_open(
         !path_from_user(process, &request.path, path, &volume)) {
         return -PHIPIA_EINVAL;
     }
-    if (volume == SAPFS_VOLUME_SYSTEM &&
+    if (volume == PHIPFS_VOLUME_SYSTEM &&
         (request.flags & (PHIPIA_OPEN_WRITE | PHIPIA_OPEN_CREATE |
             PHIPIA_OPEN_TRUNCATE)) != 0U) {
         return -PHIPIA_EACCES;
@@ -3111,23 +3111,23 @@ static int64_t syscall_file_open(
         return -PHIPIA_EACCES;
     }
     access = (request.flags & PHIPIA_OPEN_WRITE) != 0U ?
-        ((request.flags & PHIPIA_OPEN_READ) != 0U ? SAPFS_ACCESS_READ_WRITE :
-            SAPFS_ACCESS_WRITE) : SAPFS_ACCESS_READ;
+        ((request.flags & PHIPIA_OPEN_READ) != 0U ? PHIPFS_ACCESS_READ_WRITE :
+            PHIPFS_ACCESS_WRITE) : PHIPFS_ACCESS_READ;
     cpu_interrupt_enable();
-    status = sapfs_stat_path(volume, path, &(struct sapfs_stat){0});
-    if (status == SAPFS_STATUS_NOT_FOUND &&
+    status = phipfs_stat_path(volume, path, &(struct phipfs_stat){0});
+    if (status == PHIPFS_STATUS_NOT_FOUND &&
         (request.flags & PHIPIA_OPEN_CREATE) != 0U) {
-        status = sapfs_create(volume, path);
+        status = phipfs_create(volume, path);
     }
-    if (status == SAPFS_STATUS_OK &&
+    if (status == PHIPFS_STATUS_OK &&
         (request.flags & PHIPIA_OPEN_TRUNCATE) != 0U) {
-        status = sapfs_truncate(volume, path, 0U);
+        status = phipfs_truncate(volume, path, 0U);
     }
-    if (status == SAPFS_STATUS_OK) {
-        status = sapfs_open(volume, path, access, &file);
+    if (status == PHIPFS_STATUS_OK) {
+        status = phipfs_open(volume, path, access, &file);
     }
     cpu_interrupt_disable();
-    if (status != SAPFS_STATUS_OK) {
+    if (status != PHIPFS_STATUS_OK) {
         return filesystem_error(status);
     }
     resource.words[0] = file;
@@ -3137,7 +3137,7 @@ static int64_t syscall_file_open(
 
         if (handle_status != NATIVE_HANDLE_OK) {
             cpu_interrupt_enable();
-            (void)sapfs_close(file);
+            (void)phipfs_close(file);
             cpu_interrupt_disable();
             return handle_error(handle_status);
         }
@@ -3185,18 +3185,18 @@ static int64_t syscall_file_io(
             return -PHIPIA_EINVAL;
         }
         cpu_interrupt_enable();
-        const enum sapfs_status seek_status = sapfs_seek(
-            (sapfs_handle)resource->words[0], (int64_t)request.offset,
-            SAPFS_SEEK_START, &position);
+        const enum phipfs_status seek_status = phipfs_seek(
+            (phipfs_handle)resource->words[0], (int64_t)request.offset,
+            PHIPFS_SEEK_START, &position);
         cpu_interrupt_disable();
-        if (seek_status != SAPFS_STATUS_OK) {
+        if (seek_status != PHIPFS_STATUS_OK) {
             return filesystem_error(seek_status);
         }
     }
     while (completed < request.length) {
         size_t chunk = request.length - completed;
         size_t transferred = 0U;
-        enum sapfs_status status;
+        enum phipfs_status status;
 
         if (chunk > sizeof(process->transfer)) {
             chunk = sizeof(process->transfer);
@@ -3207,22 +3207,22 @@ static int64_t syscall_file_io(
         }
         cpu_interrupt_enable();
         if (write) {
-            status = sapfs_write((sapfs_handle)resource->words[0],
+            status = phipfs_write((phipfs_handle)resource->words[0],
                 process->transfer, chunk, &transferred);
         } else if (request.offset != UINT64_MAX) {
             if (completed > UINT64_MAX - request.offset) {
                 cpu_interrupt_disable();
                 return completed == 0U ? -PHIPIA_EINVAL : (int64_t)completed;
             }
-            status = sapfs_pread((sapfs_handle)resource->words[0],
+            status = phipfs_pread((phipfs_handle)resource->words[0],
                 process->transfer, chunk, request.offset + completed,
                 &transferred);
         } else {
-            status = sapfs_read((sapfs_handle)resource->words[0],
+            status = phipfs_read((phipfs_handle)resource->words[0],
                 process->transfer, chunk, &transferred);
         }
         cpu_interrupt_disable();
-        if (status != SAPFS_STATUS_OK) {
+        if (status != PHIPFS_STATUS_OK) {
             return completed == 0U ? filesystem_error(status) :
                 (int64_t)completed;
         }
@@ -3246,9 +3246,9 @@ static int64_t syscall_file_seek(
 {
     struct phipia_seek_request request;
     struct native_resource *resource;
-    enum sapfs_seek_origin origin;
+    enum phipfs_seek_origin origin;
     uint64_t position;
-    enum sapfs_status status;
+    enum phipfs_status status;
 
     if (!copy_from_user(process, &request, request_address,
             sizeof(request))) {
@@ -3263,14 +3263,14 @@ static int64_t syscall_file_seek(
             PHIPIA_HANDLE_FILE, &resource) != NATIVE_HANDLE_OK) {
         return -PHIPIA_EBADF;
     }
-    origin = request.origin == PHIPIA_SEEK_START ? SAPFS_SEEK_START :
-        (request.origin == PHIPIA_SEEK_CURRENT ? SAPFS_SEEK_CURRENT :
-            SAPFS_SEEK_END);
+    origin = request.origin == PHIPIA_SEEK_START ? PHIPFS_SEEK_START :
+        (request.origin == PHIPIA_SEEK_CURRENT ? PHIPFS_SEEK_CURRENT :
+            PHIPFS_SEEK_END);
     cpu_interrupt_enable();
-    status = sapfs_seek((sapfs_handle)resource->words[0], request.offset,
+    status = phipfs_seek((phipfs_handle)resource->words[0], request.offset,
         origin, &position);
     cpu_interrupt_disable();
-    return status == SAPFS_STATUS_OK ? (int64_t)position :
+    return status == PHIPFS_STATUS_OK ? (int64_t)position :
         filesystem_error(status);
 }
 
@@ -3284,10 +3284,10 @@ static int64_t syscall_path_stat(
     struct phipia_path_stat output = {
         sizeof(output), PHIPIA_ABI_VERSION, 0U, 0U, 0U
     };
-    struct sapfs_stat stat;
-    char path[SAPFS_MAX_PATH];
-    enum sapfs_volume volume;
-    enum sapfs_status status;
+    struct phipfs_stat stat;
+    char path[PHIPFS_MAX_PATH];
+    enum phipfs_volume volume;
+    enum phipfs_status status;
 
     if (!copy_from_user(process, &path_request, path_address,
             sizeof(path_request)) ||
@@ -3298,9 +3298,9 @@ static int64_t syscall_path_stat(
         return -PHIPIA_EINVAL;
     }
     cpu_interrupt_enable();
-    status = sapfs_stat_path(volume, path, &stat);
+    status = phipfs_stat_path(volume, path, &stat);
     cpu_interrupt_disable();
-    if (status != SAPFS_STATUS_OK) {
+    if (status != PHIPFS_STATUS_OK) {
         return filesystem_error(status);
     }
     output.byte_length = stat.size;
@@ -3317,10 +3317,10 @@ static int64_t syscall_directory_open(
 {
     struct phipia_path path_request;
     struct native_resource resource = {{0U, 0U, 0U, 0U}};
-    char path[SAPFS_MAX_PATH];
-    enum sapfs_volume volume;
-    enum sapfs_status status;
-    sapfs_directory_handle iterator = 0U;
+    char path[PHIPFS_MAX_PATH];
+    enum phipfs_volume volume;
+    enum phipfs_status status;
+    phipfs_directory_handle iterator = 0U;
     phipia_handle_t handle;
     size_t slot = SIZE_MAX;
 
@@ -3341,9 +3341,9 @@ static int64_t syscall_directory_open(
         return -PHIPIA_ENOMEM;
     }
     cpu_interrupt_enable();
-    status = sapfs_directory_open(volume, path, &iterator);
+    status = phipfs_directory_open(volume, path, &iterator);
     cpu_interrupt_disable();
-    if (status != SAPFS_STATUS_OK) {
+    if (status != PHIPFS_STATUS_OK) {
         return filesystem_error(status);
     }
     process->directories[slot].iterator = iterator;
@@ -3354,7 +3354,7 @@ static int64_t syscall_directory_open(
             &process->handles, PHIPIA_HANDLE_DIRECTORY, &resource, &handle);
 
         if (handle_status != NATIVE_HANDLE_OK) {
-            (void)sapfs_directory_close(iterator);
+            (void)phipfs_directory_close(iterator);
             zero_bytes(&process->directories[slot],
                 sizeof(process->directories[slot]));
             return handle_error(handle_status);
@@ -3373,11 +3373,11 @@ static int64_t syscall_directory_read(
 )
 {
     struct native_resource *resource;
-    struct sapfs_list_entry entry;
+    struct phipfs_list_entry entry;
     struct phipia_directory_entry output;
     struct native_directory_resource *directory;
     bool present = false;
-    enum sapfs_status status;
+    enum phipfs_status status;
 
     if (!validate_user_range(process, output_address, sizeof(output), true)) {
         return -PHIPIA_EFAULT;
@@ -3398,9 +3398,9 @@ static int64_t syscall_directory_read(
         return -PHIPIA_ESTALE;
     }
     cpu_interrupt_enable();
-    status = sapfs_directory_read(directory->iterator, &entry, &present);
+    status = phipfs_directory_read(directory->iterator, &entry, &present);
     cpu_interrupt_disable();
-    if (status != SAPFS_STATUS_OK) {
+    if (status != PHIPFS_STATUS_OK) {
         return filesystem_error(status);
     }
     if (!present) {
@@ -3432,10 +3432,10 @@ static int64_t syscall_single_path_mutation(
 )
 {
     struct phipia_path path_request;
-    struct sapfs_stat stat;
-    char path[SAPFS_MAX_PATH];
-    enum sapfs_volume volume;
-    enum sapfs_status status;
+    struct phipfs_stat stat;
+    char path[PHIPFS_MAX_PATH];
+    enum phipfs_volume volume;
+    enum phipfs_status status;
 
     if (!copy_from_user(process, &path_request, path_address,
             sizeof(path_request))) {
@@ -3444,20 +3444,20 @@ static int64_t syscall_single_path_mutation(
     if (!path_from_user(process, &path_request, path, &volume)) {
         return -PHIPIA_EINVAL;
     }
-    if (volume != SAPFS_VOLUME_DATA ||
+    if (volume != PHIPFS_VOLUME_DATA ||
         (process->manifest.capabilities & PHIPIA_CAP_DATA_WRITE) == 0U) {
         return -PHIPIA_EACCES;
     }
     cpu_interrupt_enable();
     if (number == PHIPIA_SYS_PATH_MKDIR) {
-        status = sapfs_mkdir(volume, path);
+        status = phipfs_mkdir(volume, path);
     } else if (number == PHIPIA_SYS_PATH_TRUNCATE) {
-        status = sapfs_truncate(volume, path, value);
+        status = phipfs_truncate(volume, path, value);
     } else {
-        status = sapfs_stat_path(volume, path, &stat);
-        if (status == SAPFS_STATUS_OK) {
-            status = stat.directory ? sapfs_rmdir(volume, path) :
-                sapfs_unlink(volume, path);
+        status = phipfs_stat_path(volume, path, &stat);
+        if (status == PHIPFS_STATUS_OK) {
+            status = stat.directory ? phipfs_rmdir(volume, path) :
+                phipfs_unlink(volume, path);
         }
     }
     cpu_interrupt_disable();
@@ -3466,14 +3466,14 @@ static int64_t syscall_single_path_mutation(
 
 static bool replacement_backup_path(
     const char *destination,
-    char backup[SAPFS_MAX_PATH]
+    char backup[PHIPFS_MAX_PATH]
 )
 {
     size_t length = bounded_length((const uint8_t *)destination,
-        SAPFS_MAX_PATH);
+        PHIPFS_MAX_PATH);
     size_t slash = SIZE_MAX;
 
-    if (length == SAPFS_MAX_PATH) {
+    if (length == PHIPFS_MAX_PATH) {
         return false;
     }
     for (size_t index = 0U; index < length; ++index) {
@@ -3481,15 +3481,15 @@ static bool replacement_backup_path(
             slash = index;
         }
     }
-    zero_bytes(backup, SAPFS_MAX_PATH);
+    zero_bytes(backup, PHIPFS_MAX_PATH);
     if (slash != SIZE_MAX) {
-        if (slash + 1U + 10U >= SAPFS_MAX_PATH) {
+        if (slash + 1U + 10U >= PHIPFS_MAX_PATH) {
             return false;
         }
         copy_bytes(backup, destination, slash + 1U);
-        copy_bytes(backup + slash + 1U, "SAPBAK.TMP", 11U);
+        copy_bytes(backup + slash + 1U, "PHIPBAK.TMP", 11U);
     } else {
-        copy_bytes(backup, "SAPBAK.TMP", 11U);
+        copy_bytes(backup, "PHIPBAK.TMP", 11U);
     }
     return true;
 }
@@ -3501,14 +3501,14 @@ static int64_t syscall_rename(
 )
 {
     struct phipia_rename_request request;
-    struct sapfs_stat destination_stat;
-    struct sapfs_stat backup_stat;
-    char source[SAPFS_MAX_PATH];
-    char destination[SAPFS_MAX_PATH];
-    char backup[SAPFS_MAX_PATH];
-    enum sapfs_volume source_volume;
-    enum sapfs_volume destination_volume;
-    enum sapfs_status status;
+    struct phipfs_stat destination_stat;
+    struct phipfs_stat backup_stat;
+    char source[PHIPFS_MAX_PATH];
+    char destination[PHIPFS_MAX_PATH];
+    char backup[PHIPFS_MAX_PATH];
+    enum phipfs_volume source_volume;
+    enum phipfs_volume destination_volume;
+    enum phipfs_status status;
 
     if (!copy_from_user(process, &request, request_address,
             sizeof(request))) {
@@ -3522,26 +3522,26 @@ static int64_t syscall_rename(
             &destination_volume)) {
         return -PHIPIA_EINVAL;
     }
-    if (source_volume != SAPFS_VOLUME_DATA ||
-        destination_volume != SAPFS_VOLUME_DATA ||
+    if (source_volume != PHIPFS_VOLUME_DATA ||
+        destination_volume != PHIPFS_VOLUME_DATA ||
         (process->manifest.capabilities & PHIPIA_CAP_DATA_WRITE) == 0U) {
         return -PHIPIA_EACCES;
     }
     cpu_interrupt_enable();
-    status = sapfs_rename(SAPFS_VOLUME_DATA, source, destination);
-    if (status == SAPFS_STATUS_EXISTS && replace &&
+    status = phipfs_rename(PHIPFS_VOLUME_DATA, source, destination);
+    if (status == PHIPFS_STATUS_EXISTS && replace &&
         replacement_backup_path(destination, backup) &&
-        sapfs_stat_path(SAPFS_VOLUME_DATA, destination, &destination_stat) ==
-            SAPFS_STATUS_OK && !destination_stat.directory &&
-        sapfs_stat_path(SAPFS_VOLUME_DATA, backup, &backup_stat) ==
-            SAPFS_STATUS_NOT_FOUND) {
-        status = sapfs_rename(SAPFS_VOLUME_DATA, destination, backup);
-        if (status == SAPFS_STATUS_OK) {
-            status = sapfs_rename(SAPFS_VOLUME_DATA, source, destination);
-            if (status == SAPFS_STATUS_OK) {
-                status = sapfs_unlink(SAPFS_VOLUME_DATA, backup);
+        phipfs_stat_path(PHIPFS_VOLUME_DATA, destination, &destination_stat) ==
+            PHIPFS_STATUS_OK && !destination_stat.directory &&
+        phipfs_stat_path(PHIPFS_VOLUME_DATA, backup, &backup_stat) ==
+            PHIPFS_STATUS_NOT_FOUND) {
+        status = phipfs_rename(PHIPFS_VOLUME_DATA, destination, backup);
+        if (status == PHIPFS_STATUS_OK) {
+            status = phipfs_rename(PHIPFS_VOLUME_DATA, source, destination);
+            if (status == PHIPFS_STATUS_OK) {
+                status = phipfs_unlink(PHIPFS_VOLUME_DATA, backup);
             } else {
-                (void)sapfs_rename(SAPFS_VOLUME_DATA, backup, destination);
+                (void)phipfs_rename(PHIPFS_VOLUME_DATA, backup, destination);
             }
         }
     }
@@ -3554,23 +3554,23 @@ static int64_t syscall_volume_sync(
     uint64_t volume_number
 )
 {
-    enum sapfs_volume volume;
+    enum phipfs_volume volume;
 
     if (volume_number == PHIPIA_VOLUME_SYSTEM) {
         if ((process->manifest.capabilities & PHIPIA_CAP_SYSTEM_READ) == 0U) {
             return -PHIPIA_EACCES;
         }
-        volume = SAPFS_VOLUME_SYSTEM;
+        volume = PHIPFS_VOLUME_SYSTEM;
     } else if (volume_number == PHIPIA_VOLUME_DATA) {
         if ((process->manifest.capabilities & PHIPIA_CAP_DATA_WRITE) == 0U) {
             return -PHIPIA_EACCES;
         }
-        volume = SAPFS_VOLUME_DATA;
+        volume = PHIPFS_VOLUME_DATA;
     } else {
         return -PHIPIA_EINVAL;
     }
     cpu_interrupt_enable();
-    const enum sapfs_status status = sapfs_sync(volume);
+    const enum phipfs_status status = phipfs_sync(volume);
     cpu_interrupt_disable();
     return filesystem_error(status);
 }
@@ -3585,22 +3585,22 @@ static int64_t syscall_volume_space(
         sizeof(output), PHIPIA_ABI_VERSION, 0U, 0U,
         (uint32_t)PAGING_PAGE_SIZE, 0U
     };
-    enum sapfs_volume volume;
-    struct sapfs_drive_info drive;
+    enum phipfs_volume volume;
+    struct phipfs_drive_info drive;
 
     if (!validate_user_range(process, output_address, sizeof(output), true)) {
         return -PHIPIA_EFAULT;
     }
     if (volume_number == PHIPIA_VOLUME_SYSTEM &&
         (process->manifest.capabilities & PHIPIA_CAP_SYSTEM_READ) != 0U) {
-        volume = SAPFS_VOLUME_SYSTEM;
+        volume = PHIPFS_VOLUME_SYSTEM;
     } else if (volume_number == PHIPIA_VOLUME_DATA &&
         (process->manifest.capabilities & PHIPIA_CAP_DATA_READ) != 0U) {
-        volume = SAPFS_VOLUME_DATA;
+        volume = PHIPFS_VOLUME_DATA;
     } else {
         return -PHIPIA_EACCES;
     }
-    drive = sapfs_drive(volume);
+    drive = phipfs_drive(volume);
     if (!drive.mounted || !drive.healthy) {
         return -PHIPIA_EIO;
     }

@@ -30,7 +30,7 @@ WELCOME = b"hello from the Phipia network\n"
 # the server in those two scenarios, which is the only way to exercise a
 # passive open from outside.
 KNOCK_PORT = 4243
-KNOCK_MAGIC = b"SAPL"
+KNOCK_MAGIC = b"PHIP"
 LISTEN_REQUEST = b"PHIPIA LISTEN\n"
 REFUSAL_NOTICE = b"REFUSED"
 CLIENT_PORT = 50100

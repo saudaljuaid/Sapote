@@ -38,7 +38,7 @@ DOCK_POINTER_Y = 748
 DOCK_FILES = 0
 DOCK_TERMINAL = 1
 DOCK_NOTES = 2
-DOCK_STUDIO = 3
+DOCK_MEDIA_EDITOR = 3
 DOCK_CAMERA = 4
 DOCK_CANVAS = 5
 DOCK_STORE = 6
@@ -348,7 +348,7 @@ def record_live_window(args, qmp, pointer, work, output, durable_data, video,
     try:
         wait_until(started, 0.25)
         pointer.prime_terminal()
-        capture_png(qmp, work, output, "phipia-classic-dock")
+        capture_png(qmp, work, output, "phipia-foundation-dock")
         wait_until(started, 1.00)
         pointer.move_to(dock_item_center(DOCK_SETTINGS), DOCK_POINTER_Y)
         pointer.click()
@@ -392,7 +392,7 @@ def record_live_window(args, qmp, pointer, work, output, durable_data, video,
         pointer.click()
         pointer.settle_guest(0.90)
         wait_until(started, 7.65)
-        capture_png(qmp, work, output, "phipia-classic-files")
+        capture_png(qmp, work, output, "phipia-foundation-files")
         capture_png(qmp, work, output, "phipia-multitasking")
         pointer.move_to(553, 206)
         pointer.click()
@@ -400,11 +400,11 @@ def record_live_window(args, qmp, pointer, work, output, durable_data, video,
         send_text(qmp, " UI redesign nailed.", delay=0.020)
         qmp.hmp("sendkey ctrl-s")
         wait_until(started, 9.80)
-        capture_png(qmp, work, output, "phipia-classic-notes")
+        capture_png(qmp, work, output, "phipia-foundation-notes")
 
         wait_until(started, 10.60)
         pointer.rehome()
-        pointer.move_to(dock_item_center(DOCK_STUDIO), DOCK_POINTER_Y)
+        pointer.move_to(dock_item_center(DOCK_MEDIA_EDITOR), DOCK_POINTER_Y)
         pointer.click()
         pointer.settle_guest(0.30)
         wait_until(started, 11.50)
@@ -412,7 +412,7 @@ def record_live_window(args, qmp, pointer, work, output, durable_data, video,
                      (406, 141)):
             pointer.move_to(x, y)
             pointer.click()
-        capture_png(qmp, work, output, "phipia-classic-media-editor")
+        capture_png(qmp, work, output, "phipia-foundation-media-editor")
 
         wait_until(started, 15.20)
         pointer.move_to(dock_item_center(DOCK_SETTINGS), DOCK_POINTER_Y)
@@ -436,12 +436,12 @@ def record_live_window(args, qmp, pointer, work, output, durable_data, video,
         finish_recording(recording)
 
         pointer.rehome()
-        pointer.move_to(dock_item_center(DOCK_STUDIO), DOCK_POINTER_Y)
+        pointer.move_to(dock_item_center(DOCK_MEDIA_EDITOR), DOCK_POINTER_Y)
         pointer.click()
         pointer.settle_guest(0.50)
         pointer.move_to(476, 141)
         click_export_and_wait(pointer, durable_data)
-        capture_png(qmp, work, output, "phipia-classic-media-editor")
+        capture_png(qmp, work, output, "phipia-foundation-media-editor")
     finally:
         if recording.poll() is None:
             recording.kill()
@@ -474,7 +474,7 @@ def record_fast_demo(args, qmp, pointer, work, output, video, crop):
         pointer.rehome()
         pointer.move_to(dock_item_center(DOCK_FILES), DOCK_POINTER_Y)
         for index in (*range(DOCK_ITEM_COUNT), DOCK_CANVAS, DOCK_CAMERA,
-                      DOCK_STUDIO):
+                      DOCK_MEDIA_EDITOR):
             pointer.move_to(dock_item_center(index), DOCK_POINTER_Y)
             time.sleep(0.05)
         capture_png(qmp, work, output, "phipia-fast-taskbar-hover")
@@ -518,7 +518,7 @@ def record_fast_demo(args, qmp, pointer, work, output, video, crop):
         capture_png(qmp, work, output, "phipia-fast-notes")
 
         wait_until(started, 16.00)
-        pointer.move_to(dock_item_center(DOCK_STUDIO), DOCK_POINTER_Y)
+        pointer.move_to(dock_item_center(DOCK_MEDIA_EDITOR), DOCK_POINTER_Y)
         pointer.click()
         pointer.settle_guest(0.70)
         for x, y in ((190, 141), (262, 141), (336, 141), (600, 560)):
@@ -534,7 +534,7 @@ def record_fast_demo(args, qmp, pointer, work, output, video, crop):
         capture_png(qmp, work, output, "phipia-fast-multitasking")
 
         wait_until(started, 22.20)
-        for index in (*range(DOCK_ITEM_COUNT), DOCK_STUDIO):
+        for index in (*range(DOCK_ITEM_COUNT), DOCK_MEDIA_EDITOR):
             pointer.move_to(dock_item_center(index), DOCK_POINTER_Y)
             time.sleep(0.04)
         wait_until(started, args.seconds)
@@ -762,7 +762,7 @@ def capture_phipia_session(args, qmp, pointer, work, output, durable_data):
     # carries a real BMP, so opening imports it. Add text and a warm effect,
     # adjust the effect strength, seek, save both project layers, and export
     # the composed stage through the real FAT32/NVMe path.
-    open_app(DOCK_STUDIO, 1.10)
+    open_app(DOCK_MEDIA_EDITOR, 1.10)
     pointer.move_to(915, 89)
     pointer.click()
     pointer.settle_guest(0.50)
@@ -950,10 +950,10 @@ def main():
                         "wallpaper_open", "wallpaper_selected",
                         "appearance_dark",
                         "files_open", "multitask_proof", "file_open",
-                        "note_saved", "studio_open", "studio_new",
-                        "studio_import", "studio_trim", "studio_seek",
-                        "studio_save", "settings_reopen", "appearance_light",
-                        "fluid_hover", "window_drag", "studio_export",
+                        "note_saved", "media_editor_open", "media_editor_new",
+                        "media_editor_import", "media_editor_trim", "media_editor_seek",
+                        "media_editor_save", "settings_reopen", "appearance_light",
+                        "fluid_hover", "window_drag", "media_editor_export",
                     }
                 captured_frames = []
                 capture_times = []
@@ -970,7 +970,7 @@ def main():
                     if elapsed >= 0.10 and "dock_hover" not in events:
                         pointer.prime_terminal()
                         capture_png(qmp, work, output,
-                                    "phipia-classic-dock")
+                                    "phipia-foundation-dock")
                         for dock_index in (*range(DOCK_ITEM_COUNT),
                                            DOCK_CANVAS):
                             pointer.move_to(dock_item_center(dock_index),
@@ -1029,7 +1029,7 @@ def main():
                         pointer.click()
                         pointer.settle_guest(0.90)
                         capture_png(qmp, work, output,
-                                    "phipia-classic-files")
+                                    "phipia-foundation-files")
                         events.add("files_open")
                     elif elapsed >= 2.40 and "multitask_proof" not in events:
                         capture_png(qmp, work, output,
@@ -1045,39 +1045,39 @@ def main():
                         qmp.hmp("sendkey ctrl-s")
                         pointer.settle_guest(0.40)
                         capture_png(qmp, work, output,
-                                    "phipia-classic-notes")
+                                    "phipia-foundation-notes")
                         events.add("note_saved")
-                    elif elapsed >= 3.30 and "studio_open" not in events:
+                    elif elapsed >= 3.30 and "media_editor_open" not in events:
                         pointer.rehome()
-                        pointer.move_to(dock_item_center(DOCK_STUDIO),
+                        pointer.move_to(dock_item_center(DOCK_MEDIA_EDITOR),
                                         DOCK_POINTER_Y)
                         pointer.click()
                         pointer.settle_guest()
-                        events.add("studio_open")
-                    elif elapsed >= 3.60 and "studio_new" not in events:
+                        events.add("media_editor_open")
+                    elif elapsed >= 3.60 and "media_editor_new" not in events:
                         pointer.move_to(190, 141)
                         pointer.click()
-                        events.add("studio_new")
-                    elif elapsed >= 3.90 and "studio_import" not in events:
+                        events.add("media_editor_new")
+                    elif elapsed >= 3.90 and "media_editor_import" not in events:
                         pointer.move_to(262, 141)
                         pointer.click()
                         pointer.settle_guest(0.25)
-                        events.add("studio_import")
-                    elif elapsed >= 4.20 and "studio_trim" not in events:
+                        events.add("media_editor_import")
+                    elif elapsed >= 4.20 and "media_editor_trim" not in events:
                         pointer.move_to(336, 141)
                         pointer.click()
-                        events.add("studio_trim")
-                    elif elapsed >= 4.50 and "studio_seek" not in events:
+                        events.add("media_editor_trim")
+                    elif elapsed >= 4.50 and "media_editor_seek" not in events:
                         pointer.move_to(600, 560)
                         pointer.click()
-                        events.add("studio_seek")
-                    elif elapsed >= 4.80 and "studio_save" not in events:
+                        events.add("media_editor_seek")
+                    elif elapsed >= 4.80 and "media_editor_save" not in events:
                         pointer.move_to(406, 141)
                         pointer.click()
                         pointer.settle_guest(0.25)
                         capture_png(qmp, work, output,
-                                    "phipia-classic-studio")
-                        events.add("studio_save")
+                                    "phipia-foundation-media-editor")
+                        events.add("media_editor_save")
                     elif elapsed >= 5.40 and "settings_reopen" not in events:
                         pointer.move_to(dock_item_center(DOCK_SETTINGS),
                                         DOCK_POINTER_Y)
@@ -1146,7 +1146,7 @@ def main():
 
                     now = time.monotonic()
                     if now - started >= args.seconds:
-                        if {"studio_save", "settings_reopen",
+                        if {"media_editor_save", "settings_reopen",
                                 "appearance_light", "window_drag",
                                 "fluid_hover", "store_restored"}.issubset(events):
                             break
@@ -1166,17 +1166,17 @@ def main():
                     index += 1
                     next_capture = captured_at + 1.0 / args.fps
 
-                # Complete the slower synchronized SapStudio export after the
+                # Complete the slower synchronized Media Editor export after the
                 # exact 25-second UI recording while QEMU remains active.
                 pointer.rehome()
-                pointer.move_to(dock_item_center(DOCK_STUDIO), DOCK_POINTER_Y)
+                pointer.move_to(dock_item_center(DOCK_MEDIA_EDITOR), DOCK_POINTER_Y)
                 pointer.click()
                 time.sleep(0.75)
                 pointer.move_to(476, 141)
                 click_export_and_wait(pointer, durable_data)
                 capture_png(qmp, work, output,
-                            "phipia-classic-studio")
-                events.add("studio_export")
+                            "phipia-foundation-media-editor")
+                events.add("media_editor_export")
             else:
                 events, captured_frames, capture_times = \
                     capture_phipia_session(
@@ -1187,10 +1187,10 @@ def main():
                 "dock_hover", "settings_open", "appearance_open",
                 "wallpaper_open", "wallpaper_selected", "appearance_dark",
                 "files_open", "multitask_proof", "file_open", "note_saved",
-                "studio_open", "studio_new", "studio_import", "studio_trim",
-                "studio_seek", "studio_save", "settings_reopen",
+                "media_editor_open", "media_editor_new", "media_editor_import", "media_editor_trim",
+                "media_editor_seek", "media_editor_save", "settings_reopen",
                 "appearance_light", "fluid_hover", "window_drag",
-                "studio_export", "store_restored",
+                "media_editor_export", "store_restored",
             }
             if not args.fast_demo and events != required:
                 raise RuntimeError(f"capture omitted interactions: {required - events}")

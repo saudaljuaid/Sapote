@@ -65,7 +65,7 @@ static bool ledger_authorizes(enum linux_userland_profile profile)
 static void evidence_selected(enum linux_userland_profile profile)
 {
     console_serial_write("RW USERLAND deterministic read-only NVMe/");
-    console_serial_write(sapfs_drive(SAPFS_VOLUME_SYSTEM).mounted ?
+    console_serial_write(phipfs_drive(PHIPFS_VOLUME_SYSTEM).mounted ?
         "FAT32" : "FAT16");
     console_serial_write(" profile selected ");
     console_serial_write(linux_userland_profile_name(profile));
@@ -83,7 +83,7 @@ static void evidence_complete(const struct linux_userland_result *result)
     const char *profile = linux_userland_profile_name(result->profile);
 
     console_serial_write("RW USERLAND Rust ");
-    console_serial_write(sapfs_drive(SAPFS_VOLUME_SYSTEM).mounted ?
+    console_serial_write(phipfs_drive(PHIPFS_VOLUME_SYSTEM).mounted ?
         "FAT32" : "FAT16");
     console_serial_write(" SHA-256 ELF64 validation passed ");
     console_serial_write(profile);

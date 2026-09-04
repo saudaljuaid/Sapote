@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /*
- * Phipia's bounded VFS object layer. The public sapfs_* names are retained as
+ * Phipia's bounded VFS object layer. The public phipfs_* names are retained as
  * the native ABI v1 compatibility surface, while concrete filesystem handles
  * and path rules remain behind a backend contract.
  */
@@ -15,7 +15,7 @@
 
 #define VFS_MAX_VNODES 128U
 #define VFS_VNODE_BUCKETS 64U
-#define VFS_MAX_OPEN_FILES SAPFS_MAX_HANDLES
+#define VFS_MAX_OPEN_FILES PHIPFS_MAX_HANDLES
 #define VFS_MAX_DIRECTORY_ITERATORS 32U
 #define VFS_NO_INDEX UINT16_MAX
 
@@ -23,18 +23,18 @@ struct vfs_mount_state {
     const struct vfs_backend_ops *backend;
     uint64_t generation;
     size_t references;
-    enum sapfs_volume volume;
+    enum phipfs_volume volume;
     bool active;
 };
 
 struct vfs_vnode_state {
-    struct sapfs_stat stat;
+    struct phipfs_stat stat;
     uint64_t generation;
     uint64_t mount_generation;
     size_t references;
     uint16_t next_bucket;
-    enum sapfs_volume volume;
-    char path[SAPFS_MAX_PATH];
+    enum phipfs_volume volume;
+    char path[PHIPFS_MAX_PATH];
     bool active;
 };
 
@@ -42,15 +42,15 @@ struct vfs_open_file_state {
     const struct vfs_backend_ops *backend;
     uint64_t generation;
     uint64_t vnode_generation;
-    sapfs_handle backend_handle;
+    phipfs_handle backend_handle;
     uint16_t vnode_index;
     bool active;
 };
 
 struct vfs_directory_state {
-    struct sapfs_list_entry entries[SAPFS_MAX_LIST_ENTRIES];
+    struct phipfs_list_entry entries[PHIPFS_MAX_LIST_ENTRIES];
     const struct vfs_backend_ops *backend;
-    sapfs_handle backend_handle;
+    phipfs_handle backend_handle;
     uint64_t generation;
     uint64_t vnode_generation;
     size_t count;
@@ -60,7 +60,7 @@ struct vfs_directory_state {
     bool active;
 };
 
-static struct vfs_mount_state mounts[SAPFS_VOLUME_COUNT];
+static struct vfs_mount_state mounts[PHIPFS_VOLUME_COUNT];
 static struct vfs_vnode_state vnodes[VFS_MAX_VNODES];
 static struct vfs_open_file_state open_files[VFS_MAX_OPEN_FILES];
 static struct vfs_directory_state directories[VFS_MAX_DIRECTORY_ITERATORS];
@@ -124,7 +124,7 @@ static const struct vfs_backend_ops ext4_backend_ops = {
     .case_sensitive = true,
 };
 
-static const struct vfs_backend_ops *volume_backends[SAPFS_VOLUME_COUNT];
+static const struct vfs_backend_ops *volume_backends[PHIPFS_VOLUME_COUNT];
 
 _Static_assert(VFS_MAX_OPEN_FILES <= UINT8_MAX,
     "VFS open-file index no longer fits encoded handle");
@@ -153,9 +153,9 @@ static void copy_bytes(void *destination, const void *source, size_t length)
     }
 }
 
-static bool valid_volume(enum sapfs_volume volume)
+static bool valid_volume(enum phipfs_volume volume)
 {
-    return volume >= SAPFS_VOLUME_SYSTEM && volume < SAPFS_VOLUME_COUNT;
+    return volume >= PHIPFS_VOLUME_SYSTEM && volume < PHIPFS_VOLUME_COUNT;
 }
 
 static size_t text_length(const char *text)
@@ -163,9 +163,9 @@ static size_t text_length(const char *text)
     size_t length = 0U;
 
     if (text == NULL) {
-        return SAPFS_MAX_PATH;
+        return PHIPFS_MAX_PATH;
     }
-    while (length < SAPFS_MAX_PATH && text[length] != '\0') {
+    while (length < PHIPFS_MAX_PATH && text[length] != '\0') {
         ++length;
     }
     return length;
@@ -178,7 +178,7 @@ static bool text_equal(const char *left, const char *right)
     if (left == NULL || right == NULL) {
         return false;
     }
-    while (index < SAPFS_MAX_PATH && left[index] == right[index]) {
+    while (index < PHIPFS_MAX_PATH && left[index] == right[index]) {
         if (left[index] == '\0') {
             return true;
         }
@@ -199,23 +199,23 @@ static uint64_t next_generation(uint64_t *counter, uint64_t maximum)
     return result;
 }
 
-static enum sapfs_status canonicalize_path(
+static enum phipfs_status canonicalize_path(
     const char *path,
     bool case_sensitive,
-    char canonical[SAPFS_MAX_PATH]
+    char canonical[PHIPFS_MAX_PATH]
 )
 {
-    size_t component_starts[SAPFS_MAX_DEPTH];
+    size_t component_starts[PHIPFS_MAX_DEPTH];
     const size_t length = text_length(path);
     size_t component_count = 0U;
     size_t used = 0U;
     size_t index = 0U;
 
-    if (canonical == NULL || length == 0U || length >= SAPFS_MAX_PATH ||
+    if (canonical == NULL || length == 0U || length >= PHIPFS_MAX_PATH ||
         path[0] == '/' || path[0] == '\\') {
-        return SAPFS_STATUS_PATH;
+        return PHIPFS_STATUS_PATH;
     }
-    zero_bytes(canonical, SAPFS_MAX_PATH);
+    zero_bytes(canonical, PHIPFS_MAX_PATH);
     while (index < length) {
         size_t start = index;
         size_t component_length;
@@ -225,20 +225,20 @@ static enum sapfs_status canonicalize_path(
 
             if (byte > UINT8_C(0x7F) || path[index] == '\\' ||
                 path[index] == ':') {
-                return SAPFS_STATUS_PATH;
+                return PHIPFS_STATUS_PATH;
             }
             ++index;
         }
         component_length = index - start;
         if (component_length == 0U) {
-            return SAPFS_STATUS_PATH;
+            return PHIPFS_STATUS_PATH;
         }
         if (component_length == 1U && path[start] == '.') {
             /* A mount-relative dot is the retained current vnode. */
         } else if (component_length == 2U && path[start] == '.' &&
                 path[start + 1U] == '.') {
             if (component_count == 0U) {
-                return SAPFS_STATUS_PATH;
+                return PHIPFS_STATUS_PATH;
             }
             used = component_starts[--component_count];
             if (used != 0U) {
@@ -246,10 +246,10 @@ static enum sapfs_status canonicalize_path(
             }
             canonical[used] = '\0';
         } else {
-            if (component_count >= SAPFS_MAX_DEPTH ||
+            if (component_count >= PHIPFS_MAX_DEPTH ||
                 used + component_length + (used == 0U ? 0U : 1U) >=
-                    SAPFS_MAX_PATH) {
-                return SAPFS_STATUS_PATH;
+                    PHIPFS_MAX_PATH) {
+                return PHIPFS_STATUS_PATH;
             }
             if (used != 0U) {
                 canonical[used++] = '/';
@@ -268,7 +268,7 @@ static enum sapfs_status canonicalize_path(
         if (index < length) {
             ++index;
             if (index == length) {
-                return SAPFS_STATUS_PATH;
+                return PHIPFS_STATUS_PATH;
             }
         }
     }
@@ -276,10 +276,10 @@ static enum sapfs_status canonicalize_path(
         canonical[0] = '.';
         canonical[1] = '\0';
     }
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
-static size_t vnode_bucket(enum sapfs_volume volume, const char *path,
+static size_t vnode_bucket(enum phipfs_volume volume, const char *path,
     uint64_t object_id)
 {
     uint64_t hash = UINT64_C(1469598103934665603) ^ (uint64_t)volume;
@@ -313,10 +313,10 @@ static void vnode_remove_from_bucket(size_t vnode_index)
     }
 }
 
-static enum sapfs_status vnode_retain(
-    enum sapfs_volume volume,
+static enum phipfs_status vnode_retain(
+    enum phipfs_volume volume,
     const char *canonical,
-    const struct sapfs_stat *stat,
+    const struct phipfs_stat *stat,
     size_t *vnode_index
 )
 {
@@ -326,7 +326,7 @@ static enum sapfs_status vnode_retain(
 
     if (stat == NULL || vnode_index == NULL || !valid_volume(volume) ||
         !mounts[volume].active) {
-        return SAPFS_STATUS_NOT_MOUNTED;
+        return PHIPFS_STATUS_NOT_MOUNTED;
     }
     bucket = vnode_bucket(volume, canonical, stat->object_id);
     current = vnode_buckets[bucket];
@@ -340,12 +340,12 @@ static enum sapfs_status vnode_retain(
                 vnode->stat.object_id == stat->object_id) ||
              (stat->object_id == 0U && text_equal(vnode->path, canonical)))) {
             if (vnode->references == SIZE_MAX) {
-                return SAPFS_STATUS_BUSY;
+                return PHIPFS_STATUS_BUSY;
             }
             ++vnode->references;
             vnode->stat = *stat;
             *vnode_index = current;
-            return SAPFS_STATUS_OK;
+            return PHIPFS_STATUS_OK;
         }
         current = vnode->next_bucket;
     }
@@ -356,7 +356,7 @@ static enum sapfs_status vnode_retain(
         }
     }
     if (free_index == VFS_MAX_VNODES || mounts[volume].references == SIZE_MAX) {
-        return SAPFS_STATUS_NO_HANDLES;
+        return PHIPFS_STATUS_NO_HANDLES;
     }
     zero_bytes(&vnodes[free_index], sizeof(vnodes[free_index]));
     vnodes[free_index].stat = *stat;
@@ -372,7 +372,7 @@ static enum sapfs_status vnode_retain(
     vnode_buckets[bucket] = (uint16_t)free_index;
     ++mounts[volume].references;
     *vnode_index = free_index;
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
 static void vnode_release(size_t vnode_index, uint64_t generation)
@@ -399,30 +399,30 @@ static void vnode_release(size_t vnode_index, uint64_t generation)
     zero_bytes(vnode, sizeof(*vnode));
 }
 
-static enum sapfs_status resolve_path(
-    enum sapfs_volume volume,
+static enum phipfs_status resolve_path(
+    enum phipfs_volume volume,
     const char *path,
-    char canonical[SAPFS_MAX_PATH],
+    char canonical[PHIPFS_MAX_PATH],
     size_t *vnode_index
 )
 {
-    char partial[SAPFS_MAX_PATH];
-    struct sapfs_stat stat;
-    enum sapfs_status status;
+    char partial[PHIPFS_MAX_PATH];
+    struct phipfs_stat stat;
+    enum phipfs_status status;
     size_t length;
 
     if (!valid_volume(volume) || canonical == NULL || vnode_index == NULL ||
         !mounts[volume].active) {
-        return SAPFS_STATUS_NOT_MOUNTED;
+        return PHIPFS_STATUS_NOT_MOUNTED;
     }
     status = canonicalize_path(path, mounts[volume].backend->case_sensitive,
         canonical);
-    if (status != SAPFS_STATUS_OK) {
+    if (status != PHIPFS_STATUS_OK) {
         return status;
     }
     if (canonical[0] == '.' && canonical[1] == '\0') {
         status = mounts[volume].backend->stat_path(volume, canonical, &stat);
-        return status == SAPFS_STATUS_OK ?
+        return status == PHIPFS_STATUS_OK ?
             vnode_retain(volume, canonical, &stat, vnode_index) : status;
     }
     zero_bytes(partial, sizeof(partial));
@@ -434,11 +434,11 @@ static enum sapfs_status resolve_path(
         }
         partial[index] = '\0';
         status = mounts[volume].backend->stat_path(volume, partial, &stat);
-        if (status != SAPFS_STATUS_OK) {
+        if (status != PHIPFS_STATUS_OK) {
             return status;
         }
         if (index != length && !stat.directory) {
-            return SAPFS_STATUS_NOT_DIRECTORY;
+            return PHIPFS_STATUS_NOT_DIRECTORY;
         }
         if (index != length) {
             partial[index] = '/';
@@ -447,25 +447,25 @@ static enum sapfs_status resolve_path(
     return vnode_retain(volume, canonical, &stat, vnode_index);
 }
 
-static enum sapfs_status resolve_parent(
-    enum sapfs_volume volume,
+static enum phipfs_status resolve_parent(
+    enum phipfs_volume volume,
     const char *path,
-    char canonical[SAPFS_MAX_PATH]
+    char canonical[PHIPFS_MAX_PATH]
 )
 {
-    char parent[SAPFS_MAX_PATH];
-    char resolved_parent[SAPFS_MAX_PATH];
+    char parent[PHIPFS_MAX_PATH];
+    char resolved_parent[PHIPFS_MAX_PATH];
     size_t vnode_index;
     size_t split = SIZE_MAX;
-    enum sapfs_status status = valid_volume(volume) && mounts[volume].active ?
+    enum phipfs_status status = valid_volume(volume) && mounts[volume].active ?
         canonicalize_path(path, mounts[volume].backend->case_sensitive,
-            canonical) : SAPFS_STATUS_NOT_MOUNTED;
+            canonical) : PHIPFS_STATUS_NOT_MOUNTED;
 
-    if (status != SAPFS_STATUS_OK) {
+    if (status != PHIPFS_STATUS_OK) {
         return status;
     }
     if (canonical[0] == '.' && canonical[1] == '\0') {
-        return SAPFS_STATUS_ACCESS;
+        return PHIPFS_STATUS_ACCESS;
     }
     for (size_t index = 0U; canonical[index] != '\0'; ++index) {
         if (canonical[index] == '/') {
@@ -481,22 +481,22 @@ static enum sapfs_status resolve_parent(
         parent[split] = '\0';
     }
     status = resolve_path(volume, parent, resolved_parent, &vnode_index);
-    if (status != SAPFS_STATUS_OK) {
+    if (status != PHIPFS_STATUS_OK) {
         return status;
     }
     if (!vnodes[vnode_index].stat.directory) {
-        status = SAPFS_STATUS_NOT_DIRECTORY;
+        status = PHIPFS_STATUS_NOT_DIRECTORY;
     }
     vnode_release(vnode_index, vnodes[vnode_index].generation);
     return status;
 }
 
 static void install_mount(
-    enum sapfs_volume volume,
+    enum phipfs_volume volume,
     const struct vfs_backend_ops *backend
 )
 {
-    struct sapfs_drive_info drive;
+    struct phipfs_drive_info drive;
 
     if (backend == NULL) {
         return;
@@ -512,13 +512,13 @@ static void install_mount(
     mounts[volume].active = true;
 }
 
-static sapfs_handle encode_handle(size_t index, uint64_t generation)
+static phipfs_handle encode_handle(size_t index, uint64_t generation)
 {
     return generation << 8U | (uint64_t)(index + 1U);
 }
 
-static enum sapfs_status open_file_state(
-    sapfs_handle handle,
+static enum phipfs_status open_file_state(
+    phipfs_handle handle,
     struct vfs_open_file_state **state
 )
 {
@@ -528,19 +528,19 @@ static enum sapfs_status open_file_state(
 
     if (state == NULL || encoded_index == 0U ||
         encoded_index > VFS_MAX_OPEN_FILES || generation == 0U) {
-        return SAPFS_STATUS_STALE_HANDLE;
+        return PHIPFS_STATUS_STALE_HANDLE;
     }
     index = (size_t)(encoded_index - 1U);
     if (!open_files[index].active ||
         open_files[index].generation != generation) {
-        return SAPFS_STATUS_STALE_HANDLE;
+        return PHIPFS_STATUS_STALE_HANDLE;
     }
     *state = &open_files[index];
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
-static enum sapfs_status directory_state(
-    sapfs_directory_handle handle,
+static enum phipfs_status directory_state(
+    phipfs_directory_handle handle,
     struct vfs_directory_state **state
 )
 {
@@ -550,23 +550,23 @@ static enum sapfs_status directory_state(
 
     if (state == NULL || encoded_index == 0U ||
         encoded_index > VFS_MAX_DIRECTORY_ITERATORS || generation == 0U) {
-        return SAPFS_STATUS_STALE_HANDLE;
+        return PHIPFS_STATUS_STALE_HANDLE;
     }
     index = (size_t)(encoded_index - 1U);
     if (!directories[index].active ||
         directories[index].generation != generation) {
-        return SAPFS_STATUS_STALE_HANDLE;
+        return PHIPFS_STATUS_STALE_HANDLE;
     }
     *state = &directories[index];
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
-bool sapfs_self_test(size_t *completed_tests)
+bool phipfs_self_test(size_t *completed_tests)
 {
     return fat32_backend_self_test(completed_tests);
 }
 
-void sapfs_initialize(void)
+void phipfs_initialize(void)
 {
     zero_bytes(mounts, sizeof(mounts));
     zero_bytes(vnodes, sizeof(vnodes));
@@ -577,11 +577,11 @@ void sapfs_initialize(void)
     }
     fat32_backend_initialize();
     ext4_backend_initialize();
-    for (enum sapfs_volume volume = SAPFS_VOLUME_SYSTEM;
-         volume < SAPFS_VOLUME_COUNT; ++volume) {
+    for (enum phipfs_volume volume = PHIPFS_VOLUME_SYSTEM;
+         volume < PHIPFS_VOLUME_COUNT; ++volume) {
         if (fat32_backend_drive(volume).mounted) {
             volume_backends[volume] = &fat32_backend_ops;
-        } else if (ext4_backend_mount(volume) == SAPFS_STATUS_OK) {
+        } else if (ext4_backend_mount(volume) == PHIPFS_STATUS_OK) {
             volume_backends[volume] = &ext4_backend_ops;
         } else {
             volume_backends[volume] = &fat32_backend_ops;
@@ -590,60 +590,60 @@ void sapfs_initialize(void)
     }
 }
 
-enum sapfs_status sapfs_mount(enum sapfs_volume volume)
+enum phipfs_status phipfs_mount(enum phipfs_volume volume)
 {
     const struct vfs_backend_ops *backend;
-    enum sapfs_status status;
+    enum phipfs_status status;
 
     if (!valid_volume(volume)) {
-        return SAPFS_STATUS_INVALID_ARGUMENT;
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
     }
     if (mounts[volume].active) {
-        return SAPFS_STATUS_ALREADY_MOUNTED;
+        return PHIPFS_STATUS_ALREADY_MOUNTED;
     }
     backend = volume_backends[volume];
     if (backend == NULL) {
-        return SAPFS_STATUS_NOT_MOUNTED;
+        return PHIPFS_STATUS_NOT_MOUNTED;
     }
     status = backend->mount(volume);
-    if (status == SAPFS_STATUS_OK) {
+    if (status == PHIPFS_STATUS_OK) {
         install_mount(volume, backend);
     }
     return status;
 }
 
-enum sapfs_status sapfs_unmount(enum sapfs_volume volume)
+enum phipfs_status phipfs_unmount(enum phipfs_volume volume)
 {
-    enum sapfs_status status;
+    enum phipfs_status status;
 
     if (!valid_volume(volume)) {
-        return SAPFS_STATUS_INVALID_ARGUMENT;
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
     }
     if (!mounts[volume].active) {
-        return SAPFS_STATUS_NOT_MOUNTED;
+        return PHIPFS_STATUS_NOT_MOUNTED;
     }
     if (mounts[volume].references != 0U) {
-        return SAPFS_STATUS_BUSY;
+        return PHIPFS_STATUS_BUSY;
     }
     status = mounts[volume].backend->unmount(volume);
-    if (status == SAPFS_STATUS_OK) {
+    if (status == PHIPFS_STATUS_OK) {
         zero_bytes(&mounts[volume], sizeof(mounts[volume]));
     }
     return status;
 }
 
-enum sapfs_status sapfs_sync(enum sapfs_volume volume)
+enum phipfs_status phipfs_sync(enum phipfs_volume volume)
 {
     if (!valid_volume(volume)) {
-        return SAPFS_STATUS_INVALID_ARGUMENT;
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
     }
     return mounts[volume].active ? mounts[volume].backend->sync(volume) :
-        SAPFS_STATUS_NOT_MOUNTED;
+        PHIPFS_STATUS_NOT_MOUNTED;
 }
 
-struct sapfs_drive_info sapfs_drive(enum sapfs_volume volume)
+struct phipfs_drive_info phipfs_drive(enum phipfs_volume volume)
 {
-    const struct sapfs_drive_info absent = {0};
+    const struct phipfs_drive_info absent = {0};
     const struct vfs_backend_ops *backend;
 
     if (!valid_volume(volume)) {
@@ -654,7 +654,7 @@ struct sapfs_drive_info sapfs_drive(enum sapfs_volume volume)
     return backend != NULL ? backend->drive(volume) : absent;
 }
 
-uint64_t sapfs_completion_count(enum sapfs_volume volume)
+uint64_t phipfs_completion_count(enum phipfs_volume volume)
 {
     const struct vfs_backend_ops *backend;
 
@@ -666,30 +666,30 @@ uint64_t sapfs_completion_count(enum sapfs_volume volume)
     return backend != NULL ? backend->completion_count(volume) : 0U;
 }
 
-enum sapfs_status sapfs_open(
-    enum sapfs_volume volume,
+enum phipfs_status phipfs_open(
+    enum phipfs_volume volume,
     const char *path,
-    enum sapfs_access access,
-    sapfs_handle *handle
+    enum phipfs_access access,
+    phipfs_handle *handle
 )
 {
-    char canonical[SAPFS_MAX_PATH];
-    sapfs_handle backend_handle = 0U;
+    char canonical[PHIPFS_MAX_PATH];
+    phipfs_handle backend_handle = 0U;
     size_t vnode_index;
     size_t slot = VFS_MAX_OPEN_FILES;
-    enum sapfs_status status;
+    enum phipfs_status status;
 
     if (handle == NULL) {
-        return SAPFS_STATUS_INVALID_ARGUMENT;
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
     }
     *handle = 0U;
     status = resolve_path(volume, path, canonical, &vnode_index);
-    if (status != SAPFS_STATUS_OK) {
+    if (status != PHIPFS_STATUS_OK) {
         return status;
     }
     if (vnodes[vnode_index].stat.directory) {
         vnode_release(vnode_index, vnodes[vnode_index].generation);
-        return SAPFS_STATUS_IS_DIRECTORY;
+        return PHIPFS_STATUS_IS_DIRECTORY;
     }
     for (size_t index = 0U; index < VFS_MAX_OPEN_FILES; ++index) {
         if (!open_files[index].active) {
@@ -699,11 +699,11 @@ enum sapfs_status sapfs_open(
     }
     if (slot == VFS_MAX_OPEN_FILES) {
         vnode_release(vnode_index, vnodes[vnode_index].generation);
-        return SAPFS_STATUS_NO_HANDLES;
+        return PHIPFS_STATUS_NO_HANDLES;
     }
     status = mounts[volume].backend->open(
         volume, canonical, access, &backend_handle);
-    if (status != SAPFS_STATUS_OK) {
+    if (status != PHIPFS_STATUS_OK) {
         vnode_release(vnode_index, vnodes[vnode_index].generation);
         return status;
     }
@@ -716,19 +716,19 @@ enum sapfs_status sapfs_open(
     open_files[slot].vnode_index = (uint16_t)vnode_index;
     open_files[slot].active = true;
     *handle = encode_handle(slot, open_files[slot].generation);
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_close(sapfs_handle handle)
+enum phipfs_status phipfs_close(phipfs_handle handle)
 {
     struct vfs_open_file_state *state;
-    sapfs_handle backend_handle;
+    phipfs_handle backend_handle;
     const struct vfs_backend_ops *backend;
     uint64_t vnode_generation;
     uint16_t vnode_index;
-    enum sapfs_status status = open_file_state(handle, &state);
+    enum phipfs_status status = open_file_state(handle, &state);
 
-    if (status != SAPFS_STATUS_OK) {
+    if (status != PHIPFS_STATUS_OK) {
         return status;
     }
     backend_handle = state->backend_handle;
@@ -742,22 +742,22 @@ enum sapfs_status sapfs_close(sapfs_handle handle)
     return status;
 }
 
-enum sapfs_status sapfs_read(
-    sapfs_handle handle,
+enum phipfs_status phipfs_read(
+    phipfs_handle handle,
     uint8_t *destination,
     size_t capacity,
     size_t *read_bytes
 )
 {
     struct vfs_open_file_state *state;
-    enum sapfs_status status = open_file_state(handle, &state);
+    enum phipfs_status status = open_file_state(handle, &state);
 
-    return status == SAPFS_STATUS_OK ? state->backend->read(
+    return status == PHIPFS_STATUS_OK ? state->backend->read(
         state->backend_handle, destination, capacity, read_bytes) : status;
 }
 
-enum sapfs_status sapfs_pread(
-    sapfs_handle handle,
+enum phipfs_status phipfs_pread(
+    phipfs_handle handle,
     uint8_t *destination,
     size_t capacity,
     uint64_t offset,
@@ -765,83 +765,83 @@ enum sapfs_status sapfs_pread(
 )
 {
     struct vfs_open_file_state *state;
-    enum sapfs_status status = open_file_state(handle, &state);
+    enum phipfs_status status = open_file_state(handle, &state);
 
-    return status == SAPFS_STATUS_OK ? state->backend->pread(
+    return status == PHIPFS_STATUS_OK ? state->backend->pread(
         state->backend_handle, destination, capacity, offset, read_bytes) :
         status;
 }
 
-enum sapfs_status sapfs_write(
-    sapfs_handle handle,
+enum phipfs_status phipfs_write(
+    phipfs_handle handle,
     const uint8_t *source,
     size_t source_bytes,
     size_t *written_bytes
 )
 {
     struct vfs_open_file_state *state;
-    enum sapfs_status status = open_file_state(handle, &state);
+    enum phipfs_status status = open_file_state(handle, &state);
 
-    return status == SAPFS_STATUS_OK ? state->backend->write(
+    return status == PHIPFS_STATUS_OK ? state->backend->write(
         state->backend_handle, source, source_bytes, written_bytes) : status;
 }
 
-enum sapfs_status sapfs_seek(
-    sapfs_handle handle,
+enum phipfs_status phipfs_seek(
+    phipfs_handle handle,
     int64_t offset,
-    enum sapfs_seek_origin origin,
+    enum phipfs_seek_origin origin,
     uint64_t *position
 )
 {
     struct vfs_open_file_state *state;
-    enum sapfs_status status = open_file_state(handle, &state);
+    enum phipfs_status status = open_file_state(handle, &state);
 
-    return status == SAPFS_STATUS_OK ? state->backend->seek(
+    return status == PHIPFS_STATUS_OK ? state->backend->seek(
         state->backend_handle, offset, origin, position) : status;
 }
 
-enum sapfs_status sapfs_stat_path(
-    enum sapfs_volume volume,
+enum phipfs_status phipfs_stat_path(
+    enum phipfs_volume volume,
     const char *path,
-    struct sapfs_stat *stat
+    struct phipfs_stat *stat
 )
 {
-    char canonical[SAPFS_MAX_PATH];
+    char canonical[PHIPFS_MAX_PATH];
     size_t vnode_index;
-    enum sapfs_status status;
+    enum phipfs_status status;
 
     if (stat == NULL) {
-        return SAPFS_STATUS_INVALID_ARGUMENT;
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
     }
     zero_bytes(stat, sizeof(*stat));
     status = resolve_path(volume, path, canonical, &vnode_index);
-    if (status != SAPFS_STATUS_OK) {
+    if (status != PHIPFS_STATUS_OK) {
         return status;
     }
     *stat = vnodes[vnode_index].stat;
     vnode_release(vnode_index, vnodes[vnode_index].generation);
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_list(
-    enum sapfs_volume volume,
+enum phipfs_status phipfs_list(
+    enum phipfs_volume volume,
     const char *path,
-    struct sapfs_list_entry *entries,
+    struct phipfs_list_entry *entries,
     size_t capacity,
     size_t *entry_count
 )
 {
-    char canonical[SAPFS_MAX_PATH];
+    char canonical[PHIPFS_MAX_PATH];
     size_t vnode_index;
-    enum sapfs_status status = resolve_path(
+    enum phipfs_status status = resolve_path(
         volume, path, canonical, &vnode_index);
 
-    if (status != SAPFS_STATUS_OK) {
+    if (status != PHIPFS_STATUS_OK) {
         return status;
     }
     if (!vnodes[vnode_index].stat.directory) {
         vnode_release(vnode_index, vnodes[vnode_index].generation);
-        return SAPFS_STATUS_NOT_DIRECTORY;
+        return PHIPFS_STATUS_NOT_DIRECTORY;
     }
     status = mounts[volume].backend->list(volume, canonical, entries, capacity,
         entry_count);
@@ -849,28 +849,28 @@ enum sapfs_status sapfs_list(
     return status;
 }
 
-enum sapfs_status sapfs_directory_open(
-    enum sapfs_volume volume,
+enum phipfs_status phipfs_directory_open(
+    enum phipfs_volume volume,
     const char *path,
-    sapfs_directory_handle *handle
+    phipfs_directory_handle *handle
 )
 {
-    char canonical[SAPFS_MAX_PATH];
+    char canonical[PHIPFS_MAX_PATH];
     size_t vnode_index;
     size_t slot = VFS_MAX_DIRECTORY_ITERATORS;
-    enum sapfs_status status;
+    enum phipfs_status status;
 
     if (handle == NULL) {
-        return SAPFS_STATUS_INVALID_ARGUMENT;
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
     }
     *handle = 0U;
     status = resolve_path(volume, path, canonical, &vnode_index);
-    if (status != SAPFS_STATUS_OK) {
+    if (status != PHIPFS_STATUS_OK) {
         return status;
     }
     if (!vnodes[vnode_index].stat.directory) {
         vnode_release(vnode_index, vnodes[vnode_index].generation);
-        return SAPFS_STATUS_NOT_DIRECTORY;
+        return PHIPFS_STATUS_NOT_DIRECTORY;
     }
     for (size_t index = 0U; index < VFS_MAX_DIRECTORY_ITERATORS; ++index) {
         if (!directories[index].active) {
@@ -880,7 +880,7 @@ enum sapfs_status sapfs_directory_open(
     }
     if (slot == VFS_MAX_DIRECTORY_ITERATORS) {
         vnode_release(vnode_index, vnodes[vnode_index].generation);
-        return SAPFS_STATUS_NO_HANDLES;
+        return PHIPFS_STATUS_NO_HANDLES;
     }
     zero_bytes(&directories[slot], sizeof(directories[slot]));
     directories[slot].backend = mounts[volume].backend;
@@ -893,10 +893,10 @@ enum sapfs_status sapfs_directory_open(
             &directories[slot].backend_handle);
     } else {
         status = mounts[volume].backend->list(volume, canonical,
-            directories[slot].entries, SAPFS_MAX_LIST_ENTRIES,
+            directories[slot].entries, PHIPFS_MAX_LIST_ENTRIES,
             &directories[slot].count);
     }
-    if (status != SAPFS_STATUS_OK) {
+    if (status != PHIPFS_STATUS_OK) {
         vnode_release(vnode_index, vnodes[vnode_index].generation);
         return status;
     }
@@ -906,25 +906,25 @@ enum sapfs_status sapfs_directory_open(
     directories[slot].vnode_index = (uint16_t)vnode_index;
     directories[slot].active = true;
     *handle = encode_handle(slot, directories[slot].generation);
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_directory_read(
-    sapfs_directory_handle handle,
-    struct sapfs_list_entry *entry,
+enum phipfs_status phipfs_directory_read(
+    phipfs_directory_handle handle,
+    struct phipfs_list_entry *entry,
     bool *present
 )
 {
     struct vfs_directory_state *state;
-    enum sapfs_status status;
+    enum phipfs_status status;
 
     if (entry == NULL || present == NULL) {
-        return SAPFS_STATUS_INVALID_ARGUMENT;
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
     }
     zero_bytes(entry, sizeof(*entry));
     *present = false;
     status = directory_state(handle, &state);
-    if (status != SAPFS_STATUS_OK) {
+    if (status != PHIPFS_STATUS_OK) {
         return status;
     }
     if (state->streaming) {
@@ -932,24 +932,24 @@ enum sapfs_status sapfs_directory_read(
             present);
     }
     if (state->cursor == state->count) {
-        return SAPFS_STATUS_OK;
+        return PHIPFS_STATUS_OK;
     }
     if (state->cursor > state->count) {
-        return SAPFS_STATUS_CORRUPT;
+        return PHIPFS_STATUS_CORRUPT;
     }
     *entry = state->entries[state->cursor++];
     *present = true;
-    return SAPFS_STATUS_OK;
+    return PHIPFS_STATUS_OK;
 }
 
-enum sapfs_status sapfs_directory_close(sapfs_directory_handle handle)
+enum phipfs_status phipfs_directory_close(phipfs_directory_handle handle)
 {
     struct vfs_directory_state *state;
     uint64_t vnode_generation;
     uint16_t vnode_index;
-    enum sapfs_status status = directory_state(handle, &state);
+    enum phipfs_status status = directory_state(handle, &state);
 
-    if (status != SAPFS_STATUS_OK) {
+    if (status != PHIPFS_STATUS_OK) {
         return status;
     }
     vnode_generation = state->vnode_generation;
@@ -962,122 +962,122 @@ enum sapfs_status sapfs_directory_close(sapfs_directory_handle handle)
     return status;
 }
 
-enum sapfs_status sapfs_create(enum sapfs_volume volume, const char *path)
+enum phipfs_status phipfs_create(enum phipfs_volume volume, const char *path)
 {
-    char canonical[SAPFS_MAX_PATH];
-    enum sapfs_status status = resolve_parent(volume, path, canonical);
+    char canonical[PHIPFS_MAX_PATH];
+    enum phipfs_status status = resolve_parent(volume, path, canonical);
 
-    return status == SAPFS_STATUS_OK ?
+    return status == PHIPFS_STATUS_OK ?
         mounts[volume].backend->create(volume, canonical) : status;
 }
 
-enum sapfs_status sapfs_truncate(
-    enum sapfs_volume volume,
+enum phipfs_status phipfs_truncate(
+    enum phipfs_volume volume,
     const char *path,
     uint64_t size
 )
 {
-    char canonical[SAPFS_MAX_PATH];
+    char canonical[PHIPFS_MAX_PATH];
     size_t vnode_index;
-    enum sapfs_status status = resolve_path(
+    enum phipfs_status status = resolve_path(
         volume, path, canonical, &vnode_index);
 
-    if (status != SAPFS_STATUS_OK) {
+    if (status != PHIPFS_STATUS_OK) {
         return status;
     }
     if (vnodes[vnode_index].stat.directory) {
-        status = SAPFS_STATUS_IS_DIRECTORY;
+        status = PHIPFS_STATUS_IS_DIRECTORY;
     }
     vnode_release(vnode_index, vnodes[vnode_index].generation);
-    return status == SAPFS_STATUS_OK ?
+    return status == PHIPFS_STATUS_OK ?
         mounts[volume].backend->truncate(volume, canonical, size) : status;
 }
 
-enum sapfs_status sapfs_mkdir(enum sapfs_volume volume, const char *path)
+enum phipfs_status phipfs_mkdir(enum phipfs_volume volume, const char *path)
 {
-    char canonical[SAPFS_MAX_PATH];
-    enum sapfs_status status = resolve_parent(volume, path, canonical);
+    char canonical[PHIPFS_MAX_PATH];
+    enum phipfs_status status = resolve_parent(volume, path, canonical);
 
-    return status == SAPFS_STATUS_OK ?
+    return status == PHIPFS_STATUS_OK ?
         mounts[volume].backend->mkdir(volume, canonical) : status;
 }
 
-enum sapfs_status sapfs_rename(
-    enum sapfs_volume volume,
+enum phipfs_status phipfs_rename(
+    enum phipfs_volume volume,
     const char *source,
     const char *destination
 )
 {
-    char source_canonical[SAPFS_MAX_PATH];
-    char destination_canonical[SAPFS_MAX_PATH];
+    char source_canonical[PHIPFS_MAX_PATH];
+    char destination_canonical[PHIPFS_MAX_PATH];
     size_t vnode_index;
-    enum sapfs_status status = resolve_path(
+    enum phipfs_status status = resolve_path(
         volume, source, source_canonical, &vnode_index);
 
-    if (status != SAPFS_STATUS_OK) {
+    if (status != PHIPFS_STATUS_OK) {
         return status;
     }
     status = resolve_parent(volume, destination, destination_canonical);
     vnode_release(vnode_index, vnodes[vnode_index].generation);
-    return status == SAPFS_STATUS_OK ? mounts[volume].backend->rename(volume,
+    return status == PHIPFS_STATUS_OK ? mounts[volume].backend->rename(volume,
         source_canonical, destination_canonical) : status;
 }
 
-enum sapfs_status sapfs_unlink(enum sapfs_volume volume, const char *path)
+enum phipfs_status phipfs_unlink(enum phipfs_volume volume, const char *path)
 {
-    char canonical[SAPFS_MAX_PATH];
+    char canonical[PHIPFS_MAX_PATH];
     size_t vnode_index;
-    enum sapfs_status status = resolve_path(
+    enum phipfs_status status = resolve_path(
         volume, path, canonical, &vnode_index);
 
-    if (status != SAPFS_STATUS_OK) {
+    if (status != PHIPFS_STATUS_OK) {
         return status;
     }
     if (vnodes[vnode_index].stat.directory) {
-        status = SAPFS_STATUS_IS_DIRECTORY;
+        status = PHIPFS_STATUS_IS_DIRECTORY;
     }
     vnode_release(vnode_index, vnodes[vnode_index].generation);
-    return status == SAPFS_STATUS_OK ?
+    return status == PHIPFS_STATUS_OK ?
         mounts[volume].backend->unlink(volume, canonical) : status;
 }
 
-enum sapfs_status sapfs_rmdir(enum sapfs_volume volume, const char *path)
+enum phipfs_status phipfs_rmdir(enum phipfs_volume volume, const char *path)
 {
-    char canonical[SAPFS_MAX_PATH];
+    char canonical[PHIPFS_MAX_PATH];
     size_t vnode_index;
-    enum sapfs_status status = resolve_path(
+    enum phipfs_status status = resolve_path(
         volume, path, canonical, &vnode_index);
 
-    if (status != SAPFS_STATUS_OK) {
+    if (status != PHIPFS_STATUS_OK) {
         return status;
     }
     if (!vnodes[vnode_index].stat.directory) {
-        status = SAPFS_STATUS_NOT_DIRECTORY;
+        status = PHIPFS_STATUS_NOT_DIRECTORY;
     } else if (vnodes[vnode_index].references != 1U) {
-        status = SAPFS_STATUS_BUSY;
+        status = PHIPFS_STATUS_BUSY;
     }
     vnode_release(vnode_index, vnodes[vnode_index].generation);
-    return status == SAPFS_STATUS_OK ?
+    return status == PHIPFS_STATUS_OK ?
         mounts[volume].backend->rmdir(volume, canonical) : status;
 }
 
-enum sapfs_status sapfs_link(
-    enum sapfs_volume volume,
+enum phipfs_status phipfs_link(
+    enum phipfs_volume volume,
     const char *source,
     const char *destination
 )
 {
-    char source_canonical[SAPFS_MAX_PATH];
-    char destination_canonical[SAPFS_MAX_PATH];
+    char source_canonical[PHIPFS_MAX_PATH];
+    char destination_canonical[PHIPFS_MAX_PATH];
     size_t vnode_index;
-    enum sapfs_status status = resolve_path(
+    enum phipfs_status status = resolve_path(
         volume, source, source_canonical, &vnode_index);
 
-    if (status != SAPFS_STATUS_OK) {
+    if (status != PHIPFS_STATUS_OK) {
         return status;
     }
     status = resolve_parent(volume, destination, destination_canonical);
     vnode_release(vnode_index, vnodes[vnode_index].generation);
-    return status == SAPFS_STATUS_OK ? mounts[volume].backend->link(volume,
+    return status == PHIPFS_STATUS_OK ? mounts[volume].backend->link(volume,
         source_canonical, destination_canonical) : status;
 }
