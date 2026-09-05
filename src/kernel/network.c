@@ -441,9 +441,21 @@ static bool network_wait_for_interrupt(uint64_t deadline_ns)
     }
     wake_deadline = now + interval;
     cpu_interrupt_disable();
-    if (timer_arm(wake_deadline, network_wait_deadline, &expired,
-            &identifier) != TIMER_STATUS_OK) {
+    const enum timer_status arm_status = timer_arm(wake_deadline,
+        network_wait_deadline, &expired, &identifier);
+
+    if (arm_status != TIMER_STATUS_OK) {
         cpu_interrupt_enable();
+        /*
+         * TCG can deschedule the guest between the clock sample and
+         * timer_arm's independent sample.  If that consumes this bounded
+         * ten-millisecond slice, the wait has elapsed rather than run out of
+         * timer resources.  Let the caller pump again and apply its original
+         * absolute deadline; all other arm failures remain hard failures.
+         */
+        if (arm_status == TIMER_STATUS_BAD_INTERVAL) {
+            return true;
+        }
         return false;
     }
     cpu_enable_and_halt();

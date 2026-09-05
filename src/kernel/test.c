@@ -8421,8 +8421,13 @@ _Noreturn void kernel_test_complete_network(void)
     case KERNEL_TEST_NETWORK_DHCP_TIMEOUT: {
         enum network_status status = network_start_dhcp(UINT64_C(1000000000));
 
-        if (status != NETWORK_STATUS_TIMEOUT ||
-            network_get_state().configuration.configured) {
+        if (status != NETWORK_STATUS_TIMEOUT) {
+            console_serial_write("ST DHCP silent-peer status ");
+            console_serial_write(network_status_string(status));
+            console_serial_write("\n");
+            kernel_test_fail("DHCP silent peer did not time out");
+        }
+        if (network_get_state().configuration.configured) {
             kernel_test_fail("DHCP timeout invented a lease");
         }
         break;
