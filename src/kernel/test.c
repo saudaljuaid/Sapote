@@ -4862,6 +4862,9 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
         console_putc('\n');
         kernel_test_fail("ext4 recovered drive state is invalid");
     }
+    if (drive.free_bytes == 0U || drive.free_bytes >= drive.total_bytes) {
+        kernel_test_fail("ext4 allocator capacity was not exported");
+    }
     if (!ext4_backend_recovery_report(PHIPFS_VOLUME_SYSTEM, &recovery)) {
         kernel_test_fail("ext4 recovery report is unavailable");
     }

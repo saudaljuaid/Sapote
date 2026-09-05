@@ -91,6 +91,19 @@ pub(crate) struct Mounted {
     image_bytes: u64,
 }
 
+/// Return the allocator's current capacity for the admitted 4 KiB profile.
+/// A committed mutation reloads the checked filesystem view, so callers never
+/// confuse unused NVMe namespace bytes with allocatable ext4 blocks.
+pub(crate) fn free_bytes(mounted: &Mounted) -> Result<u64, Status> {
+    mounted
+        .filesystem
+        .superblock()
+        .free_blocks_count()
+        .checked_mul(BLOCK_BYTES)
+        .filter(|bytes| *bytes <= mounted.image_bytes)
+        .ok_or(Status::Invalid)
+}
+
 enum PendingMutationPhase {
     Commit(JournalPreparedTransaction),
     Checkpoint(u64),

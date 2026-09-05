@@ -323,6 +323,31 @@ pub(crate) unsafe extern "C" fn phipia_ext4_sync(mounted: usize) -> i32 {
     }
 }
 
+/// Read the checked allocator capacity from one live ext4 mount.
+///
+/// # Safety
+/// `mounted` must be a live value returned by `phipia_ext4_mount`, and
+/// `free_bytes` must name one writable `u64` that does not overlap it.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn phipia_ext4_free_bytes(
+    mounted: usize,
+    free_bytes: *mut u64,
+) -> i32 {
+    if mounted == 0 || free_bytes.is_null() {
+        return ext4::Status::NullArgument as i32;
+    }
+    // SAFETY: provenance and non-overlap are the caller's contract.
+    let mounted = unsafe { &*(mounted as *const ext4::Mounted) };
+    match ext4::free_bytes(mounted) {
+        Ok(value) => {
+            // SAFETY: the caller supplied one writable result.
+            unsafe { *free_bytes = value };
+            ext4::Status::Ok as i32
+        }
+        Err(status) => status as i32,
+    }
+}
+
 /// Drop one clean opaque ext4 mount after its storage lease is closed.
 ///
 /// # Safety

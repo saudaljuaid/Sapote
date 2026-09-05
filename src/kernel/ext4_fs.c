@@ -66,6 +66,7 @@ extern int32_t phipia_ext4_mount(uintptr_t context, uint64_t media_bytes,
     struct phipia_ext4_identity *identity, uintptr_t *mounted_out);
 extern int32_t phipia_ext4_prepare_unmount(uintptr_t mounted);
 extern int32_t phipia_ext4_sync(uintptr_t mounted);
+extern int32_t phipia_ext4_free_bytes(uintptr_t mounted, uint64_t *free_bytes);
 extern int32_t phipia_ext4_unmount(uintptr_t mounted);
 extern int32_t phipia_ext4_stat(uintptr_t mounted, const uint8_t *path,
     size_t path_length, struct phipia_ext4_metadata *metadata);
@@ -829,6 +830,7 @@ struct phipfs_drive_info ext4_backend_drive(enum phipfs_volume volume)
 {
     struct phipfs_drive_info drive = {0};
     struct ext4_mount_state *mount;
+    uint64_t free_bytes = 0U;
 
     if (!valid_volume(volume)) {
         return drive;
@@ -840,6 +842,11 @@ struct phipfs_drive_info ext4_backend_drive(enum phipfs_volume volume)
         (uint32_t)mount->identity.uuid[2] << 16U |
         (uint32_t)mount->identity.uuid[3] << 24U;
     drive.total_bytes = mount->media_bytes;
+    if (mount->active &&
+        phipia_ext4_free_bytes(mount->rust_mount, &free_bytes) ==
+            PHIPIA_EXT4_STATUS_OK) {
+        drive.free_bytes = free_bytes;
+    }
     drive.present = mount->active;
     drive.mounted = mount->active;
     drive.read_only = false;

@@ -42,6 +42,12 @@ inode metadata and timestamps, extended-attribute names and values, symlink
 targets, and the first and last mapped byte of non-empty files. Remaining file
 extent/data checks are lazy and occur on pread.
 
+The drive report derives `free_bytes` from ext4plus's checked, in-memory
+superblock allocator counters, multiplies it by the admitted 4 KiB block size,
+and rejects any result outside the filesystem image. Committed mutations reload
+that view after checkpointing, so package capacity checks observe filesystem
+space rather than unused bytes at the end of the NVMe namespace.
+
 Phipia's VFS currently admits ASCII mount-relative paths shorter than 128 bytes
 and at most 16 components. Directory names may be 255 bytes on disk; entries
 that cannot fit the current VFS path contract can be enumerated but cannot be
