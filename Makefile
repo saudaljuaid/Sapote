@@ -683,8 +683,8 @@ $(PHIPAPP_SYSTEM_IMAGE): $(PHIPAPP_PACKAGE) tools/phipia-package.py \
 	$(PYTHON) tools/phipia-package.py install-system \
 		--output $@ $(PHIPAPP_PACKAGE)
 
-$(PHIPAPP_DATA_IMAGE): tools/fat32_image.py | $(PHIPAPP_DIR)
-	$(PYTHON) tools/fat32_image.py format data $@
+$(PHIPAPP_DATA_IMAGE): $(EXT4_FIXTURE) | $(PHIPAPP_DIR)
+	cp $< $@
 
 $(PHIPAPP_REPOSITORY): $(PHIPAPP_APP) tools/package_lifecycle_fixture.py \
 		tools/phipia-package.py tools/phipia-repository.py \
@@ -2284,7 +2284,8 @@ qemu-test-native-phip: $(TEST_BUILD_DIR)/native-phip/phipia.iso
 		--audit tools/network_packet_audit.py \
 		--content-root '$(PHIPAPP_DIR)/repository' \
 		--system '$(PHIPAPP_SYSTEM_IMAGE)' \
-		--data '$(PHIPAPP_DATA_IMAGE)' --full '$(FAT32_FULL_IMAGE)' \
+		--data '$(PHIPAPP_DATA_IMAGE)' --data-filesystem ext4 \
+		--full '$(FAT32_FULL_IMAGE)' \
 		--qemu qemu-system-x86_64 --python '$(PYTHON)' \
 		--accel '$(QEMU_ACCEL)' --timeout 240
 

@@ -56,10 +56,13 @@ publisher-signed v3 package over that same authenticated HTTPS path. The Ring 3
 `phip` client copies the repository into a sealed upload, asks the privileged
 controller for an authenticated plan, streams each exact package directly into
 a digest-bound upload, commits the generation, removes its staging file, and
-exits. The kernel then independently parses the authority-selected database,
-checks the installed identifier, version, and owned file, and requires clean
-process, network, file, upload, controller, and package-service censuses. Its
-PCAP is independently audited for encrypted TLS traffic.
+exits. Data is the deterministic journaled ext4 fixture, not the FAT32
+compatibility backend. The kernel synchronizes and unmounts it, resets the
+machine, then independently parses the authority-selected database and checks
+the installed identifier, version, and owned file after reboot. It requires
+clean process, network, file, upload, controller, package-service, NVMe, heap,
+and VFS censuses. The retained Data image must also pass read-only `e2fsck`, and
+the PCAP is independently audited for encrypted TLS traffic.
 
 [`NATIVE_SCENARIOS.md`](NATIVE_SCENARIOS.md) maps each required native
 application proof to its Ring 3 action, exact QEMU scenario, and retained

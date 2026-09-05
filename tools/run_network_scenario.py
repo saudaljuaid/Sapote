@@ -147,6 +147,7 @@ def storage_arguments(args: argparse.Namespace, output: Path) -> list[str]:
         raise RuntimeError("storage scenario requires System and Data images")
     data = output / "data.raw"
     shutil.copyfile(source, data)
+    data_block_size = 4096 if args.data_filesystem == "ext4" else 512
     return [
         "-boot", "order=d",
         "-blockdev", f"driver=file,filename={args.system},node-name=system-file,read-only=on,auto-read-only=off",
@@ -154,7 +155,7 @@ def storage_arguments(args: argparse.Namespace, output: Path) -> list[str]:
         "-device", "nvme,serial=phipia-system-fat32,drive=system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1",
         "-blockdev", f"driver=file,filename={data},node-name=data-file,read-only=off,auto-read-only=off",
         "-blockdev", "driver=raw,file=data-file,node-name=data-raw,read-only=off",
-        "-device", "nvme,serial=phipia-data-fat32,drive=data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1",
+        "-device", f"nvme,serial=phipia-data-{args.data_filesystem},drive=data-raw,logical_block_size={data_block_size},physical_block_size={data_block_size},max_ioqpairs=1,msix_qsize=1",
     ]
 
 
@@ -268,10 +269,12 @@ def run(args: argparse.Namespace) -> int:
             qemu.extend([
                 "-qmp", f"tcp:{qmp_endpoint[0]}:{qmp_endpoint[1]},server=on,wait=off"
             ])
-    if args.scenario != "network-persistence":
+    if args.scenario not in ("network-persistence", "native-phip"):
         qemu.append("-no-reboot")
 
-    expected_begins = 2 if args.scenario == "network-persistence" else 1
+    expected_begins = (
+        2 if args.scenario in ("network-persistence", "native-phip") else 1
+    )
     try:
         with serial.open("wb") as serial_stream:
             machine = subprocess.Popen(qemu, stdin=subprocess.DEVNULL,
@@ -335,7 +338,8 @@ def run(args: argparse.Namespace) -> int:
             "PHIPIA PHIP PHASE payloads-authenticated PASS\n",
             "PHIPIA PHIP PHASE committed generation=1 PASS\n",
             "PHIPIA PHIP PASS https trust plan payload transaction cleanup\n",
-            "Phipia: signed HTTPS package install and cleanup passed\n",
+            "Phipia: signed HTTPS package install synchronized reboot phase\n",
+            "Phipia: signed HTTPS package persisted on writable ext4 passed\n",
         )
         healthy = all(transcript.count(marker) == 1 for marker in required)
         if healthy:
@@ -344,6 +348,16 @@ def run(args: argparse.Namespace) -> int:
                 "--https", "--json", str(audit),
             ], check=False)
             healthy = audited.returncode == 0
+        if healthy:
+            fsck_log = output / "data-fsck.log"
+            fsck = subprocess.run(
+                ["e2fsck", "-f", "-n", str(output / "data.raw")],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            fsck_log.write_bytes(fsck.stdout)
+            healthy = fsck.returncode == 0
     if args.scenario == "network-http-length" and healthy:
         audited = subprocess.run([
             args.python, str(args.audit.resolve()), str(capture),
@@ -376,6 +390,9 @@ def main() -> int:
                         default=Path("tools/network_packet_audit.py"))
     parser.add_argument("--system", type=Path)
     parser.add_argument("--data", type=Path)
+    parser.add_argument(
+        "--data-filesystem", choices=("fat32", "ext4"), default="fat32"
+    )
     parser.add_argument("--full", type=Path)
     parser.add_argument("--content-root", type=Path)
     parser.add_argument("--qemu", default="qemu-system-x86_64")

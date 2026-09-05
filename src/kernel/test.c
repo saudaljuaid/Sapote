@@ -5721,16 +5721,44 @@ _Noreturn void kernel_test_complete_native_https(void)
     kernel_test_pass();
 }
 
+static bool native_phip_authority_is_canonical(
+    uint8_t *database,
+    size_t database_capacity,
+    struct package_service_report *service
+)
+{
+    struct package_state_database_view view;
+    struct package_state_package_view package;
+    struct package_state_file_view file;
+    size_t database_bytes = 0U;
+
+    return package_service_snapshot(database, database_capacity,
+            &database_bytes, service) == PACKAGE_SERVICE_STATUS_OK &&
+        service->generation == 1U && service->live_file_handles == 0U &&
+        service->live_allocations == 0U && database_bytes != 0U &&
+        package_state_database_parse(database, database_bytes, &view) ==
+            PACKAGE_STATE_STATUS_OK &&
+        view.generation == 1U && view.package_count == 1U &&
+        view.edge_count == 0U && view.file_count == 1U &&
+        package_state_database_package(&view, 0U, &package) ==
+            PACKAGE_STATE_STATUS_OK &&
+        package_state_database_file(&view, 0U, &file) ==
+            PACKAGE_STATE_STATUS_OK &&
+        package_text_equals(&package.identifier, "org.phipia.proof") &&
+        package_text_equals(&package.version, "1.0.0") &&
+        package_text_equals(&file.path, "bin/proof.app") &&
+        file.owner_index == 0U && file.length != 0U;
+}
+
 _Noreturn void kernel_test_complete_native_phip(void)
 {
     static uint8_t database[4096U];
     struct native_process_result proof = { 0 };
     struct package_service_report service;
-    struct package_state_database_view view;
-    struct package_state_package_view package;
-    struct package_state_file_view file;
+    const struct phipfs_drive_info data = phipfs_drive(PHIPFS_VOLUME_DATA);
+    struct phipfs_stat authority;
     struct network_state network;
-    size_t database_bytes = 0U;
+    enum phipfs_status authority_status;
 
     if (active_scenario != KERNEL_TEST_NATIVE_PHIP) {
         kernel_test_fail("native phip completion used outside its scenario");
@@ -5738,38 +5766,54 @@ _Noreturn void kernel_test_complete_native_phip(void)
     if (random_get_state().capability != RANDOM_CAPABILITY_INITIALIZED) {
         kernel_test_fail("native phip did not retain strong hardware entropy");
     }
-    if (native_process_launch("PHIP.MAN", &proof) != NATIVE_PROCESS_OK ||
-        !proof.exited || proof.faulted || proof.exit_status != 0 ||
-        !proof.resources_released || proof.peak_handles < 3U ||
-        proof.syscall_count < 20U || proof.thread_switches == 0U ||
-        !native_process_resources_released()) {
-        kernel_test_fail("native phip client did not leave a clean census");
+    if (!data.present || !data.mounted || data.read_only || !data.healthy ||
+        data.total_bytes != UINT64_C(128) * UINT64_C(1024) * UINT64_C(1024) ||
+        data.free_bytes == 0U || data.free_bytes >= data.total_bytes) {
+        kernel_test_fail("native phip writable ext4 volume is unavailable");
+    }
+    authority_status = phipfs_stat_path(PHIPFS_VOLUME_DATA,
+        PACKAGE_SERVICE_AUTHORITY_PATH, &authority);
+    if (authority_status == PHIPFS_STATUS_NOT_FOUND) {
+        if (native_process_launch("PHIP.MAN", &proof) != NATIVE_PROCESS_OK ||
+            !proof.exited || proof.faulted || proof.exit_status != 0 ||
+            !proof.resources_released || proof.peak_handles < 3U ||
+            proof.syscall_count < 20U || proof.thread_switches == 0U ||
+            !native_process_resources_released()) {
+            kernel_test_fail("native phip client did not leave a clean census");
+        }
+        if (!native_phip_authority_is_canonical(database, sizeof(database),
+                &service)) {
+            kernel_test_fail("native phip installed authority is not canonical");
+        }
+        if (phipfs_sync(PHIPFS_VOLUME_DATA) != PHIPFS_STATUS_OK ||
+            phipfs_unmount(PHIPFS_VOLUME_DATA) != PHIPFS_STATUS_OK ||
+            !nvme_filesystem_session_resources_released() ||
+            !native_process_resources_released()) {
+            kernel_test_fail("native phip ext4 reboot barrier leaked resources");
+        }
+        console_write(
+            "Phipia: signed HTTPS package install synchronized reboot phase\n");
+        cpu_out8(UINT16_C(0x0064), UINT8_C(0xFE));
+        kernel_test_fail("platform reset did not restart QEMU");
+    }
+    if (authority_status != PHIPFS_STATUS_OK || authority.directory ||
+        authority.size == 0U) {
+        kernel_test_fail("native phip reboot authority is unavailable");
     }
     network = network_get_state();
     if (network.udp_sockets != 0U || network.tcp_connections != 0U ||
         network.timers != 0U) {
         kernel_test_fail("native phip network resources survived teardown");
     }
-    if (package_service_snapshot(database, sizeof(database), &database_bytes,
-            &service) != PACKAGE_SERVICE_STATUS_OK ||
-        service.generation != 1U || service.live_file_handles != 0U ||
-        service.live_allocations != 0U || database_bytes == 0U ||
-        package_state_database_parse(database, database_bytes, &view) !=
-            PACKAGE_STATE_STATUS_OK ||
-        view.generation != 1U || view.package_count != 1U ||
-        view.edge_count != 0U || view.file_count != 1U ||
-        package_state_database_package(&view, 0U, &package) !=
-            PACKAGE_STATE_STATUS_OK ||
-        package_state_database_file(&view, 0U, &file) !=
-            PACKAGE_STATE_STATUS_OK ||
-        !package_text_equals(&package.identifier, "org.phipia.proof") ||
-        !package_text_equals(&package.version, "1.0.0") ||
-        !package_text_equals(&file.path, "bin/proof.app") ||
-        file.owner_index != 0U || file.length == 0U) {
-        kernel_test_fail("native phip installed authority is not canonical");
+    if (!native_phip_authority_is_canonical(database, sizeof(database),
+            &service) ||
+        phipfs_sync(PHIPFS_VOLUME_DATA) != PHIPFS_STATUS_OK ||
+        phipfs_unmount(PHIPFS_VOLUME_DATA) != PHIPFS_STATUS_OK ||
+        !nvme_filesystem_session_resources_released()) {
+        kernel_test_fail("native phip persisted authority is not canonical");
     }
     console_write(
-        "Phipia: signed HTTPS package install and cleanup passed\n");
+        "Phipia: signed HTTPS package persisted on writable ext4 passed\n");
     console_write("ST NETWORK production path bounded and recoverable\n");
     kernel_test_pass();
 }
