@@ -34,6 +34,12 @@ long phipia_package_control_open_install(
     struct phipia_package_control_report *report
 );
 
+long phipia_package_control_open_remove(
+    const char *identifier,
+    size_t identifier_bytes,
+    struct phipia_package_control_report *report
+);
+
 long phipia_package_control_item(
     phipia_handle_t control,
     uint32_t index,

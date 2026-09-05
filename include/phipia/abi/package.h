@@ -18,6 +18,9 @@
 #define PHIPIA_PACKAGE_CONTROL_PREPARED UINT32_C(1)
 #define PHIPIA_PACKAGE_CONTROL_COMMITTED UINT32_C(2)
 
+#define PHIPIA_PACKAGE_CONTROL_OPEN_INSTALL UINT32_C(0)
+#define PHIPIA_PACKAGE_CONTROL_OPEN_REMOVE UINT32_C(1)
+
 struct phipia_package_upload_write_request {
     uint32_t size;
     uint32_t version;

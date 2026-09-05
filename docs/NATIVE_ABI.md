@@ -149,10 +149,10 @@ for applications that must keep another userspace thread runnable.
 | `0x0800 PACKAGE_UPLOAD_OPEN()` | Owned package-upload handle | K | Allocates one of four kernel slots and a private 8.3-safe Data file. The file is inaccessible through the caller's application namespace. |
 | `0x0801 PACKAGE_UPLOAD_WRITE(*request)` | Bytes written | K | Copies at most 4 KiB into the private file and advances an incremental kernel SHA-256. Any storage failure poisons the upload so it can only be closed. |
 | `0x0802 PACKAGE_UPLOAD_SEAL(*request)` | `0` | K | Closes the writer, requires exact nonzero length and SHA-256 from the privileged caller, then flushes Data. The all-or-nothing output reports actual length, digest, and sealed/durable flags; it does not authenticate the metadata's origin. |
-| `0x0803 PACKAGE_CONTROL_OPEN_INSTALL(*request)` | Owned package-control handle | K | Copies and authenticates the sealed repository upload with platform trust and realtime freshness, snapshots recovered installed authority, and produces one bounded install/update plan. The repository-upload handle remains caller-owned and may be closed after return. |
+| `0x0803 PACKAGE_CONTROL_OPEN_INSTALL(*request)` | Owned package-control handle | K | With `OPEN_INSTALL`, copies and authenticates the sealed repository upload with platform trust and realtime freshness, snapshots recovered installed authority, and produces one bounded install/update plan. With `OPEN_REMOVE`, requires an invalid repository handle and derives a dependency-safe removal plan solely from authenticated installed state. |
 | `0x0804 PACKAGE_CONTROL_ITEM(*request)` | `0` | K | Copies one exact plan item, including its repository-bound length, SHA-256, and download path. No pointer into privileged parser state is exposed. |
 | `0x0805 PACKAGE_CONTROL_ATTACH(*request)` | `0` | K | Requires a sealed upload whose length and digest match the named plan item, copies it into the controller, and re-authenticates the signed package against the repository entry. The upload handle remains caller-owned. |
-| `0x0806 PACKAGE_CONTROL_COMMIT(*request)` | `0` | K | Rebuilds and encodes canonical state, then bootstraps generation one or prepares and commits an update. A durability refusal after prepare leaves the control handle retryable; `PREPARED` and `COMMITTED` report the exact state. |
+| `0x0806 PACKAGE_CONTROL_COMMIT(*request)` | `0` | K | Rebuilds and encodes canonical state, then bootstraps generation one or prepares and commits an update or removal. A durability refusal after prepare leaves the control handle retryable; `PREPARED` and `COMMITTED` report the exact state. |
 
 The installed VFS currently bounds one staged file at 16 MiB, so the upload
 ABI publishes that real limit even though package format v3 can represent a
@@ -163,8 +163,9 @@ One package-control session may be live system-wide. Its native handle may be
 duplicated; the final close releases the authenticated repository snapshot,
 installed-state snapshot, and copied payloads. Process teardown performs the
 same close. The v1 control profile admits at most eight changed packages with
-4 MiB of aggregate package bytes and does not yet expose remove, repair, or a
-durable minimum-repository-version floor.
+4 MiB of aggregate package bytes. Removal is exposed without a repository or
+payload upload; authenticated repair and the durable repository-version floor
+remain separate gates.
 
 Directory enumeration reports the canonical printable form of each accepted
 ASCII 8.3 name in lower case. Path lookup remains case-insensitive.

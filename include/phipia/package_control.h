@@ -77,6 +77,19 @@ enum package_control_status package_control_open_install(
     struct package_control_report *report
 );
 
+/*
+ * Snapshots recovered installed state and produces a dependency-safe removal
+ * plan.  Removal needs no repository upload because every selected identity,
+ * version, ownership edge, and file digest comes from the authenticated
+ * installed database.
+ */
+enum package_control_status package_control_open_remove(
+    uint64_t owner,
+    const uint8_t *identifier,
+    size_t identifier_bytes,
+    struct package_control_report *report
+);
+
 enum package_control_status package_control_item(
     uint64_t owner,
     package_control_token token,

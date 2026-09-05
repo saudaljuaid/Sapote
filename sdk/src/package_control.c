@@ -51,6 +51,33 @@ long phipia_package_control_open_install(
     return status;
 }
 
+long phipia_package_control_open_remove(
+    const char *identifier,
+    size_t identifier_bytes,
+    struct phipia_package_control_report *report
+)
+{
+    struct phipia_package_control_open_request request;
+
+    report_clear(report);
+    if (identifier == NULL || identifier_bytes == 0U ||
+        identifier_bytes >= PHIPIA_PACKAGE_CONTROL_TEXT_BYTES ||
+        report == NULL) {
+        return -PHIPIA_EINVAL;
+    }
+    (void)memset(&request, 0, sizeof(request));
+    request.size = sizeof(request);
+    request.version = PHIPIA_ABI_VERSION;
+    request.identifier = (uint64_t)(uintptr_t)identifier;
+    request.identifier_bytes = (uint32_t)identifier_bytes;
+    request.flags = PHIPIA_PACKAGE_CONTROL_OPEN_REMOVE;
+    long status = phipia_syscall1(PHIPIA_SYS_PACKAGE_CONTROL_OPEN_INSTALL,
+        (uint64_t)(uintptr_t)&request);
+
+    report_open(report, &request);
+    return status;
+}
+
 long phipia_package_control_item(
     phipia_handle_t control,
     uint32_t index,

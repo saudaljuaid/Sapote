@@ -205,16 +205,49 @@ static int install(const char *identifier)
     return 0;
 }
 
+static int remove_package(const char *identifier)
+{
+    struct phipia_package_control_report report;
+    long result = phipia_package_control_open_remove(identifier,
+        strlen(identifier), &report);
+
+    if (result < 0) {
+        printf("phip: removal plan refused: %ld\n", result);
+        return 30;
+    }
+    phipia_handle_t control = (phipia_handle_t)result;
+    puts("PHIPIA PHIP PHASE remove-plan PASS");
+    result = phipia_package_control_commit(control, &report);
+    if (result < 0 &&
+        (report.result_flags & PHIPIA_PACKAGE_CONTROL_PREPARED) != 0U) {
+        result = phipia_package_control_commit(control, &report);
+    }
+    if (result < 0 ||
+        (report.result_flags & PHIPIA_PACKAGE_CONTROL_COMMITTED) == 0U ||
+        report.generation == 0U || !close_handle(control)) {
+        printf("phip: removal commit failed: %ld flags=%u\n", result,
+            report.result_flags);
+        return 31;
+    }
+    printf("PHIPIA PHIP PHASE removed generation=%llu PASS\n",
+        (unsigned long long)report.generation);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
-    if (argc != 3 || strcmp(argv[1], "install") != 0) {
-        puts("usage: phip install IDENTIFIER");
+    if (argc != 3 || (strcmp(argv[1], "install") != 0 &&
+            strcmp(argv[1], "remove") != 0)) {
+        puts("usage: phip install|remove IDENTIFIER");
         return 2;
     }
     puts("PHIPIA PHIP PHASE start");
-    int result = install(argv[2]);
+    int result = strcmp(argv[1], "remove") == 0 ? remove_package(argv[2]) :
+        install(argv[2]);
     if (result == 0) {
-        puts("PHIPIA PHIP PASS https trust plan payload transaction cleanup");
+        puts(strcmp(argv[1], "remove") == 0 ?
+            "PHIPIA PHIP REMOVE PASS trust plan transaction cleanup" :
+            "PHIPIA PHIP PASS https trust plan payload transaction cleanup");
     }
     return result;
 }

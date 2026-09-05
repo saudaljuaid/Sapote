@@ -577,6 +577,26 @@ int main(int argc, char **argv)
     free(update_application.bytes);
     free(update_library.bytes);
     free(changed_repository.bytes);
+    CHECK(package_control_open_remove(TEST_OWNER,
+        (const uint8_t *)"org.phipia.app", 14U, &report) ==
+            PACKAGE_CONTROL_STATUS_OK && report.plan_count == 2U &&
+        report.attached_count == 0U && report.generation == 2U);
+    control = report.token;
+    CHECK(package_control_commit(TEST_OWNER, control, &report) ==
+            PACKAGE_CONTROL_STATUS_OK && report.prepared && report.committed &&
+        report.generation == 3U && report.plan_count == 2U &&
+        report.attached_count == 0U &&
+        package_control_close(TEST_OWNER, control, &report) ==
+            PACKAGE_CONTROL_STATUS_OK && package_control_resources_released() &&
+        live_allocations == 0U &&
+        package_state_database_parse(service_current, service_current_bytes,
+            &installed) == PACKAGE_STATE_STATUS_OK &&
+        installed.generation == 3U && installed.package_count == 0U);
+    CHECK(package_control_open_remove(TEST_OWNER,
+        (const uint8_t *)"org.phipia.app", 14U, &report) ==
+            PACKAGE_CONTROL_STATUS_MANAGER &&
+        report.manager_status == PACKAGE_MANAGER_STATUS_NOT_FOUND &&
+        package_control_resources_released() && live_allocations == 0U);
     (void)puts("Phipia privileged package controller signed lifecycle tests passed");
     return 0;
 }

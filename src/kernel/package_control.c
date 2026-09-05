@@ -289,6 +289,75 @@ static enum package_control_status load_installed(
         PACKAGE_CONTROL_STATUS_OK : PACKAGE_CONTROL_STATUS_STATE;
 }
 
+enum package_control_status package_control_open_remove(
+    uint64_t owner,
+    const uint8_t *identifier,
+    size_t identifier_bytes,
+    struct package_control_report *report
+)
+{
+    size_t index = PACKAGE_CONTROL_SESSION_LIMIT;
+    struct control_session *session;
+
+    clear_report(report);
+    if (report == NULL || owner == 0U || identifier == NULL ||
+        identifier_bytes == 0U || identifier_bytes >=
+            PACKAGE_CONTROL_TEXT_BYTES) {
+        return PACKAGE_CONTROL_STATUS_NULL_ARGUMENT;
+    }
+    if (servicing) {
+        return finish(report, PACKAGE_CONTROL_STATUS_BUSY, NULL, 0U);
+    }
+    initialize_generations();
+    for (size_t candidate = 0U; candidate < PACKAGE_CONTROL_SESSION_LIMIT;
+            ++candidate) {
+        if (!sessions[candidate].active) {
+            index = candidate;
+            break;
+        }
+    }
+    if (index == PACKAGE_CONTROL_SESSION_LIMIT) {
+        return finish(report, PACKAGE_CONTROL_STATUS_NO_SLOT, NULL, 0U);
+    }
+    servicing = true;
+    session = &sessions[index];
+    uint32_t generation = session->generation;
+    zero_bytes(session, sizeof(*session));
+    session->generation = generation;
+    session->owner = owner;
+    session->active = true;
+    copy_bytes(session->target, identifier, identifier_bytes);
+    enum package_control_status status = load_installed(session, report);
+
+    if (status != PACKAGE_CONTROL_STATUS_OK) {
+        goto refuse;
+    }
+    if (!session->has_installed) {
+        report->manager_status = PACKAGE_MANAGER_STATUS_NOT_FOUND;
+        status = PACKAGE_CONTROL_STATUS_MANAGER;
+        goto refuse;
+    }
+    report->manager_status = package_manager_plan_remove(&session->installed,
+        session->target, identifier_bytes, &session->plan);
+    if (report->manager_status != PACKAGE_MANAGER_STATUS_OK) {
+        status = PACKAGE_CONTROL_STATUS_MANAGER;
+        goto refuse;
+    }
+    session->plan.target.bytes = session->target;
+    if (session->plan.count == 0U ||
+        session->plan.count > PACKAGE_CONTROL_PLAN_MAX_PACKAGES) {
+        status = PACKAGE_CONTROL_STATUS_RANGE;
+        goto refuse;
+    }
+    servicing = false;
+    return finish(report, PACKAGE_CONTROL_STATUS_OK, session, index);
+
+refuse:
+    (void)release_session(session);
+    servicing = false;
+    return finish(report, status, NULL, 0U);
+}
+
 enum package_control_status package_control_open_install(
     uint64_t owner,
     package_upload_token repository_upload,
@@ -578,7 +647,8 @@ enum package_control_status package_control_commit(
             PACKAGE_CONTROL_STATUS_OK : PACKAGE_CONTROL_STATUS_SERVICE,
             session, session_index);
     }
-    if (session->attached_count != session->plan.count) {
+    if (session->plan.operation != PACKAGE_MANAGER_PLAN_REMOVE &&
+        session->attached_count != session->plan.count) {
         return finish(report, PACKAGE_CONTROL_STATUS_STATE, session,
             session_index);
     }
@@ -592,10 +662,19 @@ enum package_control_status package_control_commit(
         status = PACKAGE_CONTROL_STATUS_RESOURCE;
         goto release;
     }
-    report->manager_status = package_builder_build(&session->repository,
+    report->manager_status = package_builder_build(
+        session->plan.operation == PACKAGE_MANAGER_PLAN_REMOVE ? NULL :
+            &session->repository,
         session->has_installed ? &session->installed : NULL, &session->plan,
-        session->plan.count == 0U ? NULL : session->packages,
-        session->plan.count, &session->policy, &session->trust, workspace);
+        session->plan.operation == PACKAGE_MANAGER_PLAN_REMOVE ? NULL :
+            session->packages,
+        session->plan.operation == PACKAGE_MANAGER_PLAN_REMOVE ? 0U :
+            session->plan.count,
+        session->plan.operation == PACKAGE_MANAGER_PLAN_REMOVE ? NULL :
+            &session->policy,
+        session->plan.operation == PACKAGE_MANAGER_PLAN_REMOVE ? NULL :
+            &session->trust,
+        workspace);
     if (report->manager_status != PACKAGE_MANAGER_STATUS_OK) {
         status = PACKAGE_CONTROL_STATUS_MANAGER;
         goto release;
