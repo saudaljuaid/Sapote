@@ -20,6 +20,8 @@
 struct ext4_mount_state {
     struct nvme_volume_session session;
     struct phipia_ext4_identity identity;
+    /* begin_operation serializes use; keep a full LBA off the syscall stack. */
+    uint8_t block_buffer[NVME_BLOCK_BYTES];
     uintptr_t rust_mount;
     uint64_t generation;
     uint64_t media_bytes;
@@ -424,7 +426,6 @@ int32_t phipia_ext4_block_read(
 {
     struct ext4_mount_state *mount = (struct ext4_mount_state *)context;
     struct nvme_volume_session *session;
-    uint8_t block[NVME_BLOCK_BYTES];
     uint64_t position = start_byte;
     size_t remaining = length;
 
@@ -433,7 +434,7 @@ int32_t phipia_ext4_block_read(
     }
     session = &mount->session;
     if (!session->active || session->logical_block_bytes == 0U ||
-        session->logical_block_bytes > sizeof(block) ||
+        session->logical_block_bytes > sizeof(mount->block_buffer) ||
         start_byte > mount->media_bytes ||
         length > mount->media_bytes - start_byte) {
         return -1;
@@ -446,11 +447,11 @@ int32_t phipia_ext4_block_read(
         if (chunk > remaining) {
             chunk = remaining;
         }
-        if (nvme_volume_read(session, lba, block,
+        if (nvme_volume_read(session, lba, mount->block_buffer,
                 session->logical_block_bytes) != NVME_STATUS_OK) {
             return -1;
         }
-        copy_bytes(destination, &block[within], chunk);
+        copy_bytes(destination, &mount->block_buffer[within], chunk);
         destination += chunk;
         position += chunk;
         remaining -= chunk;
@@ -468,7 +469,6 @@ int32_t phipia_ext4_block_write(
 {
     struct ext4_mount_state *mount = (struct ext4_mount_state *)context;
     struct nvme_volume_session *session;
-    uint8_t block[NVME_BLOCK_BYTES];
     uint64_t position = start_byte;
     size_t remaining = length;
 
@@ -478,7 +478,7 @@ int32_t phipia_ext4_block_write(
     session = &mount->session;
     if (!session->active || !session->writable ||
         session->logical_block_bytes == 0U ||
-        session->logical_block_bytes > sizeof(block) ||
+        session->logical_block_bytes > sizeof(mount->block_buffer) ||
         start_byte > mount->media_bytes ||
         length > mount->media_bytes - start_byte) {
         return -1;
@@ -500,12 +500,12 @@ int32_t phipia_ext4_block_write(
                 return -1;
             }
         } else {
-            if (nvme_volume_read(session, lba, block,
+            if (nvme_volume_read(session, lba, mount->block_buffer,
                     session->logical_block_bytes) != NVME_STATUS_OK) {
                 return -1;
             }
-            copy_bytes(&block[within], source, chunk);
-            if (nvme_volume_write(session, lba, block,
+            copy_bytes(&mount->block_buffer[within], source, chunk);
+            if (nvme_volume_write(session, lba, mount->block_buffer,
                     session->logical_block_bytes) != NVME_STATUS_OK) {
                 return -1;
             }
