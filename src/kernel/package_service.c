@@ -860,8 +860,8 @@ static enum package_service_status write_handle_bytes(
     size_t total = 0U;
 
     while (total < count) {
-        size_t chunk = count - total < PACKAGE_SERVICE_IO_BYTES ?
-            count - total : PACKAGE_SERVICE_IO_BYTES;
+        size_t chunk = count - total < PACKAGE_SERVICE_TRANSACTION_BYTES ?
+            count - total : PACKAGE_SERVICE_TRANSACTION_BYTES;
         size_t written = 0U;
         enum phipfs_status fs_status = phipfs_write(handle, bytes + total,
             chunk, &written);
@@ -1219,8 +1219,9 @@ static enum package_service_status write_generation_file(
     status = PACKAGE_SERVICE_STATUS_OK;
     while (remaining != 0U) {
         uint8_t buffer[PACKAGE_SERVICE_IO_BYTES];
-        size_t chunk = remaining < sizeof(buffer) ? (size_t)remaining :
-            sizeof(buffer);
+        const size_t limit = source->payload == NULL ? sizeof(buffer) :
+            PACKAGE_SERVICE_TRANSACTION_BYTES;
+        size_t chunk = remaining < limit ? (size_t)remaining : limit;
         const uint8_t *bytes = source->payload == NULL ? buffer :
             source->payload + (file->length - remaining);
 
