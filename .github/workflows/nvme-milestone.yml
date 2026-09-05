@@ -16,10 +16,10 @@ jobs:
     bounded-evidence:
         name: bounded-nvme-evidence
         runs-on: ubuntu-24.04
-        # Ten complete 117-scenario TCG sweeps take about 105 minutes on the
-        # hosted runner.  Keep enough headroom for evidence assembly instead
-        # of cancelling a healthy ninth sweep at the old 90-minute ceiling.
-        timeout-minutes: 150
+        # The complete 117-scenario matrix now includes the four-boot signed
+        # package lifecycle. Keep the full hosted-runner allowance so all ten
+        # serial TCG sweeps and evidence assembly can complete.
+        timeout-minutes: 360
         steps:
             - name: Check out source
               uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
