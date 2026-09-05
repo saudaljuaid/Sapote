@@ -160,6 +160,47 @@ static void release_slot(struct upload_slot *slot)
     slot->generation = generation;
 }
 
+/*
+ * Upload files are private inert staging objects, never package authority.
+ * Trimming them through several durable transactions is therefore safe and
+ * makes cleanup retryable even when a payload spans more blocks than one
+ * bounded ext4 journal transaction may revoke. Public unlink remains atomic.
+ */
+static enum phipfs_status remove_private_file(
+    const char *path,
+    bool *changed
+)
+{
+    struct phipfs_stat stat;
+    enum phipfs_status status = phipfs_stat_path(PHIPFS_VOLUME_DATA, path,
+        &stat);
+
+    if (status == PHIPFS_STATUS_NOT_FOUND) {
+        return PHIPFS_STATUS_OK;
+    }
+    if (status != PHIPFS_STATUS_OK || stat.directory) {
+        return status == PHIPFS_STATUS_OK ? PHIPFS_STATUS_IS_DIRECTORY :
+            status;
+    }
+    while (stat.size != 0U) {
+        const uint64_t next = stat.size > PACKAGE_UPLOAD_CLEANUP_CHUNK ?
+            stat.size - PACKAGE_UPLOAD_CLEANUP_CHUNK : 0U;
+
+        status = phipfs_truncate(PHIPFS_VOLUME_DATA, path, next);
+        if (status != PHIPFS_STATUS_OK) {
+            return status;
+        }
+        stat.size = next;
+        *changed = true;
+    }
+    status = phipfs_unlink(PHIPFS_VOLUME_DATA, path);
+    if (status == PHIPFS_STATUS_OK) {
+        *changed = true;
+        return PHIPFS_STATUS_OK;
+    }
+    return status == PHIPFS_STATUS_NOT_FOUND ? PHIPFS_STATUS_OK : status;
+}
+
 enum package_upload_status package_upload_initialize(
     struct package_upload_report *report
 )
@@ -193,10 +234,8 @@ enum package_upload_status package_upload_initialize(
         char path[PHIPFS_MAX_PATH];
 
         slot_path(index, path);
-        fs_status = phipfs_unlink(PHIPFS_VOLUME_DATA, path);
-        if (fs_status == PHIPFS_STATUS_OK) {
-            changed = true;
-        } else if (fs_status != PHIPFS_STATUS_NOT_FOUND) {
+        fs_status = remove_private_file(path, &changed);
+        if (fs_status != PHIPFS_STATUS_OK) {
             return initialization_failure(report,
                 PACKAGE_UPLOAD_STATUS_FILESYSTEM, fs_status, changed);
         }
@@ -573,10 +612,10 @@ enum package_upload_status package_upload_close(
     }
     slot_path(index, path);
     if (slot->file_present) {
-        enum phipfs_status fs_status = phipfs_unlink(PHIPFS_VOLUME_DATA, path);
+        bool changed = false;
+        enum phipfs_status fs_status = remove_private_file(path, &changed);
 
-        if (fs_status != PHIPFS_STATUS_OK &&
-            fs_status != PHIPFS_STATUS_NOT_FOUND) {
+        if (fs_status != PHIPFS_STATUS_OK) {
             servicing = false;
             return finish(report, PACKAGE_UPLOAD_STATUS_FILESYSTEM, fs_status,
                 slot, index);

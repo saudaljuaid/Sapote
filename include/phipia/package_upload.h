@@ -14,6 +14,8 @@
 #define PACKAGE_UPLOAD_SLOT_LIMIT 4U
 #define PACKAGE_UPLOAD_WRITE_MAX 4096U
 #define PACKAGE_UPLOAD_MAX_BYTES PHIPFS_MAX_FILE_BYTES
+/* Private scratch cleanup stays below ext4's journal revoke ceiling. */
+#define PACKAGE_UPLOAD_CLEANUP_CHUNK (32U * 4096U)
 
 typedef uint64_t package_upload_token;
 

@@ -9,7 +9,7 @@
 #include <phipia/package_state.h>
 #include <phipia/package_upload.h>
 
-#define MOCK_FILE_BYTES 16384U
+#define MOCK_FILE_BYTES (256U * 1024U)
 #define NO_WRITE_FAILURE SIZE_MAX
 #define CHECK(condition, code) do { if (!(condition)) return (code); } while (0)
 
@@ -29,6 +29,7 @@ static bool fail_next_unlink;
 static size_t write_failure_at = NO_WRITE_FAILURE;
 static uint32_t sync_count;
 static uint32_t unlink_count;
+static uint32_t truncate_count;
 
 static int path_index(const char *path)
 {
@@ -89,6 +90,47 @@ enum phipfs_status phipfs_unlink(enum phipfs_volume volume, const char *path)
     files[index].size = 0U;
     files[index].offset = 0U;
     ++unlink_count;
+    return PHIPFS_STATUS_OK;
+}
+
+enum phipfs_status phipfs_stat_path(enum phipfs_volume volume,
+    const char *path, struct phipfs_stat *stat)
+{
+    int index = path_index(path);
+
+    if (volume != PHIPFS_VOLUME_DATA || index < 0 || stat == NULL) {
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
+    }
+    if (!files[index].present) {
+        return PHIPFS_STATUS_NOT_FOUND;
+    }
+    *stat = (struct phipfs_stat){
+        .size = files[index].size,
+        .directory = false
+    };
+    return PHIPFS_STATUS_OK;
+}
+
+enum phipfs_status phipfs_truncate(enum phipfs_volume volume,
+    const char *path, uint64_t size)
+{
+    int index = path_index(path);
+
+    if (volume != PHIPFS_VOLUME_DATA || index < 0 ||
+            size > MOCK_FILE_BYTES) {
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
+    }
+    if (!files[index].present) {
+        return PHIPFS_STATUS_NOT_FOUND;
+    }
+    if (files[index].open) {
+        return PHIPFS_STATUS_BUSY;
+    }
+    files[index].size = (size_t)size;
+    if (files[index].offset > files[index].size) {
+        files[index].offset = files[index].size;
+    }
+    ++truncate_count;
     return PHIPFS_STATUS_OK;
 }
 
@@ -277,6 +319,43 @@ static int exact_upload_test(void)
     return 0;
 }
 
+static int bounded_large_cleanup_test(void)
+{
+    static uint8_t payload[PACKAGE_UPLOAD_CLEANUP_CHUNK + 4096U];
+    uint8_t digest[PACKAGE_STATE_SHA256_BYTES];
+    struct package_upload_report report;
+    package_upload_token token;
+    size_t total = 0U;
+    const uint32_t before = truncate_count;
+
+    for (size_t index = 0U; index < sizeof(payload); ++index) {
+        payload[index] = (uint8_t)(index * 17U + 3U);
+    }
+    CHECK(package_state_sha256(payload, sizeof(payload), digest) ==
+        PACKAGE_STATE_STATUS_OK, 60);
+    CHECK(package_upload_open(80U, &report) == PACKAGE_UPLOAD_STATUS_OK, 61);
+    token = report.token;
+    while (total < sizeof(payload)) {
+        size_t chunk = sizeof(payload) - total;
+        size_t written = 0U;
+
+        if (chunk > PACKAGE_UPLOAD_WRITE_MAX) {
+            chunk = PACKAGE_UPLOAD_WRITE_MAX;
+        }
+        CHECK(package_upload_write(80U, token, payload + total, chunk,
+            &written, &report) == PACKAGE_UPLOAD_STATUS_OK &&
+            written == chunk, 62);
+        total += written;
+    }
+    CHECK(package_upload_seal(80U, token, sizeof(payload), digest, &report) ==
+        PACKAGE_UPLOAD_STATUS_OK, 63);
+    CHECK(package_upload_close(80U, token, &report) ==
+            PACKAGE_UPLOAD_STATUS_OK &&
+        truncate_count == before + 2U && package_upload_resources_released(),
+        64);
+    return 0;
+}
+
 static int bounded_slots_test(void)
 {
     struct package_upload_report report;
@@ -412,13 +491,16 @@ int main(void)
     if (result == 0) {
         result = failure_recovery_test();
     }
+    if (result == 0) {
+        result = bounded_large_cleanup_test();
+    }
     if (result != 0) {
         (void)fprintf(stderr, "package upload host test failed: %d\n", result);
         return result;
     }
     (void)printf("package upload host tests passed: lifecycle/failure matrix, "
-        "slots=%u max_bytes=%u syncs=%u unlinks=%u\n",
+        "slots=%u max_bytes=%u syncs=%u unlinks=%u truncates=%u\n",
         PACKAGE_UPLOAD_SLOT_LIMIT, PACKAGE_UPLOAD_MAX_BYTES, sync_count,
-        unlink_count);
+        unlink_count, truncate_count);
     return 0;
 }
