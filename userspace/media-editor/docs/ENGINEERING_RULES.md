@@ -479,7 +479,7 @@ that is counted and visible in diagnostics.
 
 **R-10.5** Layout is deterministic for a given geometry. Overlap, overflow,
 invalid focus, and duplicate identifiers are refused before activation, as
-Phipia Phipia already refuses them.
+Phipia already refuses them.
 
 **R-10.6** Copy is ordinary human language, sentence case, and short.
 

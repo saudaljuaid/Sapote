@@ -22,8 +22,10 @@ The local manifest removes workspace inheritance and development-only inputs;
 the local lock resolves that manifest to the repository's exact offline Cargo
 mirror, matching the kernel lock. The implementation source is otherwise
 pinned to the recorded tree apart from reviewable Phipia deltas. The accepted
-runtime profile is currently read-only. Upstream does not implement a journaled
-write path, so vendoring it does not establish crash-consistent ext4 writes.
+runtime profile is writable only through Phipia's retained mutation stage and
+ordered JBD2/NVMe executor. Upstream does not implement journaled writes by
+itself; the local delta supplies the checksummed transaction, recovery,
+checkpoint, revocation, retry, and power-cut-tested durability boundary.
 `vendor/ext4plus/PHIPIA-PORT.md` records that boundary and the exact feature
 configuration.
 

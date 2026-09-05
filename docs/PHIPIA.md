@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
 
-# Phipia Phipia
+# Phipia
 
 Phipia is Phipia's graphical environment. It starts after the kernel has
 installed the framebuffer, input, timer, storage, and desktop services.

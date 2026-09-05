@@ -4,7 +4,7 @@
 
 Phipia is a single-core x86_64 kernel built as one fixed-address ELF image. It
 boots through Multiboot2, installs its own memory and interrupt foundations,
-discovers emulated hardware, and can hand control to the Phipia Phipia workspace
+discovers emulated hardware, and can hand control to the Phipia workspace
 or one of the bounded QEMU proof scenarios.
 
 Source, headers, self-tests, and the Boot Ledger define the implementation. This
@@ -89,10 +89,11 @@ The device boundaries are explicit:
   handles, a four-sector cache, and clean-sync persistence;
 - VFS: bounded mount, vnode, file-description, and streaming-directory tables
   with mount/vnode/handle generations and backend-owned cookies;
-- ext4: exact-profile, metadata-checksummed, read-only lookup, 64-bit stat/read,
-  symlink/hardlink identity, and directory enumeration through pinned ext4plus;
+- ext4: exact-profile, metadata-checksummed, journaled read/write/truncate and
+  bounded namespace mutation, 64-bit stat/read, symlink/hardlink identity, and
+  directory enumeration through pinned ext4plus;
 - FAT16: retained read-only compatibility proofs for historical releases;
-- PS/2: keyboard and three-byte pointer input for the shell and Phipia Phipia.
+- PS/2: keyboard and three-byte pointer input for the shell and Phipia.
 
 `driver.c` adds thirteen bounded drivers for real Intel, Realtek, AMD, Cirrus
 Logic and Bochs Display Interface devices. Each binds through the same typed
@@ -188,7 +189,7 @@ events, network objects, timers, and threads. The public C SDK and Rust
 
 Separately, the Linux compatibility boundary programs
 the x86_64 `SYSCALL` MSRs and runs three checksum-pinned static BusyBox
-profiles: `echo PHIPIA`, `uname -s`, and `cat`. Phipia Phipia's `linux` command
+profiles: `echo PHIPIA`, `uname -s`, and `cat`. Phipia's `linux` command
 selects one of the three exact root entries on the deterministic read-only
 FAT32 system volume attached as an ordinary emulated NVMe namespace. Each
 launch validates
@@ -199,7 +200,7 @@ prompt.
 Echo and uname remain synchronous. Cat alone may suspend at its measured
 `read(0, 0x400001203f00, 4096)` entry. The syscall boundary saves an
 authenticated user frame, restores the kernel CR3 and safe launch stack, and
-returns to Phipia Phipia without printing a prompt. Keyboard events then belong
+returns to Phipia without printing a prompt. Keyboard events then belong
 to the bounded foreground line state. A complete line or EOF is revalidated,
 copied all-or-nothing into the authenticated RW/NX mapping, and resumes the
 same generation immediately after the real `SYSCALL`. The cycle may repeat
@@ -220,7 +221,7 @@ streams that the kernel did not create: packed fonts and logo data, FAT16/FAT32
 metadata, and ELF64 program records. Only validated, pointer-free results cross
 back to C. See [`RUST.md`](RUST.md).
 
-## Phipia Phipia
+## Phipia
 
 `framebuffer.c` validates and maps the linear framebuffer. `surface.c` provides
 cached clipped drawing and damage tracking; `screen.c` implements text cells.
@@ -229,7 +230,7 @@ cached clipped drawing and damage tracking; `screen.c` implements text cells.
 interactive compositor; it snapshots pixels already owned by Phipia and does
 not introduce floating-point work into the kernel.
 
-Phipia Phipia is a bounded eight-application workspace with a menu bar,
+Phipia is a bounded eight-application workspace with a menu bar,
 native 3D Dock, movable overlapping windows, Settings, Store, Camera, Canvas,
 Files, Notes, Terminal, and Media Editor. Native processes may additionally own
 bounded xRGB content surfaces while Phipia retains chrome, focus, stacking,

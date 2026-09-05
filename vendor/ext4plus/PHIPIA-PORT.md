@@ -12,12 +12,11 @@ required read/write object operations.
 
 The unmodified commit does **not** provide journaled writes. It reads and
 validates an existing JBD2 journal but sends mutations directly to home blocks.
-Phipia must not expose the backend read-write or claim crash consistency until
-the port adds an ordered, checksummed JBD2 writer over Phipia's explicit NVMe
-Flush fence and passes deliberate power-loss tests. Read-only mount admission
-may be integrated before that point.
+Phipia therefore exposes read-write access only through the local retained
+mutation stage and ordered, checksummed JBD2 writer over the explicit NVMe
+Flush fence. The public path was admitted after deliberate power-loss tests.
 
-Phipia's local journaling delta is intentionally below that admission line.
+Phipia's local journaling delta supplies that admission boundary.
 `src/journal/transaction.rs` builds one bounded checksum-v3 descriptor,
 metadata set, optional 64-bit revoke record, and commit record and returns an
 ordered-data operation plan with explicit data, journal-payload, commit, and
@@ -99,7 +98,7 @@ checksummed ext4 recovery marker, then reload and re-admit the clean image. If
 replay includes the primary-superblock home block, the final marker clear is
 derived from that validated replay image rather than the stale mount-time
 image, preserving recovered allocation counters.
-For future writable mounts, the ring exposes a separate final-clean plan only
+For writable mounts, the ring exposes a separate final-clean plan only
 after all reservations are checkpointed and the durable JBD2 start is zero. It
 blocks new reservations until the checksummed ext4 marker clear is flushed, and
 the next commit cycle must make the recovery marker durable again.
@@ -110,7 +109,7 @@ Started commit plans and checkpoint tail-state plans also re-emit identical
 operations after refusal and retain their ring slots until the corresponding
 durability acknowledgement.
 
-`JournalMutationStage` is the synchronous interception boundary for future
+`JournalMutationStage` is the synchronous interception boundary for
 ext4plus mutations. It accepts only an immutable backing reader, coalesces
 partial writes into bounded complete 4 KiB copy-on-write images, serves reads
 from that overlay, and can discard the entire stage without issuing a home
@@ -156,20 +155,20 @@ counter through tail cleanup, verify the group-zero bitmap checksum
 independently, reopen the appended byte, and require read-only `e2fsck`
 acceptance. A following real truncate must derive a revoke for that appended
 data block, return the allocation count to its original value, and pass
-`e2fsck` again. Platform VFS writes remain gated.
+`e2fsck` again. Public VFS writes use this same path.
 
-The stage is not yet connected to VFS mutations, which do not yet collect their
-touched offset range for ordered-data classification. The retry-safe
-final-clean plan is bound to both VFS sync and unmount through a writable NVMe
-lease. Sync retains the mount, acknowledges the marker clear only after its
-flush, and requires the next mutation to re-arm recovery; a clean sync needs no
-extra write or flush because every transaction already checkpoints
-synchronously. Sync and unmount preparation also finish an already-started
-retained transaction plan;
-another refusal keeps that exact plan retryable. Once the marker clear is
-durable, the adapter reloads a clean staged view so the retained mount can arm a
-later transaction; a failed reload is retried without rewriting durable state.
-The VFS cannot make a dirty mount yet. The private QEMU probe retains one
+The stage is connected to public VFS write, truncate, create, hard-link,
+unlink, mkdir, rmdir, and same-parent no-overwrite rename operations. Each
+mutation supplies its exact ordered-data classification and commits before the
+VFS publishes success. The retry-safe final-clean plan is bound to both VFS
+sync and unmount through a writable NVMe lease. Sync retains the mount,
+acknowledges the marker clear only after its flush, and requires the next
+mutation to re-arm recovery; a clean sync needs no extra write or flush because
+every transaction already checkpoints synchronously. Sync and unmount
+preparation also finish an already-started retained transaction plan; another
+refusal keeps that exact plan retryable. Once the marker clear is durable, the
+adapter reloads a clean staged view so the retained mount can arm a later
+transaction; a failed reload is retried without rewriting durable state. The QEMU probe retains one
 allocation-bearing transaction across an injected live-superblock write
 failure and an injected ordered-data flush failure, including retry through VFS
 sync, then retries injected final-clean marker-write and flush failures. Its
@@ -183,9 +182,9 @@ cuts ten independent VMs immediately after every named durability barrier,
 reboots each disk, and requires namespace, data, resource, and read-only
 `e2fsck` acceptance. The real fixture separately pins pre-commit allocation
 rollback after a refused classification and derives revocations from a real
-truncate. General writable-handle close semantics remain incomplete. Those
-gaps keep every user-facing Phipia ext4 mutation read-only even though recovery,
-sync, and unmount use writable leases.
+truncate. Open-handle busy rules, retry through VFS sync, mode-preserving file
+creation, clean unmount, and resource census are exercised through the public
+adapter.
 
 Phipia also tightens upstream writer admission: an image carrying ext4's
 `RO_COMPAT_READONLY` feature discards the supplied writer, as does an image
@@ -194,8 +193,8 @@ read-only through the ordinary loader and can retain a writer only through the
 explicit coordinator-only loader described above. Focused superblock tests pin
 the permanent read-only refusal, and the real-fixture transaction test proves
 that the ordinary loader still refuses a recovery-marked writer before using
-the explicit loader. This is a prerequisite for a future writable profile,
-not writable-backend admission by itself.
+the explicit coordinator loader. Writable admission is therefore limited to
+the exact supported profile and never weakens those refusal cases.
 
 Phipia-specific changes stay in reviewable commits and are summarized here as
 they land. The intended port configuration is `--no-default-features

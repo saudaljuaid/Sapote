@@ -488,7 +488,7 @@ static SDL_VideoDevice *PHIPIA_CreateDevice(void)
 
 VideoBootStrap PHIPIA_bootstrap = {
     PHIPIA_VIDEO_DRIVER_NAME,
-    "Phipia Phipia window and input driver",
+    "Phipia window and input driver",
     PHIPIA_CreateDevice,
     NULL
 };

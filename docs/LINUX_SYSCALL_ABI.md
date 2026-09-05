@@ -111,12 +111,12 @@ authenticated RW/NX stack mapping before a read can wait. A wrong fd returns
 `-EBADF`; an invalid complete range returns `-EFAULT` without copying; an
 unexpected syscall returns `-ENOSYS`. A successful write must use fd 1, the
 same measured buffer, the exact preceding read length, and bytes identical to
-the line supplied by Phipia Phipia. Those bytes are copied back from userspace
+the line supplied by Phipia. Those bytes are copied back from userspace
 before they are published to the terminal and serial stream.
 
 At read entry the kernel authenticates the generation, CR3, ordinal, register
 frame, selectors, flags, destination, and ownership. It saves one resumable
-frame, restores the kernel CR3 and launch stack, and yields to the Phipia Phipia
+frame, restores the kernel CR3 and launch stack, and yields to the Phipia
 event loop. A complete line or EOF revalidates those invariants, performs one
 all-or-nothing copy-out, and resumes immediately after the authentic
 `SYSCALL`. A read cannot be completed or resumed twice. The lifecycle is
@@ -139,13 +139,13 @@ executable-stack, and W+X shapes are refused.
 Each profile receives its exact measured argument vector, an empty environment,
 and the measured `AT_PAGESZ`/`AT_NULL` auxiliary vector in a guarded RW/NX stack. The
 historical scenarios keep their separate read-only 16 MiB FAT16 fixtures.
-The v2.0.0 Phipia Phipia path uses one deterministic read-only 64 MiB FAT32 system
+The v2.0.0 Phipia path uses one deterministic read-only 64 MiB FAT32 system
 image with the exact `BUSYBOX`, `UNAMEBOX`, and `CATBOX` entries. It is attached
 through ordinary emulated NVMe; DMA ownership returns to the CPU before Rust
 inspects metadata or complete file bytes. Filesystem writes are rejected below
 the shell for this mount.
 
-The Phipia Phipia owner assigns a fresh generation, invokes only the selected
+The Phipia owner assigns a fresh generation, invokes only the selected
 profile's measured launcher, and accepts success only after private CPL3 entry,
 the architectural `SYSCALL` instruction, exact stdout, status-zero exit, kernel
 CR3 restoration, mapping teardown, and an equal resource census. Failed and

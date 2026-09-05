@@ -73,7 +73,7 @@ not a style preference; it is the reason colourists work in grey rooms.
 | Red accent | `#A55050` | Refusal and record. Phipia's red. |
 | Violet accent | `#705984` | Markers. Phipia's violet. |
 
-Accents come from Phipia Phipia's palette: the two
+Accents come from Phipia's palette: the two
 programs are one project and should look like it. Accents belong to controls,
 never to the viewer, and never inside the picture area. No gradient, no glow,
 no translucency over a frame, no coloured overlay a user could mistake for

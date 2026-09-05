@@ -2,7 +2,7 @@
 
 # Changelog
 
-## Phipia Phipia
+## Phipia
 
 - Replaced the former shell presentation with the Phipia desktop and the
   canonical Phipia identity.

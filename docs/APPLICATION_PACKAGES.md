@@ -69,8 +69,9 @@ and cross-namespace access.
 
 ## Package container version 3
 
-Version 3 is a host-side, signed repository container foundation. It does not
-reuse or reinterpret the version 1/2 header. It uses the same `PHIPPKG1` magic,
+Version 3 is the signed repository container built by host tooling and admitted
+by the guest package manager. It does not reuse or reinterpret the version 1/2
+header. It uses the same `PHIPPKG1` magic,
 a 512-byte header, fixed-size canonical tables, and contiguous file payloads.
 All integer fields are little-endian. Package and file sizes are checked before
 slicing or allocating from their declared values.

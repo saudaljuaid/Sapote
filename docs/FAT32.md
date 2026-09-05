@@ -10,15 +10,15 @@ general Unix VFS, or stable application ABI.
 
 The immutable system image is `phipia-system-fat32.raw`. It has volume ID
 `0x20000001`, label `PHIPIASYS`, and contains `BUSYBOX`, `UNAMEBOX`, and
-`CATBOX`. The mount is read-only below Phipia Phipia. Each program still has an
+`CATBOX`. The mount is read-only below Phipia. Each program still has an
 independent filename, size, SHA-256, ELF64, and syscall contract. Historical
 FAT16 images and their release evidence remain unchanged.
 
 The writable data image is `phipia-data-fat32.raw`. It has volume ID
-`0x20000002`, label `PHIPIADATA`, and is Phipia Phipia's user-data filesystem.
+`0x20000002`, label `PHIPIADATA`, and is Phipia's user-data filesystem.
 The two mounts have separate controller indices, generations, handles, cache
 ownership, identity checks, and access policy. A missing or rejected data image
-does not prevent the system image, kernel, or Phipia Phipia from working.
+does not prevent the system image, kernel, or Phipia from working.
 
 ## Deterministic geometry
 
@@ -130,7 +130,7 @@ make qemu-tests
 ```
 
 All production evidence uses the normal NVMe submission/completion path and
-Phipia Phipia commands. Host inspection is verification tooling, not a substitute
+Phipia commands. Host inspection is verification tooling, not a substitute
 for guest filesystem execution.
 
 ## Supported scope
