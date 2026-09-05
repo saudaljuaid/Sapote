@@ -1949,7 +1949,7 @@ verify: toolchain lint
 			src/kernel/ext4_fs.c)" -eq 2 && \
 		grep -Fq 'if (nvme_volume_write(session, lba, source, chunk)' \
 			src/kernel/ext4_fs.c && \
-		grep -Fq 'if (nvme_volume_write(session, lba, block,' \
+		grep -Fq 'if (nvme_volume_write(session, lba, mount->block_buffer,' \
 			src/kernel/ext4_fs.c || \
 		{ echo 'NVMe write access escaped the FAT32 or ext4 recovery owner'; \
 			exit 1; }
