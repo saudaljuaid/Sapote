@@ -30,7 +30,8 @@ release is Phipia 2.2.0.
 - A 64-bit kernel built from scratch — no Linux inside.
 - Drivers for real hardware: NVMe, USB, audio, networking.
 - Runs real outside software — Lua and SQLite, natively.
-- 113 automated boots in QEMU, on every single change.
+- 117 automated QEMU scenarios on every change, including reboot and
+  deliberate power-cut recovery paths.
 
 ## Build and boot
 
