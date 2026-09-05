@@ -27,6 +27,7 @@
  */
 #define PREPARED_SLOTS 8U
 #define PREPARED_FRAME_SIZE (PREPARED_SLOTS * sizeof(uint64_t))
+#define QUANTUM_ARM_ATTEMPTS 3U
 
 /*
  * Offsets into that frame, counted in slots from the saved stack pointer, in
@@ -473,17 +474,29 @@ void thread_yield(void)
 
 static enum thread_status arm_quantum(void)
 {
-    const uint64_t deadline = clock_monotonic_ns() + THREAD_QUANTUM_NS;
-    uint64_t identifier = THREAD_ID_NONE;
+    for (size_t attempt = 0U; attempt < QUANTUM_ARM_ATTEMPTS; ++attempt) {
+        const uint64_t deadline = clock_monotonic_ns() + THREAD_QUANTUM_NS;
+        uint64_t identifier = THREAD_ID_NONE;
+        const enum timer_status status = timer_arm(deadline, quantum_expired,
+            NULL, &identifier);
 
-    if (timer_arm(deadline, quantum_expired, NULL, &identifier) !=
-        TIMER_STATUS_OK) {
-        quantum_identifier = THREAD_ID_NONE;
-        return THREAD_STATUS_NO_QUANTUM;
+        /*
+         * A preempted emulator can consume almost the entire two-millisecond
+         * quantum between the clock sample above and timer_arm's own sample.
+         * The timer must continue rejecting stale absolute deadlines, so retry
+         * here with a fresh one instead of weakening that system-wide rule.
+         */
+        if (status == TIMER_STATUS_OK) {
+            quantum_identifier = identifier;
+            return THREAD_STATUS_OK;
+        }
+        if (status != TIMER_STATUS_BAD_INTERVAL) {
+            break;
+        }
     }
 
-    quantum_identifier = identifier;
-    return THREAD_STATUS_OK;
+    quantum_identifier = THREAD_ID_NONE;
+    return THREAD_STATUS_NO_QUANTUM;
 }
 
 /*
