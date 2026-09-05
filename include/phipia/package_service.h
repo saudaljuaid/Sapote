@@ -84,6 +84,20 @@ enum package_service_status package_service_snapshot(
     struct package_service_report *report
 );
 
+/*
+ * Copies authenticated authority metadata for a repair transaction. A clean
+ * state is returned exactly like package_service_snapshot(); an otherwise
+ * quiescent generation whose owned files are incomplete is also admitted so
+ * signed replacement bytes can rebuild it. Live or ambiguous transactions
+ * still fail closed.
+ */
+enum package_service_status package_service_repair_snapshot(
+    uint8_t *database,
+    size_t capacity,
+    size_t *output_bytes,
+    struct package_service_report *report
+);
+
 struct package_service_prepare_request {
     const struct package_builder_workspace *builder;
     const uint8_t *database;

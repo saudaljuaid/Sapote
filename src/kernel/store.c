@@ -581,6 +581,14 @@ static struct ui_rect spotlight_rect(void)
         area.width - STORE_PAD * 2U, STORE_SPOTLIGHT_HEIGHT };
 }
 
+static struct ui_rect spotlight_action_rect(void)
+{
+    const struct ui_rect panel = spotlight_rect();
+
+    return (struct ui_rect){ panel.x + 32U + STORE_SPOTLIGHT_LOGO + 32U,
+        panel.y + panel.height - 46U, STORE_GET_WIDTH, STORE_GET_HEIGHT };
+}
+
 /* How tall one shelf is: its heading, then a row of cards. */
 static uint32_t shelf_height(void)
 {
@@ -633,6 +641,20 @@ static struct ui_rect card_rect(size_t index)
 struct ui_rect store_bounds(void)
 {
     return window_rect;
+}
+
+enum store_status store_primary_action_bounds(struct ui_rect *bounds)
+{
+    if (bounds == NULL) {
+        return STORE_STATUS_NULL_ARGUMENT;
+    }
+    if (!initialized) {
+        *bounds = (struct ui_rect){ 0U, 0U, 0U, 0U };
+        return STORE_STATUS_NOT_INITIALIZED;
+    }
+    *bounds = spotlight_index() == (size_t)-1 ?
+        (struct ui_rect){ 0U, 0U, 0U, 0U } : spotlight_action_rect();
+    return STORE_STATUS_OK;
 }
 
 /* ================================================================== PIECES */
@@ -814,9 +836,7 @@ static enum store_status draw_spotlight(struct ui_rect damage)
     const struct store_app *app = &apps[index];
     const struct ui_rect panel = spotlight_rect();
     const struct store_rgb plate = plate_of(app);
-    const struct ui_rect button = { panel.x + 32U + STORE_SPOTLIGHT_LOGO +
-        32U, panel.y + panel.height - 46U, STORE_GET_WIDTH,
-        STORE_GET_HEIGHT };
+    const struct ui_rect button = spotlight_action_rect();
     enum store_status status = fill(panel, damage, plate);
 
     if (status == STORE_STATUS_OK) {

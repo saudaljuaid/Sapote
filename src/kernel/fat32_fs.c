@@ -2331,9 +2331,11 @@ listing_complete:
 
 enum phipfs_status fat32_backend_create(
     enum phipfs_volume volume,
-    const char *path
+    const char *path,
+    uint16_t mode
 )
 {
+    (void)mode;
     struct phipfs_operation operation;
     struct phipfs_parent parent;
     struct phipfs_free_slot slot;

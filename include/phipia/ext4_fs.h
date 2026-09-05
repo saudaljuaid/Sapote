@@ -129,7 +129,7 @@ enum phipfs_status ext4_backend_transaction_probe(enum phipfs_volume volume,
 enum phipfs_status ext4_backend_truncate_probe(enum phipfs_volume volume,
     const char *path, uint64_t size);
 enum phipfs_status ext4_backend_create_file_probe(enum phipfs_volume volume,
-    const char *path);
+    const char *path, uint16_t mode);
 enum phipfs_status ext4_backend_unlink_file_probe(enum phipfs_volume volume,
     const char *path);
 enum phipfs_status ext4_backend_link_file_probe(enum phipfs_volume volume,
@@ -162,7 +162,7 @@ enum phipfs_status ext4_backend_directory_read(phipfs_handle handle,
     struct phipfs_list_entry *entry, bool *present);
 enum phipfs_status ext4_backend_directory_close(phipfs_handle handle);
 enum phipfs_status ext4_backend_create(enum phipfs_volume volume,
-    const char *path);
+    const char *path, uint16_t mode);
 enum phipfs_status ext4_backend_truncate(enum phipfs_volume volume,
     const char *path, uint64_t size);
 enum phipfs_status ext4_backend_mkdir(enum phipfs_volume volume,

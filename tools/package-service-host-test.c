@@ -386,6 +386,22 @@ enum phipfs_status phipfs_create(enum phipfs_volume volume, const char *path)
         MOCK_MAX_NODES ? PHIPFS_STATUS_FULL : PHIPFS_STATUS_OK;
 }
 
+enum phipfs_status phipfs_create_mode(enum phipfs_volume volume,
+    const char *path, uint16_t mode)
+{
+    enum phipfs_status status = phipfs_create(volume, path);
+
+    if (status == PHIPFS_STATUS_OK) {
+        size_t index = find_node(path);
+
+        if (index == MOCK_MAX_NODES) {
+            return PHIPFS_STATUS_CORRUPT;
+        }
+        nodes[index].mode = mode;
+    }
+    return status;
+}
+
 enum phipfs_status phipfs_mkdir(enum phipfs_volume volume, const char *path)
 {
     (void)volume;
@@ -1098,7 +1114,9 @@ static int test_repair_replaces_damaged_files(
     struct package_builder_workspace *workspace = malloc(sizeof(*workspace));
     struct package_service_prepare_request request;
     struct package_service_report report;
+    uint8_t snapshot[NEW_DATABASE_BYTES];
     uint8_t target_database[NEW_DATABASE_BYTES];
+    size_t snapshot_bytes = 0U;
 
     CHECK(workspace != NULL && repair_workspace(installed_database, workspace,
         target_database), 240);
@@ -1113,6 +1131,14 @@ static int test_repair_replaces_damaged_files(
     size_t damaged = find_node(
         "pkgstate/gen/00000000/00000002/root/bin/app");
     nodes[damaged].bytes[0] ^= UINT8_C(1);
+    CHECK(package_service_snapshot(snapshot, sizeof(snapshot),
+            &snapshot_bytes, &report) == PACKAGE_SERVICE_STATUS_INCOMPLETE &&
+        snapshot_bytes == 0U && !report.journal_present &&
+        package_service_repair_snapshot(snapshot, sizeof(snapshot),
+            &snapshot_bytes, &report) == PACKAGE_SERVICE_STATUS_OK &&
+        snapshot_bytes == sizeof(snapshot) && report.generation == 2U &&
+        memcmp(snapshot, installed_database, sizeof(snapshot)) == 0 &&
+        report.live_file_handles == 0U && report.live_allocations == 0U, 249);
     workspace->file_sources[0] = (struct package_builder_file_source){
         PACKAGE_BUILDER_FILE_SOURCE_INSTALLED, 0U, 0U, NULL, 0U
     };

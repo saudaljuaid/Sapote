@@ -964,11 +964,20 @@ enum phipfs_status phipfs_directory_close(phipfs_directory_handle handle)
 
 enum phipfs_status phipfs_create(enum phipfs_volume volume, const char *path)
 {
+    return phipfs_create_mode(volume, path, UINT16_C(0644));
+}
+
+enum phipfs_status phipfs_create_mode(enum phipfs_volume volume,
+    const char *path, uint16_t mode)
+{
     char canonical[PHIPFS_MAX_PATH];
     enum phipfs_status status = resolve_parent(volume, path, canonical);
 
+    if ((mode & (uint16_t)~UINT16_C(0777)) != 0U) {
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
+    }
     return status == PHIPFS_STATUS_OK ?
-        mounts[volume].backend->create(volume, canonical) : status;
+        mounts[volume].backend->create(volume, canonical, mode) : status;
 }
 
 enum phipfs_status phipfs_truncate(

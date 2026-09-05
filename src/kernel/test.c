@@ -51,6 +51,7 @@
 #include <phipia/shell.h>
 #include <phipia/pm_timer.h>
 #include <phipia/surface.h>
+#include <phipia/store.h>
 #include <phipia/taskbar.h>
 #include <phipia/test.h>
 #include <phipia/thread.h>
@@ -4991,11 +4992,12 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
                 PHIPFS_STATUS_OK || stat.size != UINT64_C(4097)) {
             kernel_test_fail("ext4 post-truncate marker re-arm failed");
         }
-        if (phipfs_create(PHIPFS_VOLUME_SYSTEM,
-                "data/user/JRNLPROBE.TMP") != PHIPFS_STATUS_OK ||
+        if (phipfs_create_mode(PHIPFS_VOLUME_SYSTEM,
+                "data/user/JRNLPROBE.TMP", UINT16_C(0555)) !=
+                PHIPFS_STATUS_OK ||
             phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.TMP",
                 &stat) != PHIPFS_STATUS_OK || stat.directory || stat.size != 0U ||
-            stat.read_only ||
+            stat.read_only || (stat.mode & UINT16_C(0777)) != UINT16_C(0555) ||
             phipfs_open(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.TMP",
                 PHIPFS_ACCESS_READ_WRITE, &handle) != PHIPFS_STATUS_OK ||
             phipfs_write(handle, &transaction_byte, sizeof(transaction_byte),
@@ -5125,7 +5127,7 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
         kernel_test_fail("clean ext4 remount changed the resource census");
     }
     console_write("ST EXT4 RECOVERY marker cleared transaction committed ");
-    console_write("appended exact truncate revoke rearm create hardlink unlink journal clean ");
+    console_write("appended exact truncate revoke rearm create mode hardlink unlink journal clean ");
     console_write("transactions 0 replay 0 slots 0 ");
     console_write("VFS writable remount clean resources exact\n");
     kernel_test_pass();
@@ -5735,7 +5737,8 @@ static bool native_phip_authority_is_canonical(
 
     return package_service_snapshot(database, database_capacity,
             &database_bytes, service) == PACKAGE_SERVICE_STATUS_OK &&
-        (service->generation == 1U || service->generation == 2U) &&
+        (service->generation == 1U || service->generation == 2U ||
+            service->generation == 3U) &&
         service->live_file_handles == 0U &&
         service->live_allocations == 0U && database_bytes != 0U &&
         package_state_database_parse(database, database_bytes, &view) ==
@@ -5752,6 +5755,8 @@ static bool native_phip_authority_is_canonical(
         ((service->generation == 1U &&
             package_text_equals(&package.version, "1.0.0")) ||
          (service->generation == 2U &&
+            package_text_equals(&package.version, "2.0.0")) ||
+         (service->generation == 3U &&
             package_text_equals(&package.version, "2.0.0"))) &&
         package_text_equals(&executable.path, "bin/CHESS.APP") &&
         package_text_equals(&manifest.path, "bin/CHESS.MAN") &&
@@ -5762,8 +5767,10 @@ static bool native_phip_authority_is_canonical(
 _Noreturn void kernel_test_complete_native_phip(void)
 {
     static const uint8_t expected[] = "SDL chess release-2.32.10\n";
-    static const char installed_manifest[] =
+    static const char damaged_manifest[] =
         "pkgstate/gen/00000000/00000002/root/bin/CHESS.MAN";
+    static const char repaired_manifest[] =
+        "pkgstate/gen/00000000/00000003/root/bin/CHESS.MAN";
     static const char state_path[] =
         "SDLCHESS/SDL/8F0B0BEC/STATE.TXT";
     static uint8_t database[4096U];
@@ -5775,6 +5782,7 @@ _Noreturn void kernel_test_complete_native_phip(void)
     phipfs_handle file;
     uint8_t bytes[sizeof(expected) - 1U];
     size_t read_bytes = 0U;
+    size_t database_bytes = 0U;
     bool matches = true;
     struct network_state network;
     enum phipfs_status authority_status;
@@ -5879,8 +5887,28 @@ _Noreturn void kernel_test_complete_native_phip(void)
         !proof.exited || proof.faulted || proof.exit_status != 21 ||
         !proof.resources_released || !native_process_resources_released() ||
         !native_phip_authority_is_canonical(database, sizeof(database),
-            &service) || service.generation != 2U ||
-        native_process_launch_installed(installed_manifest, &proof) !=
+            &service) || service.generation != 2U) {
+        kernel_test_fail("native phip signed rollback was not refused cleanly");
+    }
+    if (phipfs_truncate(PHIPFS_VOLUME_DATA, damaged_manifest, UINT64_C(1)) !=
+            PHIPFS_STATUS_OK ||
+        phipfs_sync(PHIPFS_VOLUME_DATA) != PHIPFS_STATUS_OK ||
+        package_service_snapshot(database, sizeof(database), &database_bytes,
+            &service) != PACKAGE_SERVICE_STATUS_INCOMPLETE ||
+        database_bytes != 0U || service.journal_present ||
+        service.live_file_handles != 0U || service.live_allocations != 0U) {
+        kernel_test_fail("native phip damaged generation was not quarantined");
+    }
+    console_write(
+        "Phipia: damaged package generation quarantined before repair passed\n");
+    if (native_process_launch("PHIPREP.MAN", &proof) != NATIVE_PROCESS_OK ||
+        !proof.exited || proof.faulted || proof.exit_status != 0 ||
+        !proof.resources_released || proof.peak_handles < 3U ||
+        proof.syscall_count < 20U || proof.thread_switches == 0U ||
+        !native_process_resources_released() ||
+        !native_phip_authority_is_canonical(database, sizeof(database),
+            &service) || service.generation != 3U ||
+        native_process_launch_installed(repaired_manifest, &proof) !=
             NATIVE_PROCESS_OK ||
         !proof.exited || proof.faulted || proof.exit_status != 0 ||
         !proof.resources_released || proof.syscall_count < 12U ||
@@ -5892,7 +5920,7 @@ _Noreturn void kernel_test_complete_native_phip(void)
             PHIPFS_ACCESS_READ, &file) != PHIPFS_STATUS_OK ||
         phipfs_read(file, bytes, sizeof(bytes), &read_bytes) !=
             PHIPFS_STATUS_OK || read_bytes != sizeof(bytes)) {
-        kernel_test_fail("native phip upstream SDL application did not launch");
+        kernel_test_fail("native phip authenticated repair did not launch");
     }
     for (size_t index = 0U; index < sizeof(bytes); ++index) {
         matches = matches && bytes[index] == expected[index];
@@ -5904,7 +5932,7 @@ _Noreturn void kernel_test_complete_native_phip(void)
         kernel_test_fail("native phip upstream SDL launch did not cleanly sync");
     }
     console_write(
-        "Phipia: signed upstream SDL package persisted and launched from writable ext4 passed\n");
+        "Phipia: damaged SDL package repaired authenticated and launched from writable ext4 passed\n");
     console_write("ST NETWORK production path bounded and recoverable\n");
     kernel_test_pass();
 }
@@ -6390,14 +6418,15 @@ _Noreturn void kernel_test_complete_phipia_proof(void)
         phipia_proof_settle_ui(
             "Phipia Store search animation did not settle");
         {
-            const struct ui_rect client = ui_get_state()->layout.panel_client;
-            const uint32_t sidebar_width = client.width >= 700U ? 202U : 176U;
-            const uint32_t card_x = client.x + sidebar_width + 29U;
-            const uint32_t card_width = client.width - sidebar_width - 57U;
+            struct ui_rect action;
             char manifest[13U];
 
-            phipia_proof_click_point(card_x + card_width - 80U,
-                client.y + 271U,
+            if (store_primary_action_bounds(&action) != STORE_STATUS_OK ||
+                    action.width == 0U || action.height == 0U) {
+                kernel_test_fail("Phipia Store package action is unavailable");
+            }
+            phipia_proof_click_point(action.x + action.width / 2U,
+                action.y + action.height / 2U,
                 "Phipia Store package action did not activate");
             if (!ui_application_launch_dequeue(manifest, sizeof(manifest)) ||
                     manifest[0] != 'P' || manifest[1] != 'H' ||

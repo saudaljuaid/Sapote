@@ -257,9 +257,10 @@ static enum package_control_status load_upload(
     return PACKAGE_CONTROL_STATUS_OK;
 }
 
-static enum package_control_status load_installed(
+static enum package_control_status load_installed_snapshot(
     struct control_session *session,
-    struct package_control_report *report
+    struct package_control_report *report,
+    bool repair
 )
 {
     struct package_service_report service_report;
@@ -270,8 +271,11 @@ static enum package_control_status load_installed(
     if (status != PACKAGE_CONTROL_STATUS_OK) {
         return status;
     }
-    report->service_status = package_service_snapshot(session->installed_bytes,
-        PACKAGE_CONTROL_DATABASE_MAX_BYTES, &database_bytes, &service_report);
+    report->service_status = repair ? package_service_repair_snapshot(
+        session->installed_bytes, PACKAGE_CONTROL_DATABASE_MAX_BYTES,
+        &database_bytes, &service_report) : package_service_snapshot(
+            session->installed_bytes, PACKAGE_CONTROL_DATABASE_MAX_BYTES,
+            &database_bytes, &service_report);
     if (report->service_status == PACKAGE_SERVICE_STATUS_ABSENT) {
         (void)release_buffer(&session->installed_bytes);
         return PACKAGE_CONTROL_STATUS_OK;
@@ -287,6 +291,105 @@ static enum package_control_status load_installed(
 
     return state_status == PACKAGE_STATE_STATUS_OK ?
         PACKAGE_CONTROL_STATUS_OK : PACKAGE_CONTROL_STATUS_STATE;
+}
+
+static enum package_control_status load_installed(
+    struct control_session *session,
+    struct package_control_report *report
+)
+{
+    return load_installed_snapshot(session, report, false);
+}
+
+static bool repair_text_equal(
+    const struct package_state_text *left,
+    const struct package_manager_text *right
+)
+{
+    return left != NULL && right != NULL && left->bytes != NULL &&
+        right->bytes != NULL && left->length == right->length &&
+        equal_bytes(left->bytes, right->bytes, left->length);
+}
+
+static bool repair_entry_matches(
+    const struct package_state_package_view *installed,
+    const struct package_manager_catalog_entry *entry
+)
+{
+    return repair_text_equal(&installed->identifier, &entry->identifier) &&
+        repair_text_equal(&installed->version, &entry->version) &&
+        equal_bytes(installed->package_sha256, entry->package_sha256,
+            PACKAGE_MANAGER_SHA256_BYTES) &&
+        equal_bytes(installed->publisher_key_id, entry->publisher_key_id,
+            PACKAGE_MANAGER_SHA256_BYTES);
+}
+
+static enum package_control_status plan_repair(
+    struct control_session *session,
+    struct package_control_report *report
+)
+{
+    if (!session->has_installed || session->installed.package_count == 0U) {
+        report->manager_status = PACKAGE_MANAGER_STATUS_NOT_FOUND;
+        return PACKAGE_CONTROL_STATUS_MANAGER;
+    }
+    if (session->installed.package_count >
+            PACKAGE_CONTROL_PLAN_MAX_PACKAGES) {
+        return PACKAGE_CONTROL_STATUS_RANGE;
+    }
+    zero_bytes(&session->plan, sizeof(session->plan));
+    session->plan.operation = PACKAGE_MANAGER_PLAN_REPAIR;
+    for (uint32_t installed_index = 0U;
+         installed_index < session->installed.package_count;
+         ++installed_index) {
+        struct package_state_package_view installed;
+        struct package_manager_catalog_entry selected;
+        bool found = false;
+
+        if (package_state_database_package(&session->installed,
+                installed_index, &installed) != PACKAGE_STATE_STATUS_OK) {
+            return PACKAGE_CONTROL_STATUS_STATE;
+        }
+        for (uint32_t repository_index = 0U;
+             repository_index < session->repository.package_count;
+             ++repository_index) {
+            struct package_manager_catalog_entry candidate;
+
+            report->manager_status = package_manager_repository_entry(
+                &session->repository, repository_index, &candidate);
+            if (report->manager_status != PACKAGE_MANAGER_STATUS_OK) {
+                return PACKAGE_CONTROL_STATUS_MANAGER;
+            }
+            if (!repair_entry_matches(&installed, &candidate)) {
+                continue;
+            }
+            if (found) {
+                report->manager_status =
+                    PACKAGE_MANAGER_STATUS_AMBIGUOUS_PROVIDER;
+                return PACKAGE_CONTROL_STATUS_MANAGER;
+            }
+            selected = candidate;
+            found = true;
+        }
+        if (!found) {
+            report->manager_status = PACKAGE_MANAGER_STATUS_NOT_FOUND;
+            return PACKAGE_CONTROL_STATUS_MANAGER;
+        }
+        session->plan.items[installed_index] =
+            (struct package_manager_plan_item){
+                selected.repository_index, selected.identifier,
+                selected.version, selected.download_path,
+                selected.package_bytes, selected.package_sha256,
+                selected.publisher_key_id
+            };
+        if (selected.package_bytes == 0U || selected.package_bytes >
+                PACKAGE_CONTROL_PAYLOAD_MAX_BYTES - session->payload_bytes) {
+            return PACKAGE_CONTROL_STATUS_RANGE;
+        }
+        session->payload_bytes += (size_t)selected.package_bytes;
+    }
+    session->plan.count = session->installed.package_count;
+    return PACKAGE_CONTROL_STATUS_OK;
 }
 
 enum package_control_status package_control_open_remove(
@@ -458,6 +561,82 @@ refuse:
     return finish(report, status, NULL, 0U);
 }
 
+enum package_control_status package_control_open_repair(
+    uint64_t owner,
+    package_upload_token repository_upload,
+    struct package_control_report *report
+)
+{
+    size_t index = PACKAGE_CONTROL_SESSION_LIMIT;
+    struct control_session *session;
+    int64_t now;
+
+    clear_report(report);
+    if (report == NULL || owner == 0U) {
+        return PACKAGE_CONTROL_STATUS_NULL_ARGUMENT;
+    }
+    if (servicing) {
+        return finish(report, PACKAGE_CONTROL_STATUS_BUSY, NULL, 0U);
+    }
+    initialize_generations();
+    for (size_t candidate = 0U; candidate < PACKAGE_CONTROL_SESSION_LIMIT;
+            ++candidate) {
+        if (!sessions[candidate].active) {
+            index = candidate;
+            break;
+        }
+    }
+    if (index == PACKAGE_CONTROL_SESSION_LIMIT) {
+        return finish(report, PACKAGE_CONTROL_STATUS_NO_SLOT, NULL, 0U);
+    }
+    servicing = true;
+    session = &sessions[index];
+    uint32_t generation = session->generation;
+    zero_bytes(session, sizeof(*session));
+    session->generation = generation;
+    session->owner = owner;
+    session->active = true;
+    enum package_control_status status = load_upload(owner, repository_upload,
+        PACKAGE_CONTROL_REPOSITORY_MAX_BYTES, &session->repository_bytes,
+        &session->repository_byte_count, report);
+
+    if (status != PACKAGE_CONTROL_STATUS_OK) {
+        goto refuse;
+    }
+    if (!package_platform_trust_manager(&session->trust)) {
+        status = PACKAGE_CONTROL_STATUS_TRUST;
+        goto refuse;
+    }
+    if (wall_clock_read_unix_seconds(&now) != WALL_CLOCK_STATUS_OK || now < 0) {
+        status = PACKAGE_CONTROL_STATUS_CLOCK;
+        goto refuse;
+    }
+    session->policy = (struct package_manager_policy){
+        (uint64_t)now, 0U, 1U, false
+    };
+    report->manager_status = package_manager_repository_open(
+        session->repository_bytes, session->repository_byte_count,
+        &session->policy, &session->trust, &session->repository);
+    if (report->manager_status != PACKAGE_MANAGER_STATUS_OK) {
+        status = PACKAGE_CONTROL_STATUS_MANAGER;
+        goto refuse;
+    }
+    status = load_installed_snapshot(session, report, true);
+    if (status == PACKAGE_CONTROL_STATUS_OK) {
+        status = plan_repair(session, report);
+    }
+    if (status != PACKAGE_CONTROL_STATUS_OK) {
+        goto refuse;
+    }
+    servicing = false;
+    return finish(report, PACKAGE_CONTROL_STATUS_OK, session, index);
+
+refuse:
+    (void)release_session(session);
+    servicing = false;
+    return finish(report, status, NULL, 0U);
+}
+
 static bool copy_text(char *destination, size_t capacity,
     const struct package_manager_text *source, uint32_t *length)
 {
@@ -608,6 +787,101 @@ enum package_control_status package_control_attach(
     return finish(report, PACKAGE_CONTROL_STATUS_OK, session, session_index);
 }
 
+static enum package_control_status build_repair_workspace(
+    struct control_session *session,
+    struct package_builder_workspace *workspace,
+    struct package_control_report *report
+)
+{
+    struct package_builder_repair_file *replacements = NULL;
+    enum package_control_status status = PACKAGE_CONTROL_STATUS_OK;
+
+    if (session->installed.file_count != 0U &&
+        heap_allocate((uint64_t)session->installed.file_count *
+                sizeof(*replacements), (void **)&replacements) !=
+            HEAP_STATUS_OK) {
+        return PACKAGE_CONTROL_STATUS_RESOURCE;
+    }
+    for (uint32_t file_index = 0U;
+         status == PACKAGE_CONTROL_STATUS_OK &&
+            file_index < session->installed.file_count; ++file_index) {
+        struct package_state_file_view installed_file;
+        struct package_manager_catalog_entry entry;
+        struct package_manager_package_view package;
+        struct package_manager_file_view selected;
+        bool found = false;
+
+        if (package_state_database_file(&session->installed, file_index,
+                &installed_file) != PACKAGE_STATE_STATUS_OK ||
+            installed_file.owner_index >= session->plan.count ||
+            !session->attached[installed_file.owner_index]) {
+            status = PACKAGE_CONTROL_STATUS_STATE;
+            break;
+        }
+        const uint32_t owner = installed_file.owner_index;
+        report->manager_status = package_manager_repository_entry(
+            &session->repository, session->plan.items[owner].source_index,
+            &entry);
+        if (report->manager_status == PACKAGE_MANAGER_STATUS_OK) {
+            report->manager_status = package_manager_package_open(
+                session->packages[owner].bytes,
+                session->packages[owner].byte_count, &entry,
+                &session->policy, &session->trust, &package);
+        }
+        if (report->manager_status != PACKAGE_MANAGER_STATUS_OK) {
+            status = PACKAGE_CONTROL_STATUS_MANAGER;
+            break;
+        }
+        for (uint32_t package_file = 0U;
+             package_file < package.file_count; ++package_file) {
+            struct package_manager_file_view candidate;
+
+            report->manager_status = package_manager_package_file(&package,
+                package_file, &candidate);
+            if (report->manager_status != PACKAGE_MANAGER_STATUS_OK) {
+                status = PACKAGE_CONTROL_STATUS_MANAGER;
+                break;
+            }
+            if (!repair_text_equal(&installed_file.path, &candidate.path)) {
+                continue;
+            }
+            if (found || candidate.payload_bytes != installed_file.length ||
+                !equal_bytes(candidate.sha256, installed_file.sha256,
+                    PACKAGE_MANAGER_SHA256_BYTES)) {
+                report->manager_status = found ?
+                    PACKAGE_MANAGER_STATUS_CONFLICT :
+                    PACKAGE_MANAGER_STATUS_DIGEST;
+                status = PACKAGE_CONTROL_STATUS_MANAGER;
+                break;
+            }
+            selected = candidate;
+            found = true;
+        }
+        if (status != PACKAGE_CONTROL_STATUS_OK) {
+            break;
+        }
+        if (!found) {
+            report->manager_status = PACKAGE_MANAGER_STATUS_NOT_FOUND;
+            status = PACKAGE_CONTROL_STATUS_MANAGER;
+            break;
+        }
+        replacements[file_index] = (struct package_builder_repair_file){
+            installed_file.path, selected.payload, selected.payload_bytes
+        };
+    }
+    if (status == PACKAGE_CONTROL_STATUS_OK) {
+        report->manager_status = package_builder_repair(&session->installed,
+            replacements, session->installed.file_count, workspace);
+        if (report->manager_status != PACKAGE_MANAGER_STATUS_OK) {
+            status = PACKAGE_CONTROL_STATUS_MANAGER;
+        }
+    }
+    if (replacements != NULL && heap_free(replacements) != HEAP_STATUS_OK) {
+        status = PACKAGE_CONTROL_STATUS_RESOURCE;
+    }
+    return status;
+}
+
 enum package_control_status package_control_commit(
     uint64_t owner,
     package_control_token token,
@@ -662,22 +936,30 @@ enum package_control_status package_control_commit(
         status = PACKAGE_CONTROL_STATUS_RESOURCE;
         goto release;
     }
-    report->manager_status = package_builder_build(
-        session->plan.operation == PACKAGE_MANAGER_PLAN_REMOVE ? NULL :
-            &session->repository,
-        session->has_installed ? &session->installed : NULL, &session->plan,
-        session->plan.operation == PACKAGE_MANAGER_PLAN_REMOVE ? NULL :
-            session->packages,
-        session->plan.operation == PACKAGE_MANAGER_PLAN_REMOVE ? 0U :
-            session->plan.count,
-        session->plan.operation == PACKAGE_MANAGER_PLAN_REMOVE ? NULL :
-            &session->policy,
-        session->plan.operation == PACKAGE_MANAGER_PLAN_REMOVE ? NULL :
-            &session->trust,
-        workspace);
-    if (report->manager_status != PACKAGE_MANAGER_STATUS_OK) {
-        status = PACKAGE_CONTROL_STATUS_MANAGER;
-        goto release;
+    if (session->plan.operation == PACKAGE_MANAGER_PLAN_REPAIR) {
+        status = build_repair_workspace(session, workspace, report);
+        if (status != PACKAGE_CONTROL_STATUS_OK) {
+            goto release;
+        }
+    } else {
+        report->manager_status = package_builder_build(
+            session->plan.operation == PACKAGE_MANAGER_PLAN_REMOVE ? NULL :
+                &session->repository,
+            session->has_installed ? &session->installed : NULL,
+            &session->plan,
+            session->plan.operation == PACKAGE_MANAGER_PLAN_REMOVE ? NULL :
+                session->packages,
+            session->plan.operation == PACKAGE_MANAGER_PLAN_REMOVE ? 0U :
+                session->plan.count,
+            session->plan.operation == PACKAGE_MANAGER_PLAN_REMOVE ? NULL :
+                &session->policy,
+            session->plan.operation == PACKAGE_MANAGER_PLAN_REMOVE ? NULL :
+                &session->trust,
+            workspace);
+        if (report->manager_status != PACKAGE_MANAGER_STATUS_OK) {
+            status = PACKAGE_CONTROL_STATUS_MANAGER;
+            goto release;
+        }
     }
     enum package_state_status state_status = package_generation_size(
         &workspace->spec, &database_bytes);

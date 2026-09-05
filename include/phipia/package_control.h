@@ -90,6 +90,17 @@ enum package_control_status package_control_open_remove(
     struct package_control_report *report
 );
 
+/*
+ * Authenticates a repository and creates an all-owned-file repair plan for the
+ * authority-selected generation. Every installed package must have one exact
+ * repository record; commit accepts only those signed payloads.
+ */
+enum package_control_status package_control_open_repair(
+    uint64_t owner,
+    package_upload_token repository_upload,
+    struct package_control_report *report
+);
+
 enum package_control_status package_control_item(
     uint64_t owner,
     package_control_token token,

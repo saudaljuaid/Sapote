@@ -6674,6 +6674,26 @@ static void taskbar_install_apps(void)
     }
 }
 
+static bool phipia_seed_store(void)
+{
+    static const struct store_app package = {
+        .present = true,
+        .spotlight = true,
+        .shelf = 0U,
+        .rating = 48U,
+        .name = "SDL Chess Board",
+        .category = "Games",
+        .price = "Install",
+        .tagline = "Signed native SDL 2.32.10 game",
+        .reviews = "Verified package",
+        .art = "paint",
+        .colour = 0U
+    };
+
+    return store_set_shelf(0U, "Signed applications") == STORE_STATUS_OK &&
+        store_set_app(0U, &package) == STORE_STATUS_OK;
+}
+
 static void taskbar_sync_run_states(void)
 {
     static const enum ui_panel_id panels[] = {
@@ -6909,8 +6929,12 @@ static bool phipia_initialize_shell(uint32_t width, uint32_t height)
     (void)taskbar_set_chevron_visible(false);
     (void)taskbar_set_show_desktop_button(true);
     phipia_note_from_buffer();
-    phipia_shell_ready = true;
     taskbar_install_apps();
+    if (!phipia_seed_store()) {
+        taskbar_shutdown();
+        return false;
+    }
+    phipia_shell_ready = true;
     phipia_apply_settings();
     phipia_sync_explorer();
     phipia_refresh_taskmgr(true);
@@ -8888,7 +8912,15 @@ static enum ui_element_id active_hit(struct ui_point point)
                 return (enum ui_element_id)(UI_ELEMENT_STORE_NAV_0 + index);
             }
         }
-        if (store_package_visible() &&
+        if (phipia_shell_ready) {
+            struct ui_rect action;
+
+            if (store_primary_action_bounds(&action) == STORE_STATUS_OK &&
+                    action.width != 0U && action.height != 0U &&
+                    rect_contains_point(action, point)) {
+                return UI_ELEMENT_STORE_PACKAGE_ACTION;
+            }
+        } else if (store_package_visible() &&
                 rect_contains_point(store_package_action_rect(), point)) {
             return UI_ELEMENT_STORE_PACKAGE_ACTION;
         }
@@ -9118,7 +9150,13 @@ static enum ui_status activate_element(
             return UI_STATUS_BAD_ELEMENT;
         }
         store_installer_queued = true;
-        *damage = rect_union(*damage, store_package_action_rect());
+        struct ui_rect action = store_package_action_rect();
+
+        if (phipia_shell_ready &&
+                store_primary_action_bounds(&action) != STORE_STATUS_OK) {
+            return UI_STATUS_BAD_ELEMENT;
+        }
+        *damage = rect_union(*damage, action);
         return UI_STATUS_OK;
     }
     if (element == UI_ELEMENT_FILES_UP) {

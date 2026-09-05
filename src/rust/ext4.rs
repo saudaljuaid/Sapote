@@ -1060,10 +1060,26 @@ fn commit_namespace_mutation(
 pub(crate) fn create_file_probe(
     mounted: &mut Mounted,
     path: &[u8],
+    mode: u16,
 ) -> Result<(), Status> {
+    if mode & !0o777 != 0 {
+        return Err(Status::Invalid);
+    }
     let absolute = absolute_path(path)?;
+    let mode_bytes = mode.to_le_bytes();
     if mounted.pending_mutation.is_some() {
-        return resume_namespace_mutation(mounted, PendingMutationKind::CreateFile, &absolute);
+        let resumed = resume_pending_mutation(
+            mounted,
+            PendingMutationKind::CreateFile,
+            &absolute,
+            0,
+            &mode_bytes,
+        )?;
+        return if resumed == 0 {
+            Ok(())
+        } else {
+            Err(Status::Invalid)
+        };
     }
     if !mounted.stage.is_empty() || mounted.stage.is_sealed() {
         let recovery = mounted
@@ -1081,11 +1097,7 @@ pub(crate) fn create_file_probe(
         let mut directory = Dir::open_inode(&mounted.filesystem, parent_inode)?;
         let mut inode = mounted.filesystem.create_inode(InodeCreationOptions {
             file_type: FileType::Regular,
-            mode: InodeMode::S_IFREG
-                | InodeMode::S_IRUSR
-                | InodeMode::S_IWUSR
-                | InodeMode::S_IRGRP
-                | InodeMode::S_IROTH,
+            mode: InodeMode::S_IFREG | InodeMode::from_bits_retain(mode),
             uid: 0,
             gid: 0,
             time: Duration::from_secs(0),
@@ -1101,7 +1113,21 @@ pub(crate) fn create_file_probe(
         discard_uncommitted_stage(mounted, true)?;
         return Err(Status::Invalid);
     }
-    commit_namespace_mutation(mounted, PendingMutationKind::CreateFile, absolute)
+    let resumed = commit_staged_mutation(
+        mounted,
+        PendingMutationKind::CreateFile,
+        absolute,
+        Vec::from(mode_bytes),
+        0,
+        0,
+        &[],
+        None,
+    )?;
+    if resumed == 0 {
+        Ok(())
+    } else {
+        Err(Status::Invalid)
+    }
 }
 
 /// Remove one regular-file link through the journaled mutation path.

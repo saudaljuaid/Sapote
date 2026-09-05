@@ -58,7 +58,8 @@ enum phipfs_status fat32_backend_list(
 );
 enum phipfs_status fat32_backend_create(
     enum phipfs_volume volume,
-    const char *path
+    const char *path,
+    uint16_t mode
 );
 enum phipfs_status fat32_backend_truncate(
     enum phipfs_volume volume,

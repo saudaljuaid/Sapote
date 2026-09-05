@@ -108,7 +108,7 @@ static long repository_upload(struct phipia_package_fetch_report *fetch)
     return (long)upload;
 }
 
-static int install(const char *identifier)
+static int install_or_repair(const char *identifier, bool repair)
 {
     struct phipia_package_fetch_report fetch;
     struct phipia_package_control_report control_report;
@@ -122,8 +122,9 @@ static int install(const char *identifier)
         return 20;
     }
     repository = (phipia_handle_t)result;
-    result = phipia_package_control_open_install(repository, identifier,
-        strlen(identifier), &control_report);
+    result = repair ? phipia_package_control_open_repair(repository,
+        &control_report) : phipia_package_control_open_install(repository,
+            identifier, strlen(identifier), &control_report);
     bool repository_closed = close_handle(repository);
     bool repository_discarded = discard_repository();
     if (!repository_closed || !repository_discarded) {
@@ -142,7 +143,8 @@ static int install(const char *identifier)
         return 21;
     }
     control = (phipia_handle_t)result;
-    puts("PHIPIA PHIP PHASE signed-plan PASS");
+    puts(repair ? "PHIPIA PHIP PHASE repair-plan PASS" :
+        "PHIPIA PHIP PHASE signed-plan PASS");
 
     for (uint32_t index = 0U; index < control_report.plan_count; ++index) {
         char path[PHIPIA_PACKAGE_CONTROL_PATH_BYTES + 2U];
@@ -200,7 +202,9 @@ static int install(const char *identifier)
             control_report.result_flags);
         return 26;
     }
-    printf("PHIPIA PHIP PHASE committed generation=%llu PASS\n",
+    printf(repair ?
+        "PHIPIA PHIP PHASE repaired generation=%llu PASS\n" :
+        "PHIPIA PHIP PHASE committed generation=%llu PASS\n",
         (unsigned long long)control_report.generation);
     return 0;
 }
@@ -236,18 +240,23 @@ static int remove_package(const char *identifier)
 
 int main(int argc, char **argv)
 {
-    if (argc != 3 || (strcmp(argv[1], "install") != 0 &&
-            strcmp(argv[1], "remove") != 0)) {
-        puts("usage: phip install|remove IDENTIFIER");
+    const bool repair = argc == 2 && strcmp(argv[1], "repair") == 0;
+
+    if (!repair && (argc != 3 || (strcmp(argv[1], "install") != 0 &&
+            strcmp(argv[1], "remove") != 0))) {
+        puts("usage: phip install|remove IDENTIFIER | phip repair");
         return 2;
     }
     puts("PHIPIA PHIP PHASE start");
-    int result = strcmp(argv[1], "remove") == 0 ? remove_package(argv[2]) :
-        install(argv[2]);
+    int result = repair ? install_or_repair(NULL, true) :
+        (strcmp(argv[1], "remove") == 0 ? remove_package(argv[2]) :
+            install_or_repair(argv[2], false));
     if (result == 0) {
-        puts(strcmp(argv[1], "remove") == 0 ?
+        puts(repair ?
+            "PHIPIA PHIP REPAIR PASS trust payload transaction cleanup" :
+            (strcmp(argv[1], "remove") == 0 ?
             "PHIPIA PHIP REMOVE PASS trust plan transaction cleanup" :
-            "PHIPIA PHIP PASS https trust plan payload transaction cleanup");
+            "PHIPIA PHIP PASS https trust plan payload transaction cleanup"));
     }
     return result;
 }

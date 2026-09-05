@@ -163,6 +163,8 @@ enum phipfs_status phipfs_directory_read(
 );
 enum phipfs_status phipfs_directory_close(phipfs_directory_handle handle);
 enum phipfs_status phipfs_create(enum phipfs_volume volume, const char *path);
+enum phipfs_status phipfs_create_mode(enum phipfs_volume volume,
+    const char *path, uint16_t mode);
 enum phipfs_status phipfs_truncate(
     enum phipfs_volume volume,
     const char *path,

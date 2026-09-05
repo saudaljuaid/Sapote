@@ -123,6 +123,7 @@ def build(output: Path, executable: Path, manifest_spec: Path) -> dict[str, obje
     PACKAGE.atomic_write(output / "repository-install.sri", install_repository)
     PACKAGE.atomic_write(output / "repository-update.sri", update_repository)
     PACKAGE.atomic_write(output / "repository-rollback.sri", install_repository)
+    PACKAGE.atomic_write(output / "repository-repair.sri", update_repository)
     return {
         "output": str(output),
         "repository_bytes": len(install_repository),

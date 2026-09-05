@@ -5044,7 +5044,7 @@ static int64_t syscall_package_control_open_install(
 {
     struct phipia_package_control_open_request request;
     struct package_control_report report;
-    struct native_resource *upload;
+    struct native_resource *upload = NULL;
     struct native_resource resource = {{0U, 0U, 0U, 0U}};
     phipia_handle_t handle;
 
@@ -5057,20 +5057,24 @@ static int64_t syscall_package_control_open_install(
     }
     if (request.size != sizeof(request) ||
         request.version != PHIPIA_ABI_VERSION ||
-        request.flags > PHIPIA_PACKAGE_CONTROL_OPEN_REMOVE ||
-        request.identifier_bytes == 0U ||
+        request.flags > PHIPIA_PACKAGE_CONTROL_OPEN_REPAIR ||
+        (request.flags == PHIPIA_PACKAGE_CONTROL_OPEN_REPAIR ?
+            (request.identifier != 0U || request.identifier_bytes != 0U) :
+            request.identifier_bytes == 0U) ||
         request.identifier_bytes >= PHIPIA_PACKAGE_CONTROL_TEXT_BYTES ||
         request.repository_version != 0U || request.generation != 0U ||
         request.plan_count != 0U || request.result_flags != 0U) {
         return -PHIPIA_EINVAL;
     }
-    if (!copy_from_user(process, process->transfer, request.identifier,
+    if (request.identifier_bytes != 0U &&
+        !copy_from_user(process, process->transfer, request.identifier,
             request.identifier_bytes)) {
         return -PHIPIA_EFAULT;
     }
     enum native_handle_status handle_status = NATIVE_HANDLE_OK;
 
-    if (request.flags == PHIPIA_PACKAGE_CONTROL_OPEN_INSTALL) {
+    if (request.flags == PHIPIA_PACKAGE_CONTROL_OPEN_INSTALL ||
+            request.flags == PHIPIA_PACKAGE_CONTROL_OPEN_REPAIR) {
         handle_status = native_handle_resolve(&process->handles,
             request.repository_upload, PHIPIA_HANDLE_PACKAGE_UPLOAD,
             &upload);
@@ -5086,12 +5090,18 @@ static int64_t syscall_package_control_open_install(
         return -PHIPIA_ENOMEM;
     }
     cpu_interrupt_enable();
-    enum package_control_status control_status =
-        request.flags == PHIPIA_PACKAGE_CONTROL_OPEN_INSTALL ?
-        package_control_open_install(process->generation, upload->words[0],
-            process->transfer, request.identifier_bytes, &report) :
-        package_control_open_remove(process->generation, process->transfer,
-            request.identifier_bytes, &report);
+    enum package_control_status control_status;
+    if (request.flags == PHIPIA_PACKAGE_CONTROL_OPEN_INSTALL) {
+        control_status = package_control_open_install(process->generation,
+            upload->words[0], process->transfer, request.identifier_bytes,
+            &report);
+    } else if (request.flags == PHIPIA_PACKAGE_CONTROL_OPEN_REMOVE) {
+        control_status = package_control_open_remove(process->generation,
+            process->transfer, request.identifier_bytes, &report);
+    } else {
+        control_status = package_control_open_repair(process->generation,
+            upload->words[0], &report);
+    }
     cpu_interrupt_disable();
     if (control_status != PACKAGE_CONTROL_STATUS_OK) {
         return package_control_error(control_status, &report);

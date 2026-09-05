@@ -295,6 +295,7 @@ HTTPSAPP_DATA_IMAGE := $(HTTPSAPP_DIR)/data.raw
 PHIPAPP_DIR := $(BUILD_DIR)/native-phip
 PHIPAPP_APP := $(PHIPAPP_DIR)/PHIP.APP
 PHIPAPP_PACKAGE := $(PHIPAPP_DIR)/PHIP.SPK
+PHIPAPP_REPAIR_PACKAGE := $(PHIPAPP_DIR)/PHIPREP.SPK
 PHIPAPP_SYSTEM_IMAGE := $(PHIPAPP_DIR)/system.raw
 PHIPAPP_DATA_IMAGE := $(PHIPAPP_DIR)/data.raw
 PHIPAPP_REPOSITORY := $(PHIPAPP_DIR)/repository/repository.sri
@@ -685,10 +686,15 @@ $(PHIPAPP_PACKAGE): $(PHIPAPP_APP) apps/phip/manifest.json
 	$(PYTHON) tools/phipia-package.py build \
 		--spec apps/phip/manifest.json --executable $< --output $@
 
-$(PHIPAPP_SYSTEM_IMAGE): $(PHIPAPP_PACKAGE) tools/phipia-package.py \
+$(PHIPAPP_REPAIR_PACKAGE): $(PHIPAPP_APP) apps/phip/repair-manifest.json
+	$(PYTHON) tools/phipia-package.py build \
+		--spec apps/phip/repair-manifest.json --executable $< --output $@
+
+$(PHIPAPP_SYSTEM_IMAGE): $(PHIPAPP_PACKAGE) $(PHIPAPP_REPAIR_PACKAGE) \
+		tools/phipia-package.py \
 		tools/fat32_image.py
 	$(PYTHON) tools/phipia-package.py install-system \
-		--output $@ $(PHIPAPP_PACKAGE)
+		--output $@ $(PHIPAPP_PACKAGE) $(PHIPAPP_REPAIR_PACKAGE)
 
 $(PHIPAPP_DATA_IMAGE): $(EXT4_FIXTURE) | $(PHIPAPP_DIR)
 	cp $< $@
@@ -844,7 +850,7 @@ $(ADMISSION_DATA_IMAGE): tools/fat32_image.py | $(ADMISSION_DIR)
 
 native-apps: $(NATIVE_TEST_PACKAGE) $(LUA_PACKAGE) $(SQLITE_PACKAGE) \
 	$(CANVAS_PACKAGE) $(CANVAS_PROOF_PACKAGE) $(NETAPP_PACKAGE) \
-	$(HTTPSAPP_PACKAGE) $(PHIPAPP_PACKAGE) \
+	$(HTTPSAPP_PACKAGE) $(PHIPAPP_PACKAGE) $(PHIPAPP_REPAIR_PACKAGE) \
 	$(AUDIO_PACKAGE) $(AUDIO_REFUSAL_PACKAGE) $(RUST_APP_PACKAGE) \
 	$(CRASH_PACKAGE) $(SDL_PROOF_PACKAGE) $(SDL_CHESS_PACKAGE) \
 	$(DYNAMIC_PACKAGE)
@@ -2950,7 +2956,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/phipia.iso
 		fat32-handles) \
 			grep -Fxq 'ST FAT32 HANDLES generation stale double-close access bound clean' "$$log" || diagnostics_ok=false ;; \
 		ext4-recovery) \
-			grep -Fxq 'ST EXT4 RECOVERY marker cleared transaction committed appended exact truncate revoke rearm create hardlink unlink journal clean transactions 0 replay 0 slots 0 VFS writable remount clean resources exact' "$$log" && \
+			grep -Fxq 'ST EXT4 RECOVERY marker cleared transaction committed appended exact truncate revoke rearm create mode hardlink unlink journal clean transactions 0 replay 0 slots 0 VFS writable remount clean resources exact' "$$log" && \
 			$(PYTHON) tools/ext4_image.py inspect '$(EXT4_RECOVERY_FIXTURE)' \
 				--report '$(EXT4_RECOVERY_FIXTURE).after.json' || diagnostics_ok=false ;; \
 		thread-guard) \

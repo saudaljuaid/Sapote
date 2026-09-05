@@ -265,6 +265,16 @@ enum package_service_status package_service_snapshot(
     return report->status;
 }
 
+enum package_service_status package_service_repair_snapshot(
+    uint8_t *database,
+    size_t capacity,
+    size_t *output_bytes,
+    struct package_service_report *report
+)
+{
+    return package_service_snapshot(database, capacity, output_bytes, report);
+}
+
 static enum package_service_status accept_service_database(
     const struct package_service_prepare_request *request,
     uint64_t expected_generation,
@@ -565,6 +575,25 @@ int main(int argc, char **argv)
             &installed) == PACKAGE_STATE_STATUS_OK &&
         installed.generation == 2U && installed.package_count == 2U);
 
+    CHECK(package_control_open_repair(TEST_OWNER, update_repository_upload,
+        &report) == PACKAGE_CONTROL_STATUS_OK && report.plan_count == 2U &&
+        report.attached_count == 0U && report.generation == 2U);
+    control = report.token;
+    CHECK(attach_named(control, "org.phipia.newlib", update_library_upload) ==
+            0 &&
+        attach_named(control, "org.phipia.app", update_application_upload) ==
+            0 &&
+        package_control_commit(TEST_OWNER, control, &report) ==
+            PACKAGE_CONTROL_STATUS_OK && report.prepared && report.committed &&
+        report.generation == 3U && report.plan_count == 2U &&
+        report.attached_count == 2U &&
+        package_control_close(TEST_OWNER, control, &report) ==
+            PACKAGE_CONTROL_STATUS_OK && package_control_resources_released() &&
+        live_allocations == 0U &&
+        package_state_database_parse(service_current, service_current_bytes,
+            &installed) == PACKAGE_STATE_STATUS_OK &&
+        installed.generation == 3U && installed.package_count == 2U);
+
     CHECK(strcmp(package_control_status_string(PACKAGE_CONTROL_STATUS_OK),
         "ok") == 0 && strcmp(package_control_status_string(
             PACKAGE_CONTROL_STATUS_COUNT), "unknown") == 0);
@@ -580,18 +609,18 @@ int main(int argc, char **argv)
     CHECK(package_control_open_remove(TEST_OWNER,
         (const uint8_t *)"org.phipia.app", 14U, &report) ==
             PACKAGE_CONTROL_STATUS_OK && report.plan_count == 2U &&
-        report.attached_count == 0U && report.generation == 2U);
+        report.attached_count == 0U && report.generation == 3U);
     control = report.token;
     CHECK(package_control_commit(TEST_OWNER, control, &report) ==
             PACKAGE_CONTROL_STATUS_OK && report.prepared && report.committed &&
-        report.generation == 3U && report.plan_count == 2U &&
+        report.generation == 4U && report.plan_count == 2U &&
         report.attached_count == 0U &&
         package_control_close(TEST_OWNER, control, &report) ==
             PACKAGE_CONTROL_STATUS_OK && package_control_resources_released() &&
         live_allocations == 0U &&
         package_state_database_parse(service_current, service_current_bytes,
             &installed) == PACKAGE_STATE_STATUS_OK &&
-        installed.generation == 3U && installed.package_count == 0U);
+        installed.generation == 4U && installed.package_count == 0U);
     CHECK(package_control_open_remove(TEST_OWNER,
         (const uint8_t *)"org.phipia.app", 14U, &report) ==
             PACKAGE_CONTROL_STATUS_MANAGER &&

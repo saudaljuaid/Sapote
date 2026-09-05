@@ -36,7 +36,8 @@ struct vfs_backend_ops {
     enum phipfs_status (*directory_read)(phipfs_handle handle,
         struct phipfs_list_entry *entry, bool *present);
     enum phipfs_status (*directory_close)(phipfs_handle handle);
-    enum phipfs_status (*create)(enum phipfs_volume volume, const char *path);
+    enum phipfs_status (*create)(enum phipfs_volume volume, const char *path,
+        uint16_t mode);
     enum phipfs_status (*truncate)(enum phipfs_volume volume, const char *path,
         uint64_t size);
     enum phipfs_status (*mkdir)(enum phipfs_volume volume, const char *path);

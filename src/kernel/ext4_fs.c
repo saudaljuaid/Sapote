@@ -81,7 +81,7 @@ extern int32_t phipia_ext4_transaction_probe(uintptr_t mounted,
 extern int32_t phipia_ext4_truncate_probe(uintptr_t mounted,
     const uint8_t *path, size_t path_length, uint64_t size);
 extern int32_t phipia_ext4_create_file_probe(uintptr_t mounted,
-    const uint8_t *path, size_t path_length);
+    const uint8_t *path, size_t path_length, uint16_t mode);
 extern int32_t phipia_ext4_unlink_file_probe(uintptr_t mounted,
     const uint8_t *path, size_t path_length);
 extern int32_t phipia_ext4_link_file_probe(uintptr_t mounted,
@@ -1019,7 +1019,7 @@ enum phipfs_status ext4_backend_truncate_probe(enum phipfs_volume volume,
 }
 
 enum phipfs_status ext4_backend_create_file_probe(enum phipfs_volume volume,
-    const char *path)
+    const char *path, uint16_t mode)
 {
     struct ext4_mount_state *mount;
     const size_t length = path_length(path);
@@ -1035,7 +1035,7 @@ enum phipfs_status ext4_backend_create_file_probe(enum phipfs_volume volume,
         return status;
     }
     status = map_status(phipia_ext4_create_file_probe(mount->rust_mount,
-        (const uint8_t *)path, length));
+        (const uint8_t *)path, length, mode));
     close_status = end_operation(mount, NULL);
     return status != PHIPFS_STATUS_OK ? status : close_status;
 }
@@ -1406,9 +1406,9 @@ enum phipfs_status ext4_backend_list(enum phipfs_volume volume,
 }
 
 enum phipfs_status ext4_backend_create(enum phipfs_volume volume,
-    const char *path)
+    const char *path, uint16_t mode)
 {
-    return ext4_backend_create_file_probe(volume, path);
+    return ext4_backend_create_file_probe(volume, path, mode);
 }
 
 enum phipfs_status ext4_backend_truncate(enum phipfs_volume volume,

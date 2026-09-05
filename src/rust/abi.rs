@@ -518,6 +518,7 @@ pub(crate) unsafe extern "C" fn phipia_ext4_create_file_probe(
     mounted: usize,
     path: *const u8,
     path_length: usize,
+    mode: u16,
 ) -> i32 {
     if mounted == 0 || path.is_null() {
         return ext4::Status::NullArgument as i32;
@@ -529,7 +530,7 @@ pub(crate) unsafe extern "C" fn phipia_ext4_create_file_probe(
             core::slice::from_raw_parts(path, path_length),
         )
     };
-    match ext4::create_file_probe(mounted, path) {
+    match ext4::create_file_probe(mounted, path, mode) {
         Ok(()) => ext4::Status::Ok as i32,
         Err(status) => status as i32,
     }

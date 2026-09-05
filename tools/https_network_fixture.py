@@ -104,6 +104,7 @@ class HttpsFixture(network.Fixture):
                 "repository-install.sri",
                 "repository-update.sri",
                 "repository-rollback.sri",
+                "repository-repair.sri",
             )
             path = sequence[min(self.repository_requests, len(sequence) - 1)]
             parts = path.split("/")
@@ -330,11 +331,13 @@ def self_test() -> int:
             b"install repository",
             b"update repository",
             b"rollback repository",
+            b"repair repository",
         )
         for name, body in zip((
             "repository-install.sri",
             "repository-update.sri",
             "repository-rollback.sri",
+            "repository-repair.sri",
         ), lifecycle):
             (root / name).write_bytes(body)
         fixture.repository_sequence = True

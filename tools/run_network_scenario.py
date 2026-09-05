@@ -336,19 +336,24 @@ def run(args: argparse.Namespace) -> int:
             "PHIPIA PHIP PHASE signed-plan-refused PASS\n",
             "PHIPIA PHIP PHASE committed generation=1 PASS\n",
             "PHIPIA PHIP PHASE committed generation=2 PASS\n",
+            "PHIPIA PHIP PHASE repair-plan PASS\n",
+            "PHIPIA PHIP PHASE repaired generation=3 PASS\n",
+            "PHIPIA PHIP REPAIR PASS trust payload transaction cleanup\n",
             "Phipia: signed HTTPS package install synchronized reboot phase\n",
             "Phipia: signed HTTPS package update synchronized reboot phase\n",
+            "Phipia: damaged package generation quarantined before repair "
+            "passed\n",
             "PHIPIA SDL CHESS PASS upstream=release-2.32.10 "
             "frames=8 persistent=yes\n",
-            "Phipia: signed upstream SDL package persisted and launched from "
-            "writable ext4 passed\n",
+            "Phipia: damaged SDL package repaired authenticated and launched "
+            "from writable ext4 passed\n",
         )
         healthy = all(transcript.count(marker) == 1 for marker in required)
         healthy = healthy and all(
             transcript.count(marker) == count for marker, count in (
-                ("PHIPIA PHIP PHASE start\n", 3),
+                ("PHIPIA PHIP PHASE start\n", 4),
                 ("PHIPIA PHIP PHASE signed-plan PASS\n", 2),
-                ("PHIPIA PHIP PHASE payloads-authenticated PASS\n", 2),
+                ("PHIPIA PHIP PHASE payloads-authenticated PASS\n", 3),
                 ("PHIPIA PHIP PASS https trust plan payload transaction "
                  "cleanup\n", 2),
             )

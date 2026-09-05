@@ -40,6 +40,11 @@ long phipia_package_control_open_remove(
     struct phipia_package_control_report *report
 );
 
+long phipia_package_control_open_repair(
+    phipia_handle_t repository_upload,
+    struct phipia_package_control_report *report
+);
+
 long phipia_package_control_item(
     phipia_handle_t control,
     uint32_t index,

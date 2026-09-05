@@ -78,6 +78,7 @@ enum store_status store_initialize(struct surface *canvas,
     struct ui_rect frame);
 enum store_status store_set_frame(struct ui_rect frame);
 struct ui_rect store_bounds(void);
+enum store_status store_primary_action_bounds(struct ui_rect *bounds);
 
 enum store_status store_set_app(size_t index, const struct store_app *app);
 enum store_status store_set_shelf(size_t shelf, const char *heading);
