@@ -343,7 +343,7 @@ static enum package_control_status plan_repair(
          installed_index < session->installed.package_count;
          ++installed_index) {
         struct package_state_package_view installed;
-        struct package_manager_catalog_entry selected;
+        struct package_manager_catalog_entry selected = {0};
         bool found = false;
 
         if (package_state_database_package(&session->installed,
