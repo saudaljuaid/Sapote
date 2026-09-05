@@ -20,6 +20,7 @@
 #define PACKAGE_SERVICE_REPOSITORY_FLOOR_PATH "pkgstate/repo.bin"
 #define PACKAGE_SERVICE_REPOSITORY_FLOOR_NEW_PATH "pkgstate/repo.new"
 #define PACKAGE_SERVICE_REPOSITORY_FLOOR_BYTES 128U
+#define PACKAGE_SERVICE_CLEANUP_CHUNK (32U * 4096U)
 
 /* Two candidates and scratch state must fit Phipia's bounded 16 MiB heap. */
 #define PACKAGE_SERVICE_MAX_DATABASE_BYTES (4U * 1024U * 1024U)

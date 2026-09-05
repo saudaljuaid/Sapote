@@ -402,6 +402,28 @@ enum phipfs_status phipfs_create_mode(enum phipfs_volume volume,
     return status;
 }
 
+enum phipfs_status phipfs_truncate(
+    enum phipfs_volume volume,
+    const char *path,
+    uint64_t size
+)
+{
+    (void)volume;
+    size_t node = find_node(path);
+
+    if (node == MOCK_MAX_NODES) {
+        return PHIPFS_STATUS_NOT_FOUND;
+    }
+    if (nodes[node].directory) {
+        return PHIPFS_STATUS_IS_DIRECTORY;
+    }
+    if (size > SIZE_MAX) {
+        return PHIPFS_STATUS_RANGE;
+    }
+    nodes[node].byte_count = (size_t)size;
+    return PHIPFS_STATUS_OK;
+}
+
 enum phipfs_status phipfs_mkdir(enum phipfs_volume volume, const char *path)
 {
     (void)volume;

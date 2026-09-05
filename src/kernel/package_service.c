@@ -1439,6 +1439,23 @@ static enum package_service_status remove_tree(
         return filesystem_failure(context, fs_status);
     }
     if (!stat.directory) {
+        /*
+         * A discarded generation is private once recovery has selected the
+         * other authority.  Trim large files through retryable bounded
+         * transactions before removing the final inode: one atomic ext4
+         * unlink cannot revoke an arbitrarily large payload within the
+         * journal's fixed transaction bound.
+         */
+        while (stat.size != 0U) {
+            const uint64_t next = stat.size > PACKAGE_SERVICE_CLEANUP_CHUNK ?
+                stat.size - PACKAGE_SERVICE_CLEANUP_CHUNK : 0U;
+
+            fs_status = phipfs_truncate(PHIPFS_VOLUME_DATA, path, next);
+            if (fs_status != PHIPFS_STATUS_OK) {
+                return filesystem_failure(context, fs_status);
+            }
+            stat.size = next;
+        }
         fs_status = phipfs_unlink(PHIPFS_VOLUME_DATA, path);
         return fs_status == PHIPFS_STATUS_OK ? PACKAGE_SERVICE_STATUS_OK :
             filesystem_failure(context, fs_status);
