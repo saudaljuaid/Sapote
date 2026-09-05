@@ -252,7 +252,7 @@ pub(crate) fn panic() -> ! {
     unsafe { console_panic(c"Rust panicked".as_ptr() as *const u8) }
 }
 
-/// Load and validate a supported read-only ext4 volume.
+/// Load and validate a supported journaled ext4 volume.
 ///
 /// # Safety
 /// Both outputs must name complete writable values. `context` remains owned by
@@ -412,10 +412,10 @@ pub(crate) unsafe extern "C" fn phipia_ext4_pread(
     }
 }
 
-/// Execute or retry one private ext4 journal transaction acceptance probe.
+/// Execute or retry one journaled ext4 write.
 ///
-/// This bypasses the still-read-only VFS mutation table and exists only for a
-/// kernel QEMU acceptance scenario. C must hold a writable storage lease.
+/// C must hold a writable storage lease. The public VFS backend and the kernel
+/// QEMU acceptance scenario share this exact bounded transaction boundary.
 ///
 /// # Safety
 /// The mount and input ranges must be live and readable, and `written_out`
@@ -453,10 +453,9 @@ pub(crate) unsafe extern "C" fn phipia_ext4_transaction_probe(
     }
 }
 
-/// Execute or retry one private ext4 truncate/revocation acceptance probe.
+/// Execute or retry one journaled ext4 truncate/revocation operation.
 ///
-/// This bypasses the still-read-only VFS mutation table and exists only for a
-/// kernel QEMU acceptance scenario. C must hold a writable storage lease.
+/// C must hold a writable storage lease.
 ///
 /// # Safety
 /// The mount and path range must be live and readable and must not overlap the
@@ -484,7 +483,7 @@ pub(crate) unsafe extern "C" fn phipia_ext4_truncate_probe(
     }
 }
 
-/// Execute or retry one private empty-file creation acceptance probe.
+/// Execute or retry one journaled empty-file creation.
 ///
 /// # Safety
 /// The mount and path range must be live, readable, and non-overlapping. C must
@@ -511,7 +510,7 @@ pub(crate) unsafe extern "C" fn phipia_ext4_create_file_probe(
     }
 }
 
-/// Execute or retry one private empty-file removal acceptance probe.
+/// Execute or retry one journaled empty-file removal.
 ///
 /// # Safety
 /// The mount and path range must be live, readable, and non-overlapping. C must
@@ -538,7 +537,7 @@ pub(crate) unsafe extern "C" fn phipia_ext4_unlink_file_probe(
     }
 }
 
-/// Execute or retry one private regular-file hard-link acceptance probe.
+/// Execute or retry one journaled regular-file hard link.
 ///
 /// # Safety
 /// Both path ranges must be live and readable and must not overlap the mounted
@@ -568,7 +567,7 @@ pub(crate) unsafe extern "C" fn phipia_ext4_link_file_probe(
     }
 }
 
-/// Execute or retry one private empty-directory creation acceptance probe.
+/// Execute or retry one journaled empty-directory creation.
 ///
 /// # Safety
 /// The mount and path range must be live, readable, and non-overlapping. C must
@@ -595,7 +594,7 @@ pub(crate) unsafe extern "C" fn phipia_ext4_create_directory_probe(
     }
 }
 
-/// Execute or retry one private empty-directory removal acceptance probe.
+/// Execute or retry one journaled empty-directory removal.
 ///
 /// # Safety
 /// The mount and path range must be live, readable, and non-overlapping. C must
@@ -622,7 +621,7 @@ pub(crate) unsafe extern "C" fn phipia_ext4_remove_directory_probe(
     }
 }
 
-/// Execute or retry one private same-directory rename acceptance probe.
+/// Execute or retry one journaled same-directory rename.
 ///
 /// # Safety
 /// Both path ranges must be live and readable and must not overlap the mounted

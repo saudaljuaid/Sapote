@@ -122,7 +122,7 @@ enum phipfs_status ext4_backend_read(phipfs_handle handle,
 enum phipfs_status ext4_backend_pread(phipfs_handle handle,
     uint8_t *destination, size_t capacity, uint64_t offset,
     size_t *read_bytes);
-/* Private kernel acceptance probe; this is not installed in the VFS table. */
+/* Shared journaled mutation entry points used by the backend and its probes. */
 enum phipfs_status ext4_backend_transaction_probe(enum phipfs_volume volume,
     const char *path, uint64_t offset, const uint8_t *source,
     size_t source_bytes, size_t *written_bytes);

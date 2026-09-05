@@ -4836,7 +4836,7 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
             BOOT_CAPABILITY_FILESYSTEM_FILE_PROOF_COMPLETE)) {
         kernel_test_fail("ext4 namespace proof skips are invalid");
     }
-    if (!drive.present || !drive.mounted || !drive.read_only || !drive.healthy) {
+    if (!drive.present || !drive.mounted || drive.read_only || !drive.healthy) {
         if (!ext4_backend_mount_diagnostic(PHIPFS_VOLUME_SYSTEM,
                 &mount_diagnostic)) {
             kernel_test_fail("ext4 mount diagnostic is unavailable");
@@ -4880,7 +4880,7 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
         kernel_test_fail("clean ext4 mount reported journal recovery");
     }
     if (phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "system/README.TXT", &stat) !=
-            PHIPFS_STATUS_OK || stat.directory || !stat.read_only ||
+            PHIPFS_STATUS_OK || stat.directory || stat.read_only ||
         (stat.size != sizeof(expected) - 1U && stat.size != UINT64_C(4097)) ||
         phipfs_open(PHIPFS_VOLUME_SYSTEM, "system/README.TXT",
             PHIPFS_ACCESS_READ, &handle) != PHIPFS_STATUS_OK ||
@@ -4905,10 +4905,11 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
         kernel_test_fail("ext4 recovery read leaked or changed data");
     }
     if (phipfs_open(PHIPFS_VOLUME_SYSTEM, "system/README.TXT",
-            PHIPFS_ACCESS_WRITE, &handle) != PHIPFS_STATUS_READ_ONLY ||
-        phipfs_create(PHIPFS_VOLUME_SYSTEM, "system/ATTACK.TXT") !=
-            PHIPFS_STATUS_READ_ONLY) {
-        kernel_test_fail("ext4 recovery escaped the read-only VFS gate");
+            PHIPFS_ACCESS_WRITE, &handle) != PHIPFS_STATUS_OK ||
+        phipfs_pread(handle, &appended, sizeof(appended), 0U, &read_bytes) !=
+            PHIPFS_STATUS_ACCESS ||
+        phipfs_close(handle) != PHIPFS_STATUS_OK) {
+        kernel_test_fail("ext4 writable handle access enforcement failed");
     }
     if (phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK) {
         kernel_test_fail("clean ext4 sync failed");
@@ -4954,13 +4955,11 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
         phipfs_pread(handle, &appended, sizeof(appended), UINT64_C(4096),
             &read_bytes) != PHIPFS_STATUS_OK || read_bytes != 1U ||
         appended != transaction_byte ||
-        phipfs_close(handle) != PHIPFS_STATUS_OK ||
-        phipfs_open(PHIPFS_VOLUME_SYSTEM, "system/README.TXT",
-            PHIPFS_ACCESS_WRITE, &handle) != PHIPFS_STATUS_READ_ONLY) {
+        phipfs_close(handle) != PHIPFS_STATUS_OK) {
         kernel_test_fail("ext4 private journal transaction probe failed");
     }
     if (!power_cut && !transaction_already_visible) {
-        if (ext4_backend_truncate_probe(PHIPFS_VOLUME_SYSTEM,
+        if (phipfs_truncate(PHIPFS_VOLUME_SYSTEM,
                 "system/README.TXT", sizeof(expected) - 1U) !=
                 PHIPFS_STATUS_OK ||
             phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
@@ -4974,50 +4973,72 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
             kernel_test_fail("ext4 private truncate revocation probe failed");
         }
         written_bytes = 0U;
-        if (ext4_backend_transaction_probe(PHIPFS_VOLUME_SYSTEM,
-                "system/README.TXT", UINT64_C(4096), &transaction_byte,
-                sizeof(transaction_byte), &written_bytes) != PHIPFS_STATUS_OK ||
+        if (phipfs_open(PHIPFS_VOLUME_SYSTEM, "system/README.TXT",
+                PHIPFS_ACCESS_WRITE, &handle) != PHIPFS_STATUS_OK ||
+            phipfs_seek(handle, INT64_C(4096), PHIPFS_SEEK_START, NULL) !=
+                PHIPFS_STATUS_INVALID_ARGUMENT ||
+            phipfs_seek(handle, INT64_C(4096), PHIPFS_SEEK_START,
+                &stat.size) != PHIPFS_STATUS_OK || stat.size != UINT64_C(4096) ||
+            phipfs_write(handle, &transaction_byte, sizeof(transaction_byte),
+                &written_bytes) != PHIPFS_STATUS_OK ||
             written_bytes != sizeof(transaction_byte) ||
+            phipfs_close(handle) != PHIPFS_STATUS_OK ||
             phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
             phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "system/README.TXT", &stat) !=
                 PHIPFS_STATUS_OK || stat.size != UINT64_C(4097)) {
             kernel_test_fail("ext4 post-truncate marker re-arm failed");
         }
-        if (ext4_backend_create_file_probe(PHIPFS_VOLUME_SYSTEM,
+        if (phipfs_create(PHIPFS_VOLUME_SYSTEM,
                 "data/user/JRNLPROBE.TMP") != PHIPFS_STATUS_OK ||
             phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.TMP",
                 &stat) != PHIPFS_STATUS_OK || stat.directory || stat.size != 0U ||
+            stat.read_only ||
+            phipfs_open(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.TMP",
+                PHIPFS_ACCESS_READ_WRITE, &handle) != PHIPFS_STATUS_OK ||
+            phipfs_write(handle, &transaction_byte, sizeof(transaction_byte),
+                &written_bytes) != PHIPFS_STATUS_OK || written_bytes != 1U ||
+            phipfs_seek(handle, 0, PHIPFS_SEEK_START, &stat.size) !=
+                PHIPFS_STATUS_OK || stat.size != 0U ||
+            phipfs_read(handle, &appended, sizeof(appended), &read_bytes) !=
+                PHIPFS_STATUS_OK || read_bytes != 1U ||
+            appended != transaction_byte ||
+            phipfs_unlink(PHIPFS_VOLUME_SYSTEM,
+                "data/user/JRNLPROBE.TMP") != PHIPFS_STATUS_BUSY ||
+            phipfs_rename(PHIPFS_VOLUME_SYSTEM,
+                "data/user/JRNLPROBE.TMP", "data/user/JRNLPROBE.BUSY") !=
+                    PHIPFS_STATUS_BUSY ||
+            phipfs_close(handle) != PHIPFS_STATUS_OK ||
             phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
-            ext4_backend_link_file_probe(PHIPFS_VOLUME_SYSTEM,
+            phipfs_link(PHIPFS_VOLUME_SYSTEM,
                 "data/user/JRNLPROBE.TMP", "data/user/JRNLPROBE.LNK") !=
                     PHIPFS_STATUS_OK ||
             phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
-            ext4_backend_unlink_file_probe(PHIPFS_VOLUME_SYSTEM,
+            phipfs_unlink(PHIPFS_VOLUME_SYSTEM,
                 "data/user/JRNLPROBE.TMP") != PHIPFS_STATUS_OK ||
             phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
             phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.TMP",
                 &stat) != PHIPFS_STATUS_NOT_FOUND ||
             phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.LNK",
-                &stat) != PHIPFS_STATUS_OK || stat.directory || stat.size != 0U ||
-            ext4_backend_rename_probe(PHIPFS_VOLUME_SYSTEM,
+                &stat) != PHIPFS_STATUS_OK || stat.directory || stat.size != 1U ||
+            phipfs_rename(PHIPFS_VOLUME_SYSTEM,
                 "data/user/JRNLPROBE.LNK", "data/user/JRNLPROBE.REN") !=
                     PHIPFS_STATUS_OK ||
             phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
             phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.LNK",
                 &stat) != PHIPFS_STATUS_NOT_FOUND ||
             phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.REN",
-                &stat) != PHIPFS_STATUS_OK || stat.directory || stat.size != 0U ||
-            ext4_backend_unlink_file_probe(PHIPFS_VOLUME_SYSTEM,
+                &stat) != PHIPFS_STATUS_OK || stat.directory || stat.size != 1U ||
+            phipfs_unlink(PHIPFS_VOLUME_SYSTEM,
                 "data/user/JRNLPROBE.REN") != PHIPFS_STATUS_OK ||
             phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
             phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.REN",
                 &stat) != PHIPFS_STATUS_NOT_FOUND ||
-            ext4_backend_create_directory_probe(PHIPFS_VOLUME_SYSTEM,
+            phipfs_mkdir(PHIPFS_VOLUME_SYSTEM,
                 "data/user/JRNLPROBE.DIR") != PHIPFS_STATUS_OK ||
             phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
             phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.DIR",
                 &stat) != PHIPFS_STATUS_OK || !stat.directory ||
-            ext4_backend_rename_probe(PHIPFS_VOLUME_SYSTEM,
+            phipfs_rename(PHIPFS_VOLUME_SYSTEM,
                 "data/user/JRNLPROBE.DIR", "data/user/JRNLPROBE.RDR") !=
                     PHIPFS_STATUS_OK ||
             phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
@@ -5025,23 +5046,23 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
                 &stat) != PHIPFS_STATUS_NOT_FOUND ||
             phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.RDR",
                 &stat) != PHIPFS_STATUS_OK || !stat.directory ||
-            ext4_backend_create_file_probe(PHIPFS_VOLUME_SYSTEM,
+            phipfs_create(PHIPFS_VOLUME_SYSTEM,
                 "data/user/JRNLPROBE.RDR/CHILD.TMP") != PHIPFS_STATUS_OK ||
             phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
-            ext4_backend_remove_directory_probe(PHIPFS_VOLUME_SYSTEM,
+            phipfs_rmdir(PHIPFS_VOLUME_SYSTEM,
                 "data/user/JRNLPROBE.RDR") != PHIPFS_STATUS_NOT_EMPTY ||
             phipfs_stat_path(PHIPFS_VOLUME_SYSTEM,
                 "data/user/JRNLPROBE.RDR/CHILD.TMP", &stat) !=
                     PHIPFS_STATUS_OK || stat.directory ||
-            ext4_backend_unlink_file_probe(PHIPFS_VOLUME_SYSTEM,
+            phipfs_unlink(PHIPFS_VOLUME_SYSTEM,
                 "data/user/JRNLPROBE.RDR/CHILD.TMP") != PHIPFS_STATUS_OK ||
             phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
-            ext4_backend_remove_directory_probe(PHIPFS_VOLUME_SYSTEM,
+            phipfs_rmdir(PHIPFS_VOLUME_SYSTEM,
                 "data/user/JRNLPROBE.RDR") != PHIPFS_STATUS_OK ||
             phipfs_sync(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
             phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, "data/user/JRNLPROBE.RDR",
                 &stat) != PHIPFS_STATUS_NOT_FOUND) {
-            kernel_test_fail("ext4 private namespace journal probe failed");
+            kernel_test_fail("ext4 VFS namespace journal proof failed");
         }
     }
     if (phipfs_unmount(PHIPFS_VOLUME_SYSTEM) != PHIPFS_STATUS_OK ||
@@ -5103,7 +5124,7 @@ _Noreturn void kernel_test_complete_ext4_recovery(void)
     console_write("ST EXT4 RECOVERY marker cleared transaction committed ");
     console_write("appended exact truncate revoke rearm create hardlink unlink journal clean ");
     console_write("transactions 0 replay 0 slots 0 ");
-    console_write("VFS read-only remount clean resources exact\n");
+    console_write("VFS writable remount clean resources exact\n");
     kernel_test_pass();
 }
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Checked, read-only ext4 operations over Phipia's native block boundary.
+//! Checked, journaled ext4 operations over Phipia's native block boundary.
 
 extern crate alloc;
 
@@ -80,7 +80,7 @@ impl Default for DirectoryEntry {
     }
 }
 
-/// A VFS-read-only filesystem whose only upstream writer is an in-memory stage.
+/// A filesystem whose only upstream writer is an in-memory journal stage.
 /// C installs a short NVMe lease per operation.
 pub(crate) struct Mounted {
     filesystem: Ext4,
@@ -811,7 +811,6 @@ fn commit_staged_mutation(
 
 /// Execute one controlled staged write through the native journal executor.
 ///
-/// This is a private kernel acceptance probe, not a VFS mutation entry point.
 /// The same request retries a retained commit/checkpoint plan after storage I/O
 /// refusal; different input is rejected while a request remains pending.
 pub(crate) fn transaction_probe(
@@ -937,11 +936,10 @@ pub(crate) fn transaction_probe(
     )
 }
 
-/// Execute one controlled one-block shrink through the native journal executor.
+/// Execute one controlled truncate through the native journal executor.
 ///
-/// This private probe proves that an ext4plus free callback becomes the exact
-/// JBD2 revocation committed on platform storage. It is not a VFS mutation
-/// entry point.
+/// Every freed block reported by ext4plus becomes a JBD2 revocation committed
+/// on platform storage.
 pub(crate) fn truncate_probe(
     mounted: &mut Mounted,
     path: &[u8],
@@ -969,42 +967,25 @@ pub(crate) fn truncate_probe(
             .map_err(|_| Status::Invalid)?;
         discard_uncommitted_stage(mounted, recovery)?;
     }
-    arm_recovery_marker(mounted)?;
-
-    let mut file = mounted
+    let file = mounted
         .filesystem
         .open(absolute.as_slice())
         .map_err(map_error)?;
     let old_size = file.inode().size_in_bytes();
-    let old_blocks = old_size.div_ceil(BLOCK_BYTES);
-    let new_blocks = size.div_ceil(BLOCK_BYTES);
-    if size >= old_size || old_blocks.checked_sub(new_blocks) != Some(1) {
-        discard_uncommitted_stage(mounted, true)?;
-        return Err(Status::Range);
+    drop(file);
+    if size == old_size {
+        return Ok(());
     }
-    let revoked_offset = match new_blocks.checked_mul(BLOCK_BYTES) {
-        Some(offset) => offset,
-        None => {
-            discard_uncommitted_stage(mounted, true)?;
-            return Err(Status::Range);
-        }
-    };
-    let revoked_block = match file.filesystem_block_at_offset(revoked_offset) {
-        Ok(Some(block)) => block,
-        Ok(None) => {
-            discard_uncommitted_stage(mounted, true)?;
-            return Err(Status::Invalid);
-        }
-        Err(error) => {
-            discard_uncommitted_stage(mounted, true)?;
-            return Err(map_error(error));
-        }
-    };
+    arm_recovery_marker(mounted)?;
+    let mut file = mounted
+        .filesystem
+        .open(absolute.as_slice())
+        .map_err(map_error)?;
     if let Err(error) = file.truncate(size) {
         discard_uncommitted_stage(mounted, true)?;
         return Err(map_error(error));
     }
-    if file.inode().size_in_bytes() != size || mounted.stage.revoked_block_count() != 1 {
+    if file.inode().size_in_bytes() != size {
         discard_uncommitted_stage(mounted, true)?;
         return Err(Status::Invalid);
     }
@@ -1018,7 +999,7 @@ pub(crate) fn truncate_probe(
         size,
         0,
         &[],
-        Some(revoked_block),
+        None,
     )?;
     if resumed == 0 {
         Ok(())
@@ -1062,7 +1043,7 @@ fn commit_namespace_mutation(
     }
 }
 
-/// Create one empty regular file through a private journal acceptance path.
+/// Create one empty regular file through the journaled mutation path.
 pub(crate) fn create_file_probe(
     mounted: &mut Mounted,
     path: &[u8],
@@ -1110,7 +1091,7 @@ pub(crate) fn create_file_probe(
     commit_namespace_mutation(mounted, PendingMutationKind::CreateFile, absolute)
 }
 
-/// Remove one empty regular file through a private journal acceptance path.
+/// Remove one empty regular file through the journaled mutation path.
 pub(crate) fn unlink_file_probe(
     mounted: &mut Mounted,
     path: &[u8],
@@ -1154,7 +1135,7 @@ pub(crate) fn unlink_file_probe(
     commit_namespace_mutation(mounted, PendingMutationKind::UnlinkFile, absolute)
 }
 
-/// Create one regular-file hard link through a private journal acceptance path.
+/// Create one regular-file hard link through the journaled mutation path.
 pub(crate) fn link_file_probe(
     mounted: &mut Mounted,
     source: &[u8],
@@ -1205,7 +1186,7 @@ pub(crate) fn link_file_probe(
     commit_namespace_mutation(mounted, PendingMutationKind::LinkFile, pending_key)
 }
 
-/// Create one empty directory through a private journal acceptance path.
+/// Create one empty directory through the journaled mutation path.
 pub(crate) fn create_directory_probe(
     mounted: &mut Mounted,
     path: &[u8],
@@ -1270,7 +1251,7 @@ pub(crate) fn create_directory_probe(
     )
 }
 
-/// Remove one empty directory through a private journal acceptance path.
+/// Remove one empty directory through the journaled mutation path.
 pub(crate) fn remove_directory_probe(
     mounted: &mut Mounted,
     path: &[u8],

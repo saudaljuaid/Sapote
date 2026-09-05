@@ -7,22 +7,20 @@ Phipia has one ext4 implementation: the audited, pinned `ext4plus` source under
 features disabled. Cargo is locked and forced offline through `.cargo/config.toml`;
 the exact registry closure is under `vendor/rust-crates`.
 
-The integrated backend remains read-only to VFS callers. VFS remains the sole owner of
-mounts, vnodes, open-file descriptions, generations, and directory iterators.
+The integrated backend is writable through the VFS. VFS remains the sole owner
+of mounts, vnodes, open-file descriptions, generations, and directory iterators.
 The ext4 backend owns one opaque Rust `Ext4` object per admitted volume and
 generation-authenticated C file/directory cookies. It implements root and nested
 lookup, open, read, offset-preserving pread, 64-bit seek/stat, and directory
-enumeration. Hard-linked paths report the same inode identity to the vnode
-table. Symlinks are resolved by ext4plus for lookup and open.
+enumeration, journaled regular-file writes and truncation, file and directory
+creation/removal, hard links, and same-parent no-overwrite rename. Hard-linked
+paths report the same inode identity to the vnode table. Symlinks are resolved
+by ext4plus for lookup and open.
 
-A kernel-only transaction probe exists for the ext4 QEMU acceptance scenario.
-It is deliberately absent from the VFS operation table and does not change the
-drive's read-only flag or any public mutation result.
-
-C never leaves an NVMe filesystem session open. Ordinary VFS calls acquire a
-read-only session around one synchronous Rust operation. Mount acquires a
-writable session solely so validated JBD2 recovery can checkpoint before the
-volume becomes visible; no VFS mutation reaches that lease. Rust points to the
+C never leaves an NVMe filesystem session open. Ordinary reads acquire a
+read-only session and each synchronous mutation acquires a writable session.
+Mount also acquires a writable session so validated JBD2 recovery can checkpoint
+before the volume becomes visible. Rust points to the
 stable per-mount state and C refuses read, write, or flush callbacks without an
 active lease, and refuses writes and flushes without the writable mount lease.
 Every byte request checks the namespace capacity before calculating or issuing
@@ -61,24 +59,19 @@ NVMe session. Heap allocation may occur inside ext4plus, but no allocation
 survives a rejected mount and no NVMe lease survives an operation. This lock
 order applies to the current single-core execution model.
 
-## Read-write admission gate
+## Read-write admission
 
 Upstream reads an existing JBD2 journal but does not journal new mutations, so
-Phipia never gives an ext4plus mutation object a writer that reaches platform
-storage. A clean mount is reloaded with the bounded `JournalMutationStage` as
-both its reader and its only writer; that overlay cannot write through to its
-immutable NVMe-backed reader. After Phipia has durably set the recovery marker,
-an explicit coordinator-only loader preserves that same overlay writer while
-continuing to refuse permanent or unsupported read-only conditions. The
-ordered journal executor remains the only platform writer. `sync`, create,
-write, truncate, mkdir, rename, unlink, rmdir, and link still return `EROFS`.
-Private QEMU-only acceptance adapters now stage empty-file create/unlink,
-regular-file hard links, same-parent no-overwrite rename, and empty-directory
-create/remove through JBD2. The directory removal path refuses live children
-and requires the exact freed directory block in the transaction's revoke
-record before commit. None of these adapters is installed in the public VFS
-table.
-Enabling the VFS write path requires all of the following in one implementation:
+Phipia gives ext4plus only a bounded `JournalMutationStage` as its reader and
+writer. That copy-on-write overlay cannot write through to its immutable
+NVMe-backed reader. After Phipia has durably set the recovery marker, the
+coordinator retains the same overlay while continuing to refuse permanent or
+unsupported read-only conditions. The ordered journal executor is the only
+platform writer. Public VFS mutations route through that coordinator. Directory
+removal refuses live children and requires freed directory blocks in the
+transaction's revoke record before commit.
+
+The VFS write path was admitted only after all of the following were present:
 
 1. ordered-data JBD2 descriptor, data, revoke, and checksummed commit records;
 2. an NVMe Flush after journal data and before acknowledging the commit;
@@ -171,22 +164,21 @@ ext4/JBD2 state disagreement.
 `qemu-test-ext4-recovery` builds that exact marker-only crash image from the
 deterministic fixture, boots it as a writable 4 KiB NVMe namespace, and requires
 the guest to recover it, then drives one allocation-bearing sparse extension
-through the private transaction probe. The guest reopens the appended byte,
-proves every VFS mutation entry point remains read-only, cleanly unmounts,
-remounts with zero replay, and revalidates the byte and resource census. After
-QEMU closes the disk, the host independently runs the strict fixture inspector
-and read-only e2fsck over the resulting bytes. This expanded scenario remains
-pending exact-head Linux execution and is not writable-VFS evidence.
+through the journal transaction path. The guest reopens the appended byte,
+exercises public VFS write, truncate, create, hard-link, unlink, directory, and
+rename entry points, cleanly unmounts, remounts with zero replay, and revalidates
+the byte and resource census. After QEMU closes the disk, the host independently
+runs the strict fixture inspector and read-only e2fsck over the resulting bytes.
 
 `qemu-test-ext4-powercuts` gives every flush an explicit Rust/C ABI boundary
-identifier and repeats the private probe on ten independent fixture copies. It
+identifier and repeats the journal mutation on ten independent fixture copies. It
 terminates QEMU without guest cleanup immediately after each durable recovery,
 commit, checkpoint, journal-state, and final filesystem-state barrier. Every
 copy is then rebooted without a cut, required to pass the guest namespace,
 sparse-data, clean-unmount, remount, and resource census, and independently
 checked with debugfs plus read-only `e2fsck`. Per-cut serial transcripts, disk
-reports, and hashes are retained as a Linux workflow artifact. This is still a
-private mutation-path proof; the VFS read-only gate remains in place.
+reports, and hashes are retained as a Linux workflow artifact. The same mounted
+backend is writable through ordinary VFS calls after the boundary sweep.
 
 The caller must supply a distinct physical journal block for the descriptor,
 each metadata image, and the commit. The resulting operation list has one legal
@@ -257,7 +249,7 @@ checkpoint, recovery-cleanup, and tail-state operations. A shared executor maps
 every operation to checked absolute byte writes and preserves every flush. The
 kernel mount adapter binds those writes to `nvme_volume_write()` and each
 barrier to `nvme_volume_flush()` for recovery and final clean-plan execution.
-The private acceptance probe now uses the same adapter: it makes the recovery
+The mutation coordinator makes the recovery
 marker durable, reloads the overlay through the recovery-only writer admission,
 runs one upstream regular-file write, classifies initialized touched blocks as
 ordered data and every other staged block as journaled metadata, then executes
@@ -272,8 +264,8 @@ pending phase and request bytes for an identical retry; a different request is
 refused. The QEMU recovery scenario injects a refusal at the live-journal
 superblock write after an allocation-bearing upstream mutation, then at the
 ordered-data flush while retrying that same pending request. Only the third,
-byte-identical attempt is allowed to complete. Writable namespace methods are
-still not redirected into the planner.
+byte-identical attempt is allowed to complete. Writable namespace methods use
+the same retained planner through the public VFS table.
 A bounded `JournalMutationStage`
 now gives synchronous ext4plus mutations an immutable backing reader and a
 copy-on-write overlay: the first partial write reads a complete 4 KiB home
@@ -293,8 +285,8 @@ plan. A refused classification remains open for correction; explicit rollback
 discards every staged image and reopens the overlay, while still requiring the
 mutated ext4plus object to be discarded.
 An open regular file exposes its initialized physical block at a byte offset so
-the eventual mutation adapter can derive that ordered-data set after the
-upstream write; holes and uninitialized extents are never misclassified.
+the mutation adapter can derive that ordered-data set after the upstream write;
+holes and uninitialized extents are never misclassified.
 The deterministic Linux fixture now drives one real upstream sparse-extending
 file write through that classifier after persisting the recovery marker. It
 proves the allocation-updated block-zero superblock image retains a valid
@@ -311,8 +303,7 @@ stage, and reloads the original size and recovery-marked superblock exactly. It
 then truncates the committed extension, requires the freed data block in the
 JBD2 revoke record, returns the free-space counter to its original value, and
 requires a second clean `e2fsck` result. This is a
-host integration proof over the operation executor, not yet a VFS or QEMU
-writable-volume claim.
+host integration proof over the same operation executor used by VFS and QEMU.
 
 The stage is retained for the full Rust mount lifetime and both unmount phases
 refuse pending images or revocations, so no unclassified upstream mutation can
@@ -321,9 +312,10 @@ overlay and reload ext4plus so in-memory allocation counters cannot escape. The
 real fixture pins that rollback across an allocation-bearing, deliberately
 refused pre-commit classification. Once a storage operation has started,
 rollback would be unsafe because an unknown prefix may already be durable; the
-retained plan is retried instead. VFS mutations do not yet collect the touched
-offset range needed for ordered-data classification. General writable-handle
-close semantics remain incomplete. The admitted
+retained plan is retried instead. VFS writes pass their exact handle offset and
+bounded source bytes into the same classifier and advance the cursor only after
+the commit, checkpoint, journal-tail update, and storage lease close succeed.
+The admitted
 `JournalRing` is also retained for the full Rust mount lifetime. C opens a
 writable NVMe lease before sync or unmount preparation; Rust
 re-emits the same pending clean plan after a failed write or flush, acknowledges
@@ -349,15 +341,13 @@ removes the final name, synchronizing every transaction and requiring both
 names to disappear before the final clean remount. This exercises inode
 allocation, inode and directory bitmaps, group descriptors, directory
 checksums, link counts, and their primary-superblock counters through platform
-storage while the public create/link/unlink table entries remain read-only.
+storage using the public create/link/unlink table entries.
 The recovery-marker activation plan is equally retry-stable: its exact
 checksummed write and filesystem-state flush are re-emitted after an I/O refusal
 and acknowledged only after the flush completes. Started commit plans and
 pending journal-tail writes likewise re-emit byte-identical operations until
 their final flushes are acknowledged; slots remain reserved throughout. The
 lease is closed before the separate Rust release, and either failure leaves the
-mount live. The private QEMU probe can now arm the marker, sync it clean, and
-then unmount without another write. Its truncate path is likewise private and
-its namespace round trip is removed before unmount; neither exposes mutation
-entry points to VFS callers. All VFS mutation operations therefore continue to
-return `EROFS`.
+mount live. The QEMU proof arms the marker, syncs it clean, and then unmounts
+without another write. Its public truncate and namespace round trip are removed
+before unmount, and the clean remount revalidates both bytes and resources.

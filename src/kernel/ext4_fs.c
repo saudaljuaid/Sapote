@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Read-only ext4 VFS backend over the checked Rust ext4plus adapter. */
+/* Journaled ext4 VFS backend over the checked Rust ext4plus adapter. */
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -35,9 +35,11 @@ struct ext4_mount_state {
 struct ext4_handle_state {
     uint64_t generation;
     uint64_t mount_generation;
+    uint64_t inode;
     uint64_t offset;
     uint64_t size;
     enum phipfs_volume volume;
+    enum phipfs_access access;
     char path[PHIPFS_MAX_PATH];
     bool directory;
     bool active;
@@ -577,7 +579,7 @@ static void fill_stat(
     destination->mode = source->mode;
     destination->links = source->links;
     destination->directory = source->file_type == PHIPIA_EXT4_FILE_DIRECTORY;
-    destination->read_only = true;
+    destination->read_only = false;
 }
 
 static enum phipfs_status handle_state(
@@ -607,7 +609,8 @@ static enum phipfs_status handle_state(
 }
 
 static enum phipfs_status allocate_handle(enum phipfs_volume volume,
-    const char *path, uint64_t size, bool directory, phipfs_handle *handle)
+    const char *path, uint64_t inode, uint64_t size,
+    enum phipfs_access access, bool directory, phipfs_handle *handle)
 {
     const size_t length = path_length(path);
     size_t slot = EXT4_MAX_HANDLES;
@@ -627,13 +630,43 @@ static enum phipfs_status allocate_handle(enum phipfs_volume volume,
     zero_bytes(&ext4_handles[slot], sizeof(ext4_handles[slot]));
     ext4_handles[slot].generation = generation(&next_handle_generation);
     ext4_handles[slot].mount_generation = ext4_mounts[volume].generation;
+    ext4_handles[slot].inode = inode;
     ext4_handles[slot].size = size;
     ext4_handles[slot].volume = volume;
+    ext4_handles[slot].access = access;
     ext4_handles[slot].directory = directory;
     copy_bytes(ext4_handles[slot].path, path, length + 1U);
     ext4_handles[slot].active = true;
     *handle = ext4_handles[slot].generation << 8U | (uint64_t)(slot + 1U);
     return PHIPFS_STATUS_OK;
+}
+
+static void update_open_sizes(enum phipfs_volume volume, uint64_t inode,
+    uint64_t size)
+{
+    for (size_t index = 0U; index < EXT4_MAX_HANDLES; ++index) {
+        if (ext4_handles[index].active &&
+            ext4_handles[index].volume == volume &&
+            ext4_handles[index].mount_generation ==
+                ext4_mounts[volume].generation &&
+            ext4_handles[index].inode == inode) {
+            ext4_handles[index].size = size;
+        }
+    }
+}
+
+static bool inode_is_open(enum phipfs_volume volume, uint64_t inode)
+{
+    for (size_t index = 0U; index < EXT4_MAX_HANDLES; ++index) {
+        if (ext4_handles[index].active &&
+            ext4_handles[index].volume == volume &&
+            ext4_handles[index].mount_generation ==
+                ext4_mounts[volume].generation &&
+            ext4_handles[index].inode == inode) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void ext4_backend_initialize(void)
@@ -809,7 +842,7 @@ struct phipfs_drive_info ext4_backend_drive(enum phipfs_volume volume)
     drive.total_bytes = mount->media_bytes;
     drive.present = mount->active;
     drive.mounted = mount->active;
-    drive.read_only = true;
+    drive.read_only = false;
     drive.healthy = mount->healthy;
     return drive;
 }
@@ -842,13 +875,12 @@ enum phipfs_status ext4_backend_open(enum phipfs_volume volume,
     struct phipia_ext4_metadata metadata;
     enum phipfs_status status;
 
-    if (handle == NULL || !valid_volume(volume)) {
+    if (handle == NULL || !valid_volume(volume) ||
+        (access != PHIPFS_ACCESS_READ && access != PHIPFS_ACCESS_WRITE &&
+            access != PHIPFS_ACCESS_READ_WRITE)) {
         return PHIPFS_STATUS_INVALID_ARGUMENT;
     }
     *handle = 0U;
-    if (access != PHIPFS_ACCESS_READ) {
-        return PHIPFS_STATUS_READ_ONLY;
-    }
     status = checked_stat(&ext4_mounts[volume], path, &metadata);
     if (status != PHIPFS_STATUS_OK) {
         return status;
@@ -856,7 +888,8 @@ enum phipfs_status ext4_backend_open(enum phipfs_volume volume,
     if (metadata.file_type == PHIPIA_EXT4_FILE_DIRECTORY) {
         return PHIPFS_STATUS_IS_DIRECTORY;
     }
-    return allocate_handle(volume, path, metadata.size, false, handle);
+    return allocate_handle(volume, path, metadata.inode, metadata.size, access,
+        false, handle);
 }
 
 enum phipfs_status ext4_backend_close(phipfs_handle handle)
@@ -889,6 +922,9 @@ enum phipfs_status ext4_backend_pread(phipfs_handle handle,
     }
     if (state->directory) {
         return PHIPFS_STATUS_IS_DIRECTORY;
+    }
+    if ((state->access & PHIPFS_ACCESS_READ) == 0U) {
+        return PHIPFS_STATUS_ACCESS;
     }
     if (capacity == 0U || offset >= state->size) {
         return PHIPFS_STATUS_OK;
@@ -1118,13 +1154,59 @@ enum phipfs_status ext4_backend_rename_probe(enum phipfs_volume volume,
 enum phipfs_status ext4_backend_write(phipfs_handle handle,
     const uint8_t *source, size_t source_bytes, size_t *written_bytes)
 {
-    (void)handle;
-    (void)source;
-    (void)source_bytes;
-    if (written_bytes != NULL) {
-        *written_bytes = 0U;
+    struct ext4_handle_state *state;
+    struct ext4_mount_state *mount;
+    uint64_t end;
+    enum phipfs_status status;
+    enum phipfs_status close_status;
+
+    if (written_bytes == NULL || (source_bytes != 0U && source == NULL)) {
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
     }
-    return PHIPFS_STATUS_READ_ONLY;
+    *written_bytes = 0U;
+    status = handle_state(handle, &state);
+    if (status != PHIPFS_STATUS_OK) {
+        return status;
+    }
+    if (state->directory) {
+        return PHIPFS_STATUS_IS_DIRECTORY;
+    }
+    if ((state->access & PHIPFS_ACCESS_WRITE) == 0U) {
+        return PHIPFS_STATUS_ACCESS;
+    }
+    if (source_bytes == 0U) {
+        return PHIPFS_STATUS_OK;
+    }
+    if (source_bytes > EXT4_TRANSACTION_PROBE_MAX_BYTES ||
+        state->offset > PHIPFS_MAX_FILE_BYTES ||
+        source_bytes > PHIPFS_MAX_FILE_BYTES - state->offset) {
+        return PHIPFS_STATUS_RANGE;
+    }
+    mount = &ext4_mounts[state->volume];
+    status = begin_operation(mount, true);
+    if (status != PHIPFS_STATUS_OK) {
+        return status;
+    }
+    status = map_status(phipia_ext4_transaction_probe(mount->rust_mount,
+        (const uint8_t *)state->path, path_length(state->path), state->offset,
+        source, source_bytes, written_bytes));
+    close_status = end_operation(mount, NULL);
+    if (status != PHIPFS_STATUS_OK) {
+        return status;
+    }
+    if (close_status != PHIPFS_STATUS_OK) {
+        return close_status;
+    }
+    if (*written_bytes > source_bytes ||
+        *written_bytes > UINT64_MAX - state->offset) {
+        return PHIPFS_STATUS_CORRUPT;
+    }
+    end = state->offset + *written_bytes;
+    state->offset = end;
+    if (end > state->size) {
+        update_open_sizes(state->volume, state->inode, end);
+    }
+    return PHIPFS_STATUS_OK;
 }
 
 enum phipfs_status ext4_backend_seek(phipfs_handle handle, int64_t offset,
@@ -1240,7 +1322,8 @@ enum phipfs_status ext4_backend_directory_open(enum phipfs_volume volume,
     if (metadata.file_type != PHIPIA_EXT4_FILE_DIRECTORY) {
         return PHIPFS_STATUS_NOT_DIRECTORY;
     }
-    return allocate_handle(volume, path, metadata.size, true, handle);
+    return allocate_handle(volume, path, metadata.inode, metadata.size,
+        PHIPFS_ACCESS_READ, true, handle);
 }
 
 enum phipfs_status ext4_backend_directory_read(phipfs_handle handle,
@@ -1315,62 +1398,87 @@ enum phipfs_status ext4_backend_list(enum phipfs_volume volume,
     return status;
 }
 
-/* All mutation and durability requests remain refused until JBD2 exists. */
 enum phipfs_status ext4_backend_create(enum phipfs_volume volume,
     const char *path)
 {
-    (void)volume;
-    (void)path;
-    return PHIPFS_STATUS_READ_ONLY;
+    return ext4_backend_create_file_probe(volume, path);
 }
 
 enum phipfs_status ext4_backend_truncate(enum phipfs_volume volume,
     const char *path, uint64_t size)
 {
-    (void)volume;
-    (void)path;
-    (void)size;
-    return PHIPFS_STATUS_READ_ONLY;
+    struct phipia_ext4_metadata metadata;
+    enum phipfs_status status;
+
+    if (!valid_volume(volume)) {
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
+    }
+    if (size > PHIPFS_MAX_FILE_BYTES) {
+        return PHIPFS_STATUS_RANGE;
+    }
+    status = checked_stat(&ext4_mounts[volume], path, &metadata);
+    if (status != PHIPFS_STATUS_OK) {
+        return status;
+    }
+    status = ext4_backend_truncate_probe(volume, path, size);
+    if (status == PHIPFS_STATUS_OK) {
+        update_open_sizes(volume, metadata.inode, size);
+    }
+    return status;
 }
 
 enum phipfs_status ext4_backend_mkdir(enum phipfs_volume volume,
     const char *path)
 {
-    (void)volume;
-    (void)path;
-    return PHIPFS_STATUS_READ_ONLY;
+    return ext4_backend_create_directory_probe(volume, path);
 }
 
 enum phipfs_status ext4_backend_rename(enum phipfs_volume volume,
     const char *source, const char *destination)
 {
-    (void)volume;
-    (void)source;
-    (void)destination;
-    return PHIPFS_STATUS_READ_ONLY;
+    struct phipia_ext4_metadata metadata;
+    enum phipfs_status status;
+
+    if (!valid_volume(volume)) {
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
+    }
+    status = checked_stat(&ext4_mounts[volume], source, &metadata);
+    if (status != PHIPFS_STATUS_OK) {
+        return status;
+    }
+    if (inode_is_open(volume, metadata.inode)) {
+        return PHIPFS_STATUS_BUSY;
+    }
+    return ext4_backend_rename_probe(volume, source, destination);
 }
 
 enum phipfs_status ext4_backend_unlink(enum phipfs_volume volume,
     const char *path)
 {
-    (void)volume;
-    (void)path;
-    return PHIPFS_STATUS_READ_ONLY;
+    struct phipia_ext4_metadata metadata;
+    enum phipfs_status status;
+
+    if (!valid_volume(volume)) {
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
+    }
+    status = checked_stat(&ext4_mounts[volume], path, &metadata);
+    if (status != PHIPFS_STATUS_OK) {
+        return status;
+    }
+    if (inode_is_open(volume, metadata.inode)) {
+        return PHIPFS_STATUS_BUSY;
+    }
+    return ext4_backend_unlink_file_probe(volume, path);
 }
 
 enum phipfs_status ext4_backend_rmdir(enum phipfs_volume volume,
     const char *path)
 {
-    (void)volume;
-    (void)path;
-    return PHIPFS_STATUS_READ_ONLY;
+    return ext4_backend_remove_directory_probe(volume, path);
 }
 
 enum phipfs_status ext4_backend_link(enum phipfs_volume volume,
     const char *source, const char *destination)
 {
-    (void)volume;
-    (void)source;
-    (void)destination;
-    return PHIPFS_STATUS_READ_ONLY;
+    return ext4_backend_link_file_probe(volume, source, destination);
 }
