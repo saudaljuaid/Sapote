@@ -1104,7 +1104,7 @@ pub(crate) fn create_file_probe(
     commit_namespace_mutation(mounted, PendingMutationKind::CreateFile, absolute)
 }
 
-/// Remove one empty regular file through the journaled mutation path.
+/// Remove one regular-file link through the journaled mutation path.
 pub(crate) fn unlink_file_probe(
     mounted: &mut Mounted,
     path: &[u8],
@@ -1141,7 +1141,14 @@ pub(crate) fn unlink_file_probe(
         discard_uncommitted_stage(mounted, true)?;
         return Err(map_error(error));
     }
-    if mounted.stage.is_empty() || mounted.stage.revoked_block_count() != 0 {
+    /*
+     * Dropping the final link legitimately frees every data/extent block in
+     * the inode. JournalMutationStage records those blocks as JBD2 revokes;
+     * build_transaction() below serializes the complete bounded set before
+     * any allocator metadata can reach its home location. A non-final unlink
+     * has no revokes, so both cases are valid here.
+     */
+    if mounted.stage.is_empty() {
         discard_uncommitted_stage(mounted, true)?;
         return Err(Status::Invalid);
     }
