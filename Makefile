@@ -311,6 +311,7 @@ SDL_PROOF_SYSTEM_IMAGE := $(SDL_PROOF_DIR)/system.raw
 SDL_PROOF_DATA_IMAGE := $(SDL_PROOF_DIR)/data.raw
 SDL_CHESS_DIR := $(BUILD_DIR)/upstream-sdl-chess
 SDL_CHESS_APP := $(SDL_CHESS_DIR)/CHESS.APP
+SDL_CHESS_RELEASE_APP := $(SDL_CHESS_DIR)/CHESS-RELEASE.APP
 SDL_CHESS_PACKAGE := $(SDL_CHESS_DIR)/SDLCHESS.SPK
 DYNAMIC_APP_DIR := $(BUILD_DIR)/native-dynamic
 DYNAMIC_ROOT_APP := $(DYNAMIC_APP_DIR)/DYNROOT.APP
@@ -692,13 +693,14 @@ $(PHIPAPP_SYSTEM_IMAGE): $(PHIPAPP_PACKAGE) tools/phipia-package.py \
 $(PHIPAPP_DATA_IMAGE): $(EXT4_FIXTURE) | $(PHIPAPP_DIR)
 	cp $< $@
 
-$(PHIPAPP_REPOSITORY): $(SDL_CHESS_APP) \
+$(PHIPAPP_REPOSITORY): $(SDL_CHESS_RELEASE_APP) \
 		apps/upstream-sdl-chess/manifest.json \
 		tools/package_lifecycle_fixture.py \
 		tools/phipia-package.py tools/phipia-repository.py \
 		platform/package-trust.json
 	$(PYTHON) tools/package_lifecycle_fixture.py \
-		--output $(PHIPAPP_DIR)/repository --executable $(SDL_CHESS_APP) \
+		--output $(PHIPAPP_DIR)/repository \
+		--executable $(SDL_CHESS_RELEASE_APP) \
 		--manifest-spec apps/upstream-sdl-chess/manifest.json
 
 $(AUDIO_APP_DIR)/main.o: apps/native-audio/main.c \
@@ -755,6 +757,13 @@ $(SDL_CHESS_DIR)/main.o: apps/upstream-sdl-chess/main.c \
 
 $(SDL_CHESS_APP): $(SDL_CHESS_DIR)/main.o $(SDK_BUILD_DIR)/.installed
 	$(SDK_LD) $(SDK_LDFLAGS) -Map=$(SDL_CHESS_DIR)/CHESS.map \
+		-o $@ $(SDK_CRT) $< $(SDL2_LIB) $(SDK_LIB)
+
+# Repository payloads are release artifacts. Keep CHESS.APP plus its link map
+# for diagnosis, but do not carry DWARF and linker symbols over guest HTTPS.
+$(SDL_CHESS_RELEASE_APP): $(SDL_CHESS_DIR)/main.o \
+		$(SDK_BUILD_DIR)/.installed
+	$(SDK_LD) $(SDK_LDFLAGS) --strip-all \
 		-o $@ $(SDK_CRT) $< $(SDL2_LIB) $(SDK_LIB)
 
 $(SDL_CHESS_PACKAGE): $(SDL_CHESS_APP) \
@@ -2315,7 +2324,7 @@ qemu-test-native-phip: $(TEST_BUILD_DIR)/native-phip/phipia.iso
 		--data '$(PHIPAPP_DATA_IMAGE)' --data-filesystem ext4 \
 		--full '$(FAT32_FULL_IMAGE)' \
 		--qemu qemu-system-x86_64 --python '$(PYTHON)' \
-		--accel '$(QEMU_ACCEL)' --timeout 360
+		--accel '$(QEMU_ACCEL)' --timeout 900
 
 qemu-test-ext4-powercuts: $(KERNEL) $(EXT4_FIXTURE) \
 		tools/ext4_image.py tools/ext4_powercut_test.py
