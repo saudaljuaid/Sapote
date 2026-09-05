@@ -44,7 +44,7 @@ STORAGE = {
 
 FIXTURE_MODE = {
     "native-https": "https",
-    "native-phip": "packages",
+    "native-phip": "packages-lifecycle",
     "network-dhcp-timeout": "dhcp-timeout",
     "network-icmp-timeout": "silent",
     "network-dns-cname": "dns-cname",
@@ -272,8 +272,8 @@ def run(args: argparse.Namespace) -> int:
     if args.scenario not in ("network-persistence", "native-phip"):
         qemu.append("-no-reboot")
 
-    expected_begins = (
-        2 if args.scenario in ("network-persistence", "native-phip") else 1
+    expected_begins = 3 if args.scenario == "native-phip" else (
+        2 if args.scenario == "network-persistence" else 1
     )
     try:
         with serial.open("wb") as serial_stream:
@@ -333,16 +333,24 @@ def run(args: argparse.Namespace) -> int:
             healthy = audited.returncode == 0
     if args.scenario == "native-phip" and healthy:
         required = (
-            "PHIPIA PHIP PHASE start\n",
-            "PHIPIA PHIP PHASE signed-plan PASS\n",
-            "PHIPIA PHIP PHASE payloads-authenticated PASS\n",
+            "PHIPIA PHIP PHASE signed-plan-refused PASS\n",
             "PHIPIA PHIP PHASE committed generation=1 PASS\n",
-            "PHIPIA PHIP PASS https trust plan payload transaction cleanup\n",
+            "PHIPIA PHIP PHASE committed generation=2 PASS\n",
             "Phipia: signed HTTPS package install synchronized reboot phase\n",
+            "Phipia: signed HTTPS package update synchronized reboot phase\n",
             "Phipia: signed HTTPS package persisted and launched from "
             "writable ext4 passed\n",
         )
         healthy = all(transcript.count(marker) == 1 for marker in required)
+        healthy = healthy and all(
+            transcript.count(marker) == count for marker, count in (
+                ("PHIPIA PHIP PHASE start\n", 3),
+                ("PHIPIA PHIP PHASE signed-plan PASS\n", 2),
+                ("PHIPIA PHIP PHASE payloads-authenticated PASS\n", 2),
+                ("PHIPIA PHIP PASS https trust plan payload transaction "
+                 "cleanup\n", 2),
+            )
+        )
         if healthy:
             audited = subprocess.run([
                 args.python, str(args.audit.resolve()), str(capture),

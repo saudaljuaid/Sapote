@@ -477,7 +477,12 @@ The privileged native ABI exposes this core through a typed control handle.
 Callers can enumerate exact plan items, attach sealed uploads, commit, retry a
 prepared durability failure, duplicate the session handle, and release it by
 final close or process teardown without gaining filesystem paths to private
-staging. This remains a foundation rather than a completed package feature: a
-durable minimum-repository-version record, remove and repair sessions, client
-presentation, and writable-ext4 backend evidence remain separate integration
+staging. The `native-phip` QEMU path exercises this endpoint as a real Ring 3
+client. It downloads a signed version-1 repository and payload over HTTPS,
+commits and reboots from writable ext4, updates to signed version 2 and reboots
+again, then refuses the signed version-1 downgrade while retaining generation
+2. The kernel launches the installed static application from the
+authority-selected generation and verifies its exact persistent output before
+the retained image is checked with `e2fsck`. Dynamic installed-library loading,
+end-user Store presentation, removal, and repair remain separate integration
 layers.

@@ -2289,7 +2289,7 @@ qemu-test-native-phip: $(TEST_BUILD_DIR)/native-phip/phipia.iso
 		--data '$(PHIPAPP_DATA_IMAGE)' --data-filesystem ext4 \
 		--full '$(FAT32_FULL_IMAGE)' \
 		--qemu qemu-system-x86_64 --python '$(PYTHON)' \
-		--accel '$(QEMU_ACCEL)' --timeout 240
+		--accel '$(QEMU_ACCEL)' --timeout 360
 
 qemu-test-ext4-powercuts: $(KERNEL) $(EXT4_FIXTURE) \
 		tools/ext4_image.py tools/ext4_powercut_test.py

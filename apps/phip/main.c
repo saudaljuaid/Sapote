@@ -137,6 +137,7 @@ static int install(const char *identifier)
         return 0;
     }
     if (result < 0) {
+        puts("PHIPIA PHIP PHASE signed-plan-refused PASS");
         printf("phip: signed repository or plan refused: %ld\n", result);
         return 21;
     }

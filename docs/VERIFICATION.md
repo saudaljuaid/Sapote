@@ -51,18 +51,21 @@ Its independent PCAP audit requires port-443 TLS records and rejects plaintext
 request, response-line, or body bytes. The scenario uses QEMU's `max` CPU and a
 pinned in-certificate RTC, and it requires the strong-hardware-entropy marker.
 
-The `native-phip` scenario serves a deterministic, root-signed repository and
-publisher-signed v3 package over that same authenticated HTTPS path. The Ring 3
-`phip` client copies the repository into a sealed upload, asks the privileged
-controller for an authenticated plan, streams each exact package directly into
-a digest-bound upload, commits the generation, removes its staging file, and
-exits. Data is the deterministic journaled ext4 fixture, not the FAT32
-compatibility backend. The kernel synchronizes and unmounts it, resets the
-machine, then independently parses the authority-selected database and checks
-the installed identifier, version, and owned file after reboot. It requires
-clean process, network, file, upload, controller, package-service, NVMe, heap,
-and VFS censuses. The retained Data image must also pass read-only `e2fsck`, and
-the PCAP is independently audited for encrypted TLS traffic.
+The `native-phip` scenario serves a deterministic sequence of root-signed
+repositories and publisher-signed v3 packages over that same authenticated
+HTTPS path. Across three boots, the Ring 3 `phip` client installs version 1,
+reopens the persisted authority and updates it to version 2, then proves that a
+signed version-1 rollback is refused without changing generation 2. Each
+accepted transaction copies the repository into a sealed upload, asks the
+privileged controller for an authenticated plan, streams every exact package
+directly into a digest-bound upload, commits the generation, removes its staging
+file, synchronizes journaled ext4, and reboots. On the final boot the kernel
+independently parses the authority-selected database, launches the installed
+static Ring 3 application from generation 2, and verifies its exact Data output.
+The scenario requires clean process, network, file, upload, controller,
+package-service, NVMe, heap, and VFS censuses. The retained Data image must also
+pass read-only `e2fsck`, and the PCAP is independently audited for encrypted TLS
+traffic.
 
 [`NATIVE_SCENARIOS.md`](NATIVE_SCENARIOS.md) maps each required native
 application proof to its Ring 3 action, exact QEMU scenario, and retained

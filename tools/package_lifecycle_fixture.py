@@ -47,75 +47,86 @@ def build(output: Path, executable: Path, manifest_spec: Path) -> dict[str, obje
         "abi_max": 1,
         "identifier": "org.phipia.proof",
         "name": "Phipia Installed Proof",
-        "version": "1.0.0",
         "publisher": "Phipia Development Publisher",
         "capabilities": ["console"],
         "dependencies": [],
         "conflicts": [],
     }
-    package = PACKAGE.build_package_v3(
-        package_spec,
-        ({
-            "path": "bin/RUST.APP",
-            "kind": "executable",
-            "mode": 0o555,
-            "payload": payload,
-        }, {
-            "path": "bin/RUSTAPP.MAN",
-            "kind": "resource",
-            "mode": 0o444,
-            "payload": manifest,
-        }),
-        PUBLISHER_SEED,
-    )
+    files = ({
+        "path": "bin/RUST.APP",
+        "kind": "executable",
+        "mode": 0o555,
+        "payload": payload,
+    }, {
+        "path": "bin/RUSTAPP.MAN",
+        "kind": "resource",
+        "mode": 0o444,
+        "payload": manifest,
+    })
     publisher_public = PACKAGE._ed25519_public_bytes_from_private(
         PUBLISHER_SEED
     )
     publisher_key_id = hashlib.sha256(publisher_public).hexdigest()
-    download_path = "packages/org.phipia.proof/1.0.0.spk"
-    repository_spec = {
-        "format": 1,
-        "repository": "org.phipia.main",
-        "repository_version": 42,
-        "generated_at": GENERATED,
-        "expires_at": EXPIRES,
-        "architecture": "x86_64",
-        "abi_min": 1,
-        "abi_max": 1,
-        "packages": [{
-            "identifier": "org.phipia.proof",
-            "version": "1.0.0",
-            "download_path": download_path,
-            "bytes": len(package),
-            "sha256": hashlib.sha256(package).hexdigest(),
-            "publisher_key_id": publisher_key_id,
-            "dependencies": [],
-            "conflicts": [],
-            "provides": [],
-        }],
-    }
-    repository = REPOSITORY.build_repository(repository_spec, ROOT_SEED)
     root_public = PACKAGE._ed25519_public_bytes_from_private(ROOT_SEED)
-    REPOSITORY.parse_repository(
-        repository,
-        trusted_root_keys={hashlib.sha256(root_public).hexdigest(): root_public},
-        now=GENERATED + 60,
-        minimum_repository_version=42,
-    )
-    PACKAGE.parse_package(
-        package,
-        trusted_keys={publisher_key_id: publisher_public},
-    )
-    package_path = output / download_path
-    package_path.parent.mkdir(parents=True, exist_ok=True)
-    PACKAGE.atomic_write(package_path, package)
-    PACKAGE.atomic_write(output / "repository.sri", repository)
+    trusted_root = {hashlib.sha256(root_public).hexdigest(): root_public}
+    trusted_publisher = {publisher_key_id: publisher_public}
+
+    def release(version: str, repository_version: int) -> tuple[bytes, bytes, str]:
+        package = PACKAGE.build_package_v3(
+            {**package_spec, "version": version}, files, PUBLISHER_SEED
+        )
+        download_path = f"packages/org.phipia.proof/{version}.spk"
+        repository = REPOSITORY.build_repository({
+            "format": 1,
+            "repository": "org.phipia.main",
+            "repository_version": repository_version,
+            "generated_at": GENERATED,
+            "expires_at": EXPIRES,
+            "architecture": "x86_64",
+            "abi_min": 1,
+            "abi_max": 1,
+            "packages": [{
+                "identifier": "org.phipia.proof",
+                "version": version,
+                "download_path": download_path,
+                "bytes": len(package),
+                "sha256": hashlib.sha256(package).hexdigest(),
+                "publisher_key_id": publisher_key_id,
+                "dependencies": [],
+                "conflicts": [],
+                "provides": [],
+            }],
+        }, ROOT_SEED)
+        REPOSITORY.parse_repository(
+            repository, trusted_root_keys=trusted_root, now=GENERATED + 60,
+            minimum_repository_version=repository_version,
+        )
+        PACKAGE.parse_package(package, trusted_keys=trusted_publisher)
+        package_path = output / download_path
+        package_path.parent.mkdir(parents=True, exist_ok=True)
+        PACKAGE.atomic_write(package_path, package)
+        return repository, package, download_path
+
+    install_repository, install_package, _ = release("1.0.0", 42)
+    update_repository, update_package, _ = release("2.0.0", 43)
+    PACKAGE.atomic_write(output / "repository.sri", install_repository)
+    PACKAGE.atomic_write(output / "repository-install.sri", install_repository)
+    PACKAGE.atomic_write(output / "repository-update.sri", update_repository)
+    PACKAGE.atomic_write(output / "repository-rollback.sri", install_repository)
     return {
         "output": str(output),
-        "repository_bytes": len(repository),
-        "repository_sha256": hashlib.sha256(repository).hexdigest().upper(),
-        "package_bytes": len(package),
-        "package_sha256": hashlib.sha256(package).hexdigest().upper(),
+        "repository_bytes": len(install_repository),
+        "repository_sha256": hashlib.sha256(
+            install_repository
+        ).hexdigest().upper(),
+        "package_bytes": len(install_package),
+        "package_sha256": hashlib.sha256(install_package).hexdigest().upper(),
+        "update_repository_sha256": hashlib.sha256(
+            update_repository
+        ).hexdigest().upper(),
+        "update_package_sha256": hashlib.sha256(
+            update_package
+        ).hexdigest().upper(),
         "payload_sha256": hashlib.sha256(payload).hexdigest().upper(),
         "manifest_sha256": hashlib.sha256(manifest).hexdigest().upper(),
     }

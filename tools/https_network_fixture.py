@@ -62,11 +62,14 @@ class HttpsPeer:
 class HttpsFixture(network.Fixture):
     def __init__(self, group: str, port: int, peer_port: int, capture: Path,
                  unicast: bool = False,
-                 content_root: Path | None = None) -> None:
+                 content_root: Path | None = None,
+                 repository_sequence: bool = False) -> None:
         super().__init__(group, port, peer_port, "normal", capture, unicast)
         self.https_peers: dict[int, HttpsPeer] = {}
         self.context = make_server_context()
         self.content_root = content_root.resolve() if content_root else None
+        self.repository_sequence = repository_sequence
+        self.repository_requests = 0
 
     def response_body(self, request: bytes) -> bytes:
         lines = request.split(b"\r\n")
@@ -96,6 +99,15 @@ class HttpsFixture(network.Fixture):
             not part or part in (".", "..") or "\\" in part for part in parts
         ):
             raise ValueError("HTTPS fixture path escaped its content root")
+        if self.repository_sequence and path == "repository.sri":
+            sequence = (
+                "repository-install.sri",
+                "repository-update.sri",
+                "repository-rollback.sri",
+            )
+            path = sequence[min(self.repository_requests, len(sequence) - 1)]
+            parts = path.split("/")
+            self.repository_requests += 1
         candidate = self.content_root.joinpath(*parts).resolve()
         if self.content_root not in candidate.parents or not candidate.is_file():
             raise ValueError("HTTPS fixture path was absent")
@@ -304,6 +316,8 @@ def self_test() -> int:
         (root / "repository.sri").write_bytes(expected)
         fixture = object.__new__(HttpsFixture)
         fixture.content_root = root.resolve()
+        fixture.repository_sequence = False
+        fixture.repository_requests = 0
         request = (
             b"GET /repository.sri HTTP/1.1\r\n"
             b"Host: repo.phipia.test\r\n"
@@ -312,6 +326,22 @@ def self_test() -> int:
             b"Connection: close\r\n\r\n"
         )
         assert fixture.response_body(request) == expected
+        lifecycle = (
+            b"install repository",
+            b"update repository",
+            b"rollback repository",
+        )
+        for name, body in zip((
+            "repository-install.sri",
+            "repository-update.sri",
+            "repository-rollback.sri",
+        ), lifecycle):
+            (root / name).write_bytes(body)
+        fixture.repository_sequence = True
+        fixture.repository_requests = 0
+        assert tuple(fixture.response_body(request) for _ in lifecycle) == lifecycle
+        assert fixture.repository_requests == len(lifecycle)
+        fixture.repository_sequence = False
         refused = request.replace(b"/repository.sri", b"/../repository.sri")
         try:
             fixture.response_body(refused)
@@ -321,7 +351,7 @@ def self_test() -> int:
             raise AssertionError("package content root traversal was accepted")
     print(
         "HTTPS network fixture self-test: DNS, bounded content root, "
-        "TLS 1.2 certificate passed"
+        "repository lifecycle, TLS 1.2 certificate passed"
     )
     return 0
 
@@ -332,7 +362,10 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=network.PORT)
     parser.add_argument("--peer-port", type=int, default=network.PORT + 1)
     parser.add_argument("--unicast", action="store_true")
-    parser.add_argument("--mode", default="https", choices=("https", "packages"))
+    parser.add_argument(
+        "--mode", default="https",
+        choices=("https", "packages", "packages-lifecycle")
+    )
     parser.add_argument("--content-root", type=Path)
     parser.add_argument(
         "--capture", type=Path, default=Path("build/https-network.pcap")
@@ -342,13 +375,14 @@ def main() -> int:
     args = parser.parse_args()
     if args.self_test:
         return self_test()
-    if args.mode == "packages" and args.content_root is None:
+    if args.mode in ("packages", "packages-lifecycle") and \
+            args.content_root is None:
         parser.error("packages mode requires --content-root")
     if args.mode == "https" and args.content_root is not None:
         parser.error("--content-root is only valid in packages mode")
     fixture = HttpsFixture(
         args.group, args.port, args.peer_port, args.capture, args.unicast,
-        args.content_root
+        args.content_root, args.mode == "packages-lifecycle"
     )
     try:
         fixture.run(args.ready)

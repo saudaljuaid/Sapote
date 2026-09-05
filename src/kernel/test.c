@@ -5735,11 +5735,12 @@ static bool native_phip_authority_is_canonical(
 
     return package_service_snapshot(database, database_capacity,
             &database_bytes, service) == PACKAGE_SERVICE_STATUS_OK &&
-        service->generation == 1U && service->live_file_handles == 0U &&
+        (service->generation == 1U || service->generation == 2U) &&
+        service->live_file_handles == 0U &&
         service->live_allocations == 0U && database_bytes != 0U &&
         package_state_database_parse(database, database_bytes, &view) ==
             PACKAGE_STATE_STATUS_OK &&
-        view.generation == 1U && view.package_count == 1U &&
+        view.generation == service->generation && view.package_count == 1U &&
         view.edge_count == 0U && view.file_count == 2U &&
         package_state_database_package(&view, 0U, &package) ==
             PACKAGE_STATE_STATUS_OK &&
@@ -5748,7 +5749,10 @@ static bool native_phip_authority_is_canonical(
         package_state_database_file(&view, 1U, &manifest) ==
             PACKAGE_STATE_STATUS_OK &&
         package_text_equals(&package.identifier, "org.phipia.proof") &&
-        package_text_equals(&package.version, "1.0.0") &&
+        ((service->generation == 1U &&
+            package_text_equals(&package.version, "1.0.0")) ||
+         (service->generation == 2U &&
+            package_text_equals(&package.version, "2.0.0"))) &&
         package_text_equals(&executable.path, "bin/RUST.APP") &&
         package_text_equals(&manifest.path, "bin/RUSTAPP.MAN") &&
         executable.owner_index == 0U && executable.length != 0U &&
@@ -5759,7 +5763,7 @@ _Noreturn void kernel_test_complete_native_phip(void)
 {
     static const uint8_t expected[] = "native Rust no_std ABI v1\n";
     static const char installed_manifest[] =
-        "pkgstate/gen/00000000/00000001/root/bin/RUSTAPP.MAN";
+        "pkgstate/gen/00000000/00000002/root/bin/RUSTAPP.MAN";
     static uint8_t database[4096U];
     struct native_process_result proof = { 0 };
     struct package_service_report service;
@@ -5795,7 +5799,7 @@ _Noreturn void kernel_test_complete_native_phip(void)
             kernel_test_fail("native phip client did not leave a clean census");
         }
         if (!native_phip_authority_is_canonical(database, sizeof(database),
-                &service)) {
+                &service) || service.generation != 1U) {
             kernel_test_fail("native phip installed authority is not canonical");
         }
         if (phipfs_sync(PHIPFS_VOLUME_DATA) != PHIPFS_STATUS_OK ||
@@ -5819,7 +5823,33 @@ _Noreturn void kernel_test_complete_native_phip(void)
         kernel_test_fail("native phip network resources survived teardown");
     }
     if (!native_phip_authority_is_canonical(database, sizeof(database),
-            &service) ||
+            &service)) {
+        kernel_test_fail("native phip reboot authority is not canonical");
+    }
+    if (service.generation == 1U) {
+        if (native_process_launch("PHIP.MAN", &proof) != NATIVE_PROCESS_OK ||
+            !proof.exited || proof.faulted || proof.exit_status != 0 ||
+            !proof.resources_released || proof.peak_handles < 3U ||
+            proof.syscall_count < 20U || proof.thread_switches == 0U ||
+            !native_process_resources_released() ||
+            !native_phip_authority_is_canonical(database, sizeof(database),
+                &service) || service.generation != 2U ||
+            phipfs_sync(PHIPFS_VOLUME_DATA) != PHIPFS_STATUS_OK ||
+            phipfs_unmount(PHIPFS_VOLUME_DATA) != PHIPFS_STATUS_OK ||
+            !nvme_filesystem_session_resources_released()) {
+            kernel_test_fail("native phip ext4 update did not commit cleanly");
+        }
+        console_write(
+            "Phipia: signed HTTPS package update synchronized reboot phase\n");
+        cpu_out8(UINT16_C(0x0064), UINT8_C(0xFE));
+        kernel_test_fail("platform reset did not restart QEMU");
+    }
+    if (service.generation != 2U ||
+        native_process_launch("PHIP.MAN", &proof) != NATIVE_PROCESS_OK ||
+        !proof.exited || proof.faulted || proof.exit_status != 21 ||
+        !proof.resources_released || !native_process_resources_released() ||
+        !native_phip_authority_is_canonical(database, sizeof(database),
+            &service) || service.generation != 2U ||
         native_process_launch_installed(installed_manifest, &proof) !=
             NATIVE_PROCESS_OK ||
         !proof.exited || proof.faulted || proof.exit_status != 0 ||
