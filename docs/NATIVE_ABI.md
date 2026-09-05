@@ -11,6 +11,10 @@ the same headers under `sdk/include/phipia/abi/`.
 
 On x86_64, `RAX` contains the syscall number. Arguments zero through five use
 `RDI`, `RSI`, `RDX`, `R10`, `R8`, and `R9`. `SYSCALL` destroys `RCX` and `R11`.
+Native syscall entry switches to a dedicated, bounded 64 KiB kernel stack.
+Its low-end canary is checked during disarm; the TSS `RSP0` stack remains
+reserved for privilege-changing interrupts and is not reused by deep filesystem
+or package-service syscall paths.
 Results are returned in `RAX`: zero or a positive value is success and a
 negative `phipia_errno` value is failure. Unknown numbers return `-ENOSYS`.
 
