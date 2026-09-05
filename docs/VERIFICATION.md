@@ -60,8 +60,9 @@ accepted transaction copies the repository into a sealed upload, asks the
 privileged controller for an authenticated plan, streams every exact package
 directly into a digest-bound upload, commits the generation, removes its staging
 file, synchronizes journaled ext4, and reboots. On the final boot the kernel
-independently parses the authority-selected database, launches the installed
-static Ring 3 application from generation 2, and verifies its exact Data output.
+independently parses the authority-selected database, launches SDL 2.32.10's
+byte-exact upstream Chess Board application from generation 2, runs its bounded
+event/software-render loop, and verifies its exact SDL preference-file output.
 The scenario requires clean process, network, file, upload, controller,
 package-service, NVMe, heap, and VFS censuses. The retained Data image must also
 pass read-only `e2fsck`, and the PCAP is independently audited for encrypted TLS

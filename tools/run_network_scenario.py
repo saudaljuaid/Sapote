@@ -338,7 +338,9 @@ def run(args: argparse.Namespace) -> int:
             "PHIPIA PHIP PHASE committed generation=2 PASS\n",
             "Phipia: signed HTTPS package install synchronized reboot phase\n",
             "Phipia: signed HTTPS package update synchronized reboot phase\n",
-            "Phipia: signed HTTPS package persisted and launched from "
+            "PHIPIA SDL CHESS PASS upstream=release-2.32.10 "
+            "frames=8 persistent=yes\n",
+            "Phipia: signed upstream SDL package persisted and launched from "
             "writable ext4 passed\n",
         )
         healthy = all(transcript.count(marker) == 1 for marker in required)

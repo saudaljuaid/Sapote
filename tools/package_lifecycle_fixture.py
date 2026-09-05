@@ -40,25 +40,35 @@ def build(output: Path, executable: Path, manifest_spec: Path) -> dict[str, obje
     payload = executable.read_bytes()
     manifest_value = json.loads(manifest_spec.read_text(encoding="utf-8"))
     manifest = PACKAGE.encode_manifest(manifest_value, payload)
+    executable_name = manifest_value.get("executable")
+    if not isinstance(executable_name, str) or not executable_name.endswith(
+        ".APP"
+    ):
+        raise ValueError("lifecycle manifest executable must end in .APP")
+    manifest_name = executable_name[:-4] + ".MAN"
+    identifier = "org.libsdl.chess"
+    capabilities = manifest_value.get("capabilities")
+    if not isinstance(capabilities, list):
+        raise ValueError("lifecycle manifest capabilities must be a list")
     package_spec = {
         "format": 3,
         "architecture": "x86_64",
         "abi_min": 1,
         "abi_max": 1,
-        "identifier": "org.phipia.proof",
-        "name": "Phipia Installed Proof",
+        "identifier": identifier,
+        "name": "SDL Chess Board",
         "publisher": "Phipia Development Publisher",
-        "capabilities": ["console"],
+        "capabilities": capabilities,
         "dependencies": [],
         "conflicts": [],
     }
     files = ({
-        "path": "bin/RUST.APP",
+        "path": f"bin/{executable_name}",
         "kind": "executable",
         "mode": 0o555,
         "payload": payload,
     }, {
-        "path": "bin/RUSTAPP.MAN",
+        "path": f"bin/{manifest_name}",
         "kind": "resource",
         "mode": 0o444,
         "payload": manifest,
@@ -75,7 +85,7 @@ def build(output: Path, executable: Path, manifest_spec: Path) -> dict[str, obje
         package = PACKAGE.build_package_v3(
             {**package_spec, "version": version}, files, PUBLISHER_SEED
         )
-        download_path = f"packages/org.phipia.proof/{version}.spk"
+        download_path = f"packages/{identifier}/{version}.spk"
         repository = REPOSITORY.build_repository({
             "format": 1,
             "repository": "org.phipia.main",
@@ -86,7 +96,7 @@ def build(output: Path, executable: Path, manifest_spec: Path) -> dict[str, obje
             "abi_min": 1,
             "abi_max": 1,
             "packages": [{
-                "identifier": "org.phipia.proof",
+                "identifier": identifier,
                 "version": version,
                 "download_path": download_path,
                 "bytes": len(package),

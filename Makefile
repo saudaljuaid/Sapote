@@ -309,6 +309,9 @@ SDL_PROOF_APP := $(SDL_PROOF_DIR)/SDL.APP
 SDL_PROOF_PACKAGE := $(SDL_PROOF_DIR)/SDLPROOF.SPK
 SDL_PROOF_SYSTEM_IMAGE := $(SDL_PROOF_DIR)/system.raw
 SDL_PROOF_DATA_IMAGE := $(SDL_PROOF_DIR)/data.raw
+SDL_CHESS_DIR := $(BUILD_DIR)/upstream-sdl-chess
+SDL_CHESS_APP := $(SDL_CHESS_DIR)/CHESS.APP
+SDL_CHESS_PACKAGE := $(SDL_CHESS_DIR)/SDLCHESS.SPK
 DYNAMIC_APP_DIR := $(BUILD_DIR)/native-dynamic
 DYNAMIC_ROOT_APP := $(DYNAMIC_APP_DIR)/DYNROOT.APP
 DYNAMIC_LIBRARY := $(DYNAMIC_APP_DIR)/DYNLIB.SO
@@ -511,6 +514,9 @@ $(AUDIO_APP_DIR):
 $(SDL_PROOF_DIR):
 	mkdir -p $@
 
+$(SDL_CHESS_DIR):
+	mkdir -p $@
+
 $(DYNAMIC_APP_DIR):
 	mkdir -p $@
 
@@ -686,13 +692,14 @@ $(PHIPAPP_SYSTEM_IMAGE): $(PHIPAPP_PACKAGE) tools/phipia-package.py \
 $(PHIPAPP_DATA_IMAGE): $(EXT4_FIXTURE) | $(PHIPAPP_DIR)
 	cp $< $@
 
-$(PHIPAPP_REPOSITORY): $(RUST_APP) apps/native-rust/manifest.json \
+$(PHIPAPP_REPOSITORY): $(SDL_CHESS_APP) \
+		apps/upstream-sdl-chess/manifest.json \
 		tools/package_lifecycle_fixture.py \
 		tools/phipia-package.py tools/phipia-repository.py \
 		platform/package-trust.json
 	$(PYTHON) tools/package_lifecycle_fixture.py \
-		--output $(PHIPAPP_DIR)/repository --executable $(RUST_APP) \
-		--manifest-spec apps/native-rust/manifest.json
+		--output $(PHIPAPP_DIR)/repository --executable $(SDL_CHESS_APP) \
+		--manifest-spec apps/upstream-sdl-chess/manifest.json
 
 $(AUDIO_APP_DIR)/main.o: apps/native-audio/main.c \
 		$(SDK_BUILD_DIR)/.installed | $(AUDIO_APP_DIR)
@@ -740,6 +747,21 @@ $(SDL_PROOF_SYSTEM_IMAGE): $(SDL_PROOF_PACKAGE) tools/phipia-package.py \
 
 $(SDL_PROOF_DATA_IMAGE): tools/fat32_image.py | $(SDL_PROOF_DIR)
 	$(PYTHON) tools/fat32_image.py format data $@
+
+$(SDL_CHESS_DIR)/main.o: apps/upstream-sdl-chess/main.c \
+		apps/upstream-sdl-chess/upstream.c $(SDK_BUILD_DIR)/.installed | \
+		$(SDL_CHESS_DIR)
+	$(SDK_CC) $(SDL2_VENDOR_CFLAGS) -c $< -o $@
+
+$(SDL_CHESS_APP): $(SDL_CHESS_DIR)/main.o $(SDK_BUILD_DIR)/.installed
+	$(SDK_LD) $(SDK_LDFLAGS) -Map=$(SDL_CHESS_DIR)/CHESS.map \
+		-o $@ $(SDK_CRT) $< $(SDL2_LIB) $(SDK_LIB)
+
+$(SDL_CHESS_PACKAGE): $(SDL_CHESS_APP) \
+		apps/upstream-sdl-chess/manifest.json
+	$(PYTHON) tools/phipia-package.py build \
+		--spec apps/upstream-sdl-chess/manifest.json \
+		--executable $< --output $@
 
 $(DYNAMIC_ROOT_APP) $(DYNAMIC_LIBRARY) $(DYNAMIC_CATALOG) \
 		$(DYNAMIC_PACKAGE_SPEC) &: apps/native-dynamic/root.c \
@@ -815,7 +837,8 @@ native-apps: $(NATIVE_TEST_PACKAGE) $(LUA_PACKAGE) $(SQLITE_PACKAGE) \
 	$(CANVAS_PACKAGE) $(CANVAS_PROOF_PACKAGE) $(NETAPP_PACKAGE) \
 	$(HTTPSAPP_PACKAGE) $(PHIPAPP_PACKAGE) \
 	$(AUDIO_PACKAGE) $(AUDIO_REFUSAL_PACKAGE) $(RUST_APP_PACKAGE) \
-	$(CRASH_PACKAGE) $(SDL_PROOF_PACKAGE) $(DYNAMIC_PACKAGE)
+	$(CRASH_PACKAGE) $(SDL_PROOF_PACKAGE) $(SDL_CHESS_PACKAGE) \
+	$(DYNAMIC_PACKAGE)
 
 audio-wav-tests:
 	$(PYTHON) -S tools/audio-wav-host-test.py --self-test
@@ -859,6 +882,8 @@ port-tests: native-apps audio-wav-tests
 		$(RUST_NATIVE_IMAGE_TEST)
 	PHIPIA_NATIVE_TEST_ELF='$(CURDIR)/$(SDL_PROOF_APP)' \
 		$(RUST_NATIVE_IMAGE_TEST)
+	PHIPIA_NATIVE_TEST_ELF='$(CURDIR)/$(SDL_CHESS_APP)' \
+		$(RUST_NATIVE_IMAGE_TEST)
 	PHIPIA_NATIVE_TEST_ELF='$(CURDIR)/$(RUST_APP)' \
 		$(RUST_NATIVE_IMAGE_TEST)
 	PHIPIA_NATIVE_TEST_ELF='$(CURDIR)/$(CRASH_APP)' \
@@ -875,6 +900,7 @@ port-tests: native-apps audio-wav-tests
 	$(PYTHON) tools/phipia-package.py inspect $(AUDIO_PACKAGE)
 	$(PYTHON) tools/phipia-package.py inspect $(AUDIO_REFUSAL_PACKAGE)
 	$(PYTHON) tools/phipia-package.py inspect $(SDL_PROOF_PACKAGE)
+	$(PYTHON) tools/phipia-package.py inspect $(SDL_CHESS_PACKAGE)
 	$(PYTHON) tools/phipia-package.py inspect $(DYNAMIC_PACKAGE)
 	$(PYTHON) tools/phipia-package.py inspect $(RUST_APP_PACKAGE)
 	$(PYTHON) tools/phipia-package.py inspect $(CRASH_PACKAGE)

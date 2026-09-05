@@ -5748,22 +5748,24 @@ static bool native_phip_authority_is_canonical(
             PACKAGE_STATE_STATUS_OK &&
         package_state_database_file(&view, 1U, &manifest) ==
             PACKAGE_STATE_STATUS_OK &&
-        package_text_equals(&package.identifier, "org.phipia.proof") &&
+        package_text_equals(&package.identifier, "org.libsdl.chess") &&
         ((service->generation == 1U &&
             package_text_equals(&package.version, "1.0.0")) ||
          (service->generation == 2U &&
             package_text_equals(&package.version, "2.0.0"))) &&
-        package_text_equals(&executable.path, "bin/RUST.APP") &&
-        package_text_equals(&manifest.path, "bin/RUSTAPP.MAN") &&
+        package_text_equals(&executable.path, "bin/CHESS.APP") &&
+        package_text_equals(&manifest.path, "bin/CHESS.MAN") &&
         executable.owner_index == 0U && executable.length != 0U &&
         manifest.owner_index == 0U && manifest.length == UINT64_C(1024);
 }
 
 _Noreturn void kernel_test_complete_native_phip(void)
 {
-    static const uint8_t expected[] = "native Rust no_std ABI v1\n";
+    static const uint8_t expected[] = "SDL chess release-2.32.10\n";
     static const char installed_manifest[] =
-        "pkgstate/gen/00000000/00000002/root/bin/RUSTAPP.MAN";
+        "pkgstate/gen/00000000/00000002/root/bin/CHESS.MAN";
+    static const char state_path[] =
+        "SDLCHESS/SDL/8F0B0BEC/STATE.TXT";
     static uint8_t database[4096U];
     struct native_process_result proof = { 0 };
     struct package_service_report service;
@@ -5776,6 +5778,7 @@ _Noreturn void kernel_test_complete_native_phip(void)
     bool matches = true;
     struct network_state network;
     enum phipfs_status authority_status;
+    enum native_process_status launch_status;
 
     if (active_scenario != KERNEL_TEST_NATIVE_PHIP) {
         kernel_test_fail("native phip completion used outside its scenario");
@@ -5791,11 +5794,34 @@ _Noreturn void kernel_test_complete_native_phip(void)
     authority_status = phipfs_stat_path(PHIPFS_VOLUME_DATA,
         PACKAGE_SERVICE_AUTHORITY_PATH, &authority);
     if (authority_status == PHIPFS_STATUS_NOT_FOUND) {
-        if (native_process_launch("PHIP.MAN", &proof) != NATIVE_PROCESS_OK ||
+        launch_status = native_process_launch("PHIP.MAN", &proof);
+        if (launch_status != NATIVE_PROCESS_OK ||
             !proof.exited || proof.faulted || proof.exit_status != 0 ||
             !proof.resources_released || proof.peak_handles < 3U ||
             proof.syscall_count < 20U || proof.thread_switches == 0U ||
             !native_process_resources_released()) {
+            console_write("ST PHIP DIAGNOSTIC launch ");
+            console_write_u64((uint64_t)launch_status);
+            console_write(" exited ");
+            console_write(proof.exited ? "yes" : "no");
+            console_write(" faulted ");
+            console_write(proof.faulted ? "yes" : "no");
+            console_write(" status ");
+            if (proof.exit_status < 0) {
+                console_putc('-');
+                console_write_u64((uint64_t)(-(int64_t)proof.exit_status));
+            } else {
+                console_write_u64((uint64_t)proof.exit_status);
+            }
+            console_write(" released ");
+            console_write(proof.resources_released ? "yes" : "no");
+            console_write(" handles ");
+            console_write_u64(proof.peak_handles);
+            console_write(" syscalls ");
+            console_write_u64(proof.syscall_count);
+            console_write(" switches ");
+            console_write_u64(proof.thread_switches);
+            console_putc('\n');
             kernel_test_fail("native phip client did not leave a clean census");
         }
         if (!native_phip_authority_is_canonical(database, sizeof(database),
@@ -5855,14 +5881,14 @@ _Noreturn void kernel_test_complete_native_phip(void)
         !proof.exited || proof.faulted || proof.exit_status != 0 ||
         !proof.resources_released || proof.syscall_count < 12U ||
         proof.thread_switches == 0U || !native_process_resources_released() ||
-        phipfs_stat_path(PHIPFS_VOLUME_DATA, "RUSTAPP/RUST.TXT", &output) !=
+        phipfs_stat_path(PHIPFS_VOLUME_DATA, state_path, &output) !=
             PHIPFS_STATUS_OK || output.directory ||
         output.size != sizeof(bytes) ||
-        phipfs_open(PHIPFS_VOLUME_DATA, "RUSTAPP/RUST.TXT",
+        phipfs_open(PHIPFS_VOLUME_DATA, state_path,
             PHIPFS_ACCESS_READ, &file) != PHIPFS_STATUS_OK ||
         phipfs_read(file, bytes, sizeof(bytes), &read_bytes) !=
             PHIPFS_STATUS_OK || read_bytes != sizeof(bytes)) {
-        kernel_test_fail("native phip persisted application did not launch");
+        kernel_test_fail("native phip upstream SDL application did not launch");
     }
     for (size_t index = 0U; index < sizeof(bytes); ++index) {
         matches = matches && bytes[index] == expected[index];
@@ -5871,10 +5897,10 @@ _Noreturn void kernel_test_complete_native_phip(void)
         phipfs_sync(PHIPFS_VOLUME_DATA) != PHIPFS_STATUS_OK ||
         phipfs_unmount(PHIPFS_VOLUME_DATA) != PHIPFS_STATUS_OK ||
         !nvme_filesystem_session_resources_released()) {
-        kernel_test_fail("native phip persisted launch did not cleanly sync");
+        kernel_test_fail("native phip upstream SDL launch did not cleanly sync");
     }
     console_write(
-        "Phipia: signed HTTPS package persisted and launched from writable ext4 passed\n");
+        "Phipia: signed upstream SDL package persisted and launched from writable ext4 passed\n");
     console_write("ST NETWORK production path bounded and recoverable\n");
     kernel_test_pass();
 }

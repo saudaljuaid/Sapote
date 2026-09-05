@@ -15,5 +15,5 @@
     "network",
     "packages"
   ],
-  "arguments": ["install", "org.phipia.proof"]
+  "arguments": ["install", "org.libsdl.chess"]
 }

@@ -73,6 +73,11 @@ retained `include/` and `src/` trees and upstream zlib license are committed
 under `vendor/sdl2/`; exact retained-tree and license hashes are recorded in
 `vendor/sdl2/UPSTREAM-COMMIT.txt`.
 
+The byte-exact upstream `test/testdrawchessboard.c` application used by the
+signed-install proof is retained under `apps/upstream-sdl-chess/`. Its source
+URL, Git blob, SHA-256, license, and bounded Phipia harness are recorded in the
+adjacent `UPSTREAM.md`.
+
 Phipia adds an explicitly selected `__PHIPIA__` configuration and native
 Phipia video/input, PCM audio, pthread/futex, timer, and preference-filesystem
 backends. Disabled subsystems and the evidence boundary are recorded in

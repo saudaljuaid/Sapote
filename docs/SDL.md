@@ -40,6 +40,15 @@ state across a second process launch, clean exit, and resource census from
 Ring 3. It retains the guest serial log, screenshot, video, data volume, and
 WAV capture when QEMU exposes its WAV backend.
 
+The signed-package lifecycle separately carries SDL's byte-exact upstream
+`testdrawchessboard.c` application from the pinned 2.32.10 release. A small
+Phipia harness runs its original event and software-render loop for eight
+bounded frames, writes an exact receipt through `SDL_GetPrefPath()` and
+`SDL_RWops`, synchronizes Data, and exits. The application is downloaded over
+HTTPS, installed and updated as an authenticated package on journaled ext4,
+launched from the authority-selected generation after reboot, and checked for
+a clean process/window/file census and clean `e2fsck` result.
+
 The Phipia event pump treats the ABI's empty-queue `-EAGAIN` as normal after it
 has drained all pending events. The proof moves the deterministic initial PS/2
 cursor into the SDL client before clicking, so both keyboard and pointer paths
