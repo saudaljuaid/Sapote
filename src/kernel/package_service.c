@@ -70,6 +70,36 @@ static uint64_t read_u64(const uint8_t *bytes)
         (uint64_t)read_u32(bytes + 4U) << 32U;
 }
 
+static void write_u16(uint8_t *bytes, uint16_t value)
+{
+    bytes[0] = (uint8_t)value;
+    bytes[1] = (uint8_t)(value >> 8U);
+}
+
+static void write_u32(uint8_t *bytes, uint32_t value)
+{
+    for (size_t index = 0U; index < 4U; ++index) {
+        bytes[index] = (uint8_t)(value >> (index * 8U));
+    }
+}
+
+static void write_u64(uint8_t *bytes, uint64_t value)
+{
+    for (size_t index = 0U; index < 8U; ++index) {
+        bytes[index] = (uint8_t)(value >> (index * 8U));
+    }
+}
+
+static bool bytes_are_zero(const uint8_t *bytes, size_t count)
+{
+    uint8_t combined = 0U;
+
+    for (size_t index = 0U; index < count; ++index) {
+        combined |= bytes[index];
+    }
+    return combined == 0U;
+}
+
 static size_t string_length(const char *text, size_t capacity)
 {
     size_t length = 0U;
@@ -307,6 +337,77 @@ static enum package_service_status read_exact_path(
     enum package_service_status close_status = close_file(context, handle);
 
     return status != PACKAGE_SERVICE_STATUS_OK ? status : close_status;
+}
+
+static bool repository_floor_record_parse(
+    const uint8_t record[PACKAGE_SERVICE_REPOSITORY_FLOOR_BYTES],
+    uint64_t *repository_version
+)
+{
+    static const uint8_t magic[8] = {
+        'P', 'H', 'I', 'P', 'R', 'E', 'P', '1'
+    };
+    uint8_t digest[PACKAGE_STATE_SHA256_BYTES];
+
+    if (repository_version == NULL ||
+        !equal_bytes(record, magic, sizeof(magic)) ||
+        (uint16_t)read_u32(record + 8U) != UINT16_C(1) ||
+        (uint16_t)(read_u32(record + 8U) >> 16U) !=
+            PACKAGE_SERVICE_REPOSITORY_FLOOR_BYTES ||
+        read_u32(record + 12U) != 0U || read_u64(record + 16U) == 0U ||
+        read_u64(record + 24U) != 0U ||
+        !bytes_are_zero(record + 64U,
+            PACKAGE_SERVICE_REPOSITORY_FLOOR_BYTES - 64U) ||
+        package_state_sha256(record, 32U, digest) != PACKAGE_STATE_STATUS_OK ||
+        !equal_bytes(record + 32U, digest, sizeof(digest))) {
+        return false;
+    }
+    *repository_version = read_u64(record + 16U);
+    return true;
+}
+
+static bool repository_floor_record_encode(
+    uint64_t repository_version,
+    uint8_t record[PACKAGE_SERVICE_REPOSITORY_FLOOR_BYTES]
+)
+{
+    static const uint8_t magic[8] = {
+        'P', 'H', 'I', 'P', 'R', 'E', 'P', '1'
+    };
+
+    if (repository_version == 0U) {
+        return false;
+    }
+    zero_bytes(record, PACKAGE_SERVICE_REPOSITORY_FLOOR_BYTES);
+    copy_bytes(record, magic, sizeof(magic));
+    write_u16(record + 8U, UINT16_C(1));
+    write_u16(record + 10U, PACKAGE_SERVICE_REPOSITORY_FLOOR_BYTES);
+    write_u32(record + 12U, 0U);
+    write_u64(record + 16U, repository_version);
+    return package_state_sha256(record, 32U, record + 32U) ==
+        PACKAGE_STATE_STATUS_OK;
+}
+
+static enum package_service_status read_repository_floor_candidate(
+    struct service_context *context,
+    const char *path,
+    bool *present,
+    uint64_t *repository_version
+)
+{
+    uint8_t record[PACKAGE_SERVICE_REPOSITORY_FLOOR_BYTES];
+    enum package_service_status status = read_exact_path(context, path,
+        record, sizeof(record), true, present);
+
+    *repository_version = 0U;
+    if (status != PACKAGE_SERVICE_STATUS_OK || !*present) {
+        return status;
+    }
+    if (!repository_floor_record_parse(record, repository_version)) {
+        context->report->state_status = PACKAGE_STATE_STATUS_MISMATCH;
+        return PACKAGE_SERVICE_STATUS_STATE;
+    }
+    return PACKAGE_SERVICE_STATUS_OK;
 }
 
 static bool entry_name_valid(const char *name)
@@ -810,6 +911,141 @@ static enum package_service_status write_new_file(
     }
     if (status != PACKAGE_SERVICE_STATUS_OK) {
         (void)phipfs_unlink(PHIPFS_VOLUME_DATA, path);
+    }
+    return status;
+}
+
+static enum package_service_status unlink_optional(
+    struct service_context *context,
+    const char *path
+)
+{
+    enum phipfs_status status = phipfs_unlink(PHIPFS_VOLUME_DATA, path);
+
+    return status == PHIPFS_STATUS_OK || status == PHIPFS_STATUS_NOT_FOUND ?
+        PACKAGE_SERVICE_STATUS_OK : filesystem_failure(context, status);
+}
+
+static enum package_service_status repository_floor_read_internal(
+    struct service_context *context,
+    uint64_t *repository_floor,
+    bool *current_present,
+    uint64_t *current_version,
+    bool *new_present,
+    uint64_t *new_version
+)
+{
+    enum package_service_status status = read_repository_floor_candidate(
+        context, PACKAGE_SERVICE_REPOSITORY_FLOOR_PATH, current_present,
+        current_version);
+
+    *repository_floor = 0U;
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        status = read_repository_floor_candidate(context,
+            PACKAGE_SERVICE_REPOSITORY_FLOOR_NEW_PATH, new_present,
+            new_version);
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        *repository_floor = *current_version > *new_version ?
+            *current_version : *new_version;
+        context->report->repository_floor = *repository_floor;
+    }
+    return status;
+}
+
+static enum package_service_status promote_repository_floor_new(
+    struct service_context *context,
+    bool current_present
+)
+{
+    enum package_service_status status = PACKAGE_SERVICE_STATUS_OK;
+
+    if (current_present) {
+        status = unlink_optional(context,
+            PACKAGE_SERVICE_REPOSITORY_FLOOR_PATH);
+    }
+    if (status != PACKAGE_SERVICE_STATUS_OK) {
+        return status;
+    }
+    enum phipfs_status fs_status = phipfs_rename(PHIPFS_VOLUME_DATA,
+        PACKAGE_SERVICE_REPOSITORY_FLOOR_NEW_PATH,
+        PACKAGE_SERVICE_REPOSITORY_FLOOR_PATH);
+
+    if (fs_status != PHIPFS_STATUS_OK) {
+        return filesystem_failure(context, fs_status);
+    }
+    ++context->report->rename_count;
+    return sync_data(context);
+}
+
+static enum package_service_status repository_floor_advance_internal(
+    struct service_context *context,
+    uint64_t requested
+)
+{
+    uint8_t record[PACKAGE_SERVICE_REPOSITORY_FLOOR_BYTES];
+    uint64_t repository_floor;
+    uint64_t current_version;
+    uint64_t new_version;
+    bool current_present;
+    bool new_present;
+    enum package_service_status status;
+
+    if (requested == 0U) {
+        return PACKAGE_SERVICE_STATUS_STATE;
+    }
+    status = ensure_directory(context, PACKAGE_SERVICE_STATE_DIRECTORY);
+    if (status != PACKAGE_SERVICE_STATUS_OK) {
+        return status;
+    }
+    status = repository_floor_read_internal(context, &repository_floor,
+        &current_present, &current_version, &new_present, &new_version);
+    if (status != PACKAGE_SERVICE_STATUS_OK) {
+        return status;
+    }
+    if (requested < repository_floor) {
+        return PACKAGE_SERVICE_STATUS_STATE;
+    }
+
+    /*
+     * Normalize a crash-leftover candidate without removing the only copy of
+     * the greatest accepted floor. A greater new record is promoted while it
+     * still exists; a stale duplicate is removed only while current remains.
+     */
+    if (new_present && (!current_present || new_version > current_version)) {
+        status = promote_repository_floor_new(context, current_present);
+        if (status != PACKAGE_SERVICE_STATUS_OK) {
+            return status;
+        }
+        current_present = true;
+        current_version = new_version;
+    } else if (new_present) {
+        status = unlink_optional(context,
+            PACKAGE_SERVICE_REPOSITORY_FLOOR_NEW_PATH);
+        if (status == PACKAGE_SERVICE_STATUS_OK) {
+            status = sync_data(context);
+        }
+        if (status != PACKAGE_SERVICE_STATUS_OK) {
+            return status;
+        }
+    }
+    if (current_present && current_version == requested) {
+        context->report->repository_floor = requested;
+        return PACKAGE_SERVICE_STATUS_OK;
+    }
+    if (!repository_floor_record_encode(requested, record)) {
+        return PACKAGE_SERVICE_STATUS_STATE;
+    }
+    status = write_new_file(context,
+        PACKAGE_SERVICE_REPOSITORY_FLOOR_NEW_PATH, record, sizeof(record));
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        status = sync_data(context);
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        status = promote_repository_floor_new(context, current_present);
+    }
+    if (status == PACKAGE_SERVICE_STATUS_OK) {
+        context->report->repository_floor = requested;
     }
     return status;
 }
@@ -2426,6 +2662,87 @@ release:
             status = entries_release;
         }
     }
+    if (report->live_file_handles != 0U || report->live_allocations != 0U) {
+        status = PACKAGE_SERVICE_STATUS_RESOURCE;
+    }
+    servicing = false;
+    report->status = status;
+    return status;
+}
+
+enum package_service_status package_service_repository_floor_read(
+    uint64_t *repository_floor,
+    struct package_service_report *report
+)
+{
+    struct service_context context;
+    uint64_t current_version;
+    uint64_t new_version;
+    bool current_present;
+    bool new_present;
+    enum package_service_status status;
+
+    if (repository_floor == NULL || report == NULL) {
+        return PACKAGE_SERVICE_STATUS_NULL_ARGUMENT;
+    }
+    *repository_floor = 0U;
+    zero_bytes(report, sizeof(*report));
+    report->filesystem_status = PHIPFS_STATUS_OK;
+    report->state_status = PACKAGE_STATE_STATUS_OK;
+    if (servicing) {
+        report->status = PACKAGE_SERVICE_STATUS_BUSY;
+        return report->status;
+    }
+    struct phipfs_drive_info drive = phipfs_drive(PHIPFS_VOLUME_DATA);
+    if (!drive.present || !drive.mounted || !drive.healthy ||
+        !heap_is_active()) {
+        report->status = PACKAGE_SERVICE_STATUS_UNAVAILABLE;
+        return report->status;
+    }
+    zero_bytes(&context, sizeof(context));
+    context.report = report;
+    servicing = true;
+    status = repository_floor_read_internal(&context, repository_floor,
+        &current_present, &current_version, &new_present, &new_version);
+    if (report->live_file_handles != 0U || report->live_allocations != 0U) {
+        status = PACKAGE_SERVICE_STATUS_RESOURCE;
+    }
+    if (status != PACKAGE_SERVICE_STATUS_OK) {
+        *repository_floor = 0U;
+    }
+    servicing = false;
+    report->status = status;
+    return status;
+}
+
+enum package_service_status package_service_repository_floor_advance(
+    uint64_t repository_version,
+    struct package_service_report *report
+)
+{
+    struct service_context context;
+    enum package_service_status status;
+
+    if (repository_version == 0U || report == NULL) {
+        return PACKAGE_SERVICE_STATUS_NULL_ARGUMENT;
+    }
+    zero_bytes(report, sizeof(*report));
+    report->filesystem_status = PHIPFS_STATUS_OK;
+    report->state_status = PACKAGE_STATE_STATUS_OK;
+    if (servicing) {
+        report->status = PACKAGE_SERVICE_STATUS_BUSY;
+        return report->status;
+    }
+    struct phipfs_drive_info drive = phipfs_drive(PHIPFS_VOLUME_DATA);
+    if (!drive.present || !drive.mounted || !drive.healthy || drive.read_only ||
+        !heap_is_active()) {
+        report->status = PACKAGE_SERVICE_STATUS_UNAVAILABLE;
+        return report->status;
+    }
+    zero_bytes(&context, sizeof(context));
+    context.report = report;
+    servicing = true;
+    status = repository_floor_advance_internal(&context, repository_version);
     if (report->live_file_handles != 0U || report->live_allocations != 0U) {
         status = PACKAGE_SERVICE_STATUS_RESOURCE;
     }

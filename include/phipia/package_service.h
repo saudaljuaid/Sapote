@@ -17,6 +17,9 @@
 #define PACKAGE_SERVICE_AUTHORITY_OLD_PATH "pkgstate/auth.old"
 #define PACKAGE_SERVICE_JOURNAL_PATH "pkgstate/txn.bin"
 #define PACKAGE_SERVICE_JOURNAL_NEW_PATH "pkgstate/txn.new"
+#define PACKAGE_SERVICE_REPOSITORY_FLOOR_PATH "pkgstate/repo.bin"
+#define PACKAGE_SERVICE_REPOSITORY_FLOOR_NEW_PATH "pkgstate/repo.new"
+#define PACKAGE_SERVICE_REPOSITORY_FLOOR_BYTES 128U
 
 /* Two candidates and scratch state must fit Phipia's bounded 16 MiB heap. */
 #define PACKAGE_SERVICE_MAX_DATABASE_BYTES (4U * 1024U * 1024U)
@@ -46,6 +49,7 @@ struct package_service_report {
     enum package_state_status state_status;
     enum package_state_recovery_choice choice;
     uint64_t generation;
+    uint64_t repository_floor;
     uint64_t bytes_read;
     uint64_t bytes_written;
     uint32_t files_verified;
@@ -95,6 +99,25 @@ enum package_service_status package_service_repair_snapshot(
     uint8_t *database,
     size_t capacity,
     size_t *output_bytes,
+    struct package_service_report *report
+);
+
+/*
+ * Reads the greatest valid current or crash-leftover repository floor. An
+ * absent record is floor zero. Any present malformed candidate fails closed.
+ */
+enum package_service_status package_service_repository_floor_read(
+    uint64_t *repository_floor,
+    struct package_service_report *report
+);
+
+/*
+ * Durably advances, but never lowers, the signed-repository rollback floor.
+ * The new candidate is flushed before the old authority is removed, so every
+ * write/rename/flush prefix retains at least the previously accepted floor.
+ */
+enum package_service_status package_service_repository_floor_advance(
+    uint64_t repository_version,
     struct package_service_report *report
 );
 

@@ -471,6 +471,8 @@ enum package_control_status package_control_open_install(
 {
     size_t index = PACKAGE_CONTROL_SESSION_LIMIT;
     struct control_session *session;
+    struct package_service_report service_report;
+    uint64_t repository_floor = 0U;
     int64_t now;
 
     clear_report(report);
@@ -516,18 +518,24 @@ enum package_control_status package_control_open_install(
         status = PACKAGE_CONTROL_STATUS_CLOCK;
         goto refuse;
     }
+    status = load_installed(session, report);
+    if (status != PACKAGE_CONTROL_STATUS_OK) {
+        goto refuse;
+    }
+    report->service_status = package_service_repository_floor_read(
+        &repository_floor, &service_report);
+    if (report->service_status != PACKAGE_SERVICE_STATUS_OK) {
+        status = PACKAGE_CONTROL_STATUS_SERVICE;
+        goto refuse;
+    }
     session->policy = (struct package_manager_policy){
-        (uint64_t)now, 0U, 1U, false
+        (uint64_t)now, repository_floor, 1U, false
     };
     report->manager_status = package_manager_repository_open(
         session->repository_bytes, session->repository_byte_count,
         &session->policy, &session->trust, &session->repository);
     if (report->manager_status != PACKAGE_MANAGER_STATUS_OK) {
         status = PACKAGE_CONTROL_STATUS_MANAGER;
-        goto refuse;
-    }
-    status = load_installed(session, report);
-    if (status != PACKAGE_CONTROL_STATUS_OK) {
         goto refuse;
     }
     report->manager_status = package_manager_plan_install(&session->repository,
@@ -569,6 +577,8 @@ enum package_control_status package_control_open_repair(
 {
     size_t index = PACKAGE_CONTROL_SESSION_LIMIT;
     struct control_session *session;
+    struct package_service_report service_report;
+    uint64_t repository_floor = 0U;
     int64_t now;
 
     clear_report(report);
@@ -611,8 +621,18 @@ enum package_control_status package_control_open_repair(
         status = PACKAGE_CONTROL_STATUS_CLOCK;
         goto refuse;
     }
+    status = load_installed_snapshot(session, report, true);
+    if (status != PACKAGE_CONTROL_STATUS_OK) {
+        goto refuse;
+    }
+    report->service_status = package_service_repository_floor_read(
+        &repository_floor, &service_report);
+    if (report->service_status != PACKAGE_SERVICE_STATUS_OK) {
+        status = PACKAGE_CONTROL_STATUS_SERVICE;
+        goto refuse;
+    }
     session->policy = (struct package_manager_policy){
-        (uint64_t)now, 0U, 1U, false
+        (uint64_t)now, repository_floor, 1U, false
     };
     report->manager_status = package_manager_repository_open(
         session->repository_bytes, session->repository_byte_count,
@@ -621,10 +641,7 @@ enum package_control_status package_control_open_repair(
         status = PACKAGE_CONTROL_STATUS_MANAGER;
         goto refuse;
     }
-    status = load_installed_snapshot(session, report, true);
-    if (status == PACKAGE_CONTROL_STATUS_OK) {
-        status = plan_repair(session, report);
-    }
+    status = plan_repair(session, report);
     if (status != PACKAGE_CONTROL_STATUS_OK) {
         goto refuse;
     }
@@ -931,6 +948,14 @@ enum package_control_status package_control_commit(
     uint8_t *database = NULL;
     size_t database_bytes = 0U;
 
+    if (session->plan.operation != PACKAGE_MANAGER_PLAN_REMOVE) {
+        report->service_status = package_service_repository_floor_advance(
+            session->repository.repository_version, &service_report);
+        if (report->service_status != PACKAGE_SERVICE_STATUS_OK) {
+            status = PACKAGE_CONTROL_STATUS_SERVICE;
+            goto release;
+        }
+    }
     if (heap_allocate(sizeof(*workspace), (void **)&workspace) !=
             HEAP_STATUS_OK) {
         status = PACKAGE_CONTROL_STATUS_RESOURCE;

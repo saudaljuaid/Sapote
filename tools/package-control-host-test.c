@@ -27,6 +27,7 @@
 
 #define FIXTURE_NOW INT64_C(1800000060)
 #define FIXTURE_REPOSITORY_VERSION UINT64_C(42)
+#define FIXTURE_UPDATE_REPOSITORY_VERSION UINT64_C(43)
 #define TEST_OWNER UINT64_C(0x123400000001)
 #define OTHER_OWNER UINT64_C(0x123400000002)
 #define UPLOAD_FIXTURE_LIMIT 16U
@@ -56,6 +57,8 @@ static size_t service_current_bytes;
 static size_t service_target_bytes;
 static bool service_prepared;
 static bool fail_commit_once;
+static bool fail_floor_once;
+static uint64_t service_repository_floor;
 
 static struct file_bytes read_file(const char *path, size_t maximum)
 {
@@ -231,6 +234,45 @@ static void service_report_clear(struct package_service_report *report,
     (void)memset(report, 0, sizeof(*report));
     report->status = status;
     report->state_status = PACKAGE_STATE_STATUS_OK;
+}
+
+enum package_service_status package_service_repository_floor_read(
+    uint64_t *repository_floor,
+    struct package_service_report *report
+)
+{
+    if (repository_floor == NULL || report == NULL) {
+        return PACKAGE_SERVICE_STATUS_NULL_ARGUMENT;
+    }
+    *repository_floor = service_repository_floor;
+    service_report_clear(report, PACKAGE_SERVICE_STATUS_OK);
+    report->repository_floor = service_repository_floor;
+    return report->status;
+}
+
+enum package_service_status package_service_repository_floor_advance(
+    uint64_t repository_version,
+    struct package_service_report *report
+)
+{
+    if (repository_version == 0U || report == NULL) {
+        return PACKAGE_SERVICE_STATUS_NULL_ARGUMENT;
+    }
+    if (repository_version < service_repository_floor) {
+        service_report_clear(report, PACKAGE_SERVICE_STATUS_STATE);
+        report->repository_floor = service_repository_floor;
+        return report->status;
+    }
+    service_repository_floor = repository_version;
+    if (fail_floor_once) {
+        fail_floor_once = false;
+        service_report_clear(report, PACKAGE_SERVICE_STATUS_DURABILITY);
+        report->repository_floor = service_repository_floor;
+        return report->status;
+    }
+    service_report_clear(report, PACKAGE_SERVICE_STATUS_OK);
+    report->repository_floor = service_repository_floor;
+    return report->status;
 }
 
 enum package_service_status package_service_snapshot(
@@ -534,7 +576,14 @@ int main(int argc, char **argv)
     CHECK(attach_named(control, "org.phipia.lib", library_upload) == 0 &&
         package_control_attach(TEST_OWNER, control, library_index,
             library_upload, &report) == PACKAGE_CONTROL_STATUS_STATE &&
-        attach_named(control, "org.phipia.app", application_upload) == 0 &&
+        attach_named(control, "org.phipia.app", application_upload) == 0);
+    fail_floor_once = true;
+    CHECK(package_control_commit(TEST_OWNER, control, &report) ==
+            PACKAGE_CONTROL_STATUS_SERVICE &&
+        report.service_status == PACKAGE_SERVICE_STATUS_DURABILITY &&
+        !report.prepared && !report.committed &&
+        service_current_bytes == 0U && service_repository_floor ==
+            FIXTURE_REPOSITORY_VERSION &&
         package_control_commit(TEST_OWNER, control, &report) ==
             PACKAGE_CONTROL_STATUS_OK && report.committed &&
         report.generation == 1U && service_current_bytes != 0U &&
@@ -553,7 +602,8 @@ int main(int argc, char **argv)
     CHECK(package_control_open_install(TEST_OWNER, update_repository_upload,
         (const uint8_t *)"org.phipia.app", 14U, &report) ==
             PACKAGE_CONTROL_STATUS_OK && report.plan_count == 2U &&
-        report.generation == 1U);
+        report.generation == 1U && report.repository_version ==
+            FIXTURE_UPDATE_REPOSITORY_VERSION);
     control = report.token;
     CHECK(attach_named(control, "org.phipia.newlib", update_library_upload) ==
             0 &&
@@ -573,7 +623,14 @@ int main(int argc, char **argv)
         live_allocations == 0U &&
         package_state_database_parse(service_current, service_current_bytes,
             &installed) == PACKAGE_STATE_STATUS_OK &&
-        installed.generation == 2U && installed.package_count == 2U);
+        installed.generation == 2U && installed.package_count == 2U &&
+        service_repository_floor == FIXTURE_UPDATE_REPOSITORY_VERSION);
+
+    CHECK(package_control_open_install(TEST_OWNER, repository_upload,
+        (const uint8_t *)"org.phipia.app", 14U, &report) ==
+            PACKAGE_CONTROL_STATUS_MANAGER &&
+        report.manager_status == PACKAGE_MANAGER_STATUS_ROLLBACK &&
+        package_control_resources_released() && live_allocations == 0U);
 
     CHECK(package_control_open_repair(TEST_OWNER, update_repository_upload,
         &report) == PACKAGE_CONTROL_STATUS_OK && report.plan_count == 2U &&

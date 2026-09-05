@@ -1657,6 +1657,78 @@ static int test_sync_failure_keeps_journal(
     return 0;
 }
 
+static int test_repository_floor_is_durable_and_monotonic(void)
+{
+    uint8_t version_42[PACKAGE_SERVICE_REPOSITORY_FLOOR_BYTES];
+    struct package_service_report report;
+    uint64_t floor = UINT64_MAX;
+    size_t current;
+    size_t candidate;
+
+    reset_filesystem();
+    CHECK(package_service_repository_floor_read(&floor, &report) ==
+            PACKAGE_SERVICE_STATUS_OK && floor == 0U &&
+        report.repository_floor == 0U && report.live_file_handles == 0U &&
+        report.live_allocations == 0U, 240);
+    CHECK(package_service_repository_floor_advance(42U, &report) ==
+            PACKAGE_SERVICE_STATUS_OK && report.repository_floor == 42U &&
+        report.sync_count == 2U && report.rename_count == 1U &&
+        package_service_repository_floor_read(&floor, &report) ==
+            PACKAGE_SERVICE_STATUS_OK && floor == 42U, 241);
+    current = find_node(PACKAGE_SERVICE_REPOSITORY_FLOOR_PATH);
+    CHECK(current != MOCK_MAX_NODES &&
+        nodes[current].byte_count == sizeof(version_42), 242);
+    (void)memcpy(version_42, nodes[current].bytes, sizeof(version_42));
+
+    sync_attempts = 0U;
+    fail_sync_ordinal = 1U;
+    CHECK(package_service_repository_floor_advance(43U, &report) ==
+            PACKAGE_SERVICE_STATUS_DURABILITY &&
+        find_node(PACKAGE_SERVICE_REPOSITORY_FLOOR_PATH) != MOCK_MAX_NODES &&
+        find_node(PACKAGE_SERVICE_REPOSITORY_FLOOR_NEW_PATH) !=
+            MOCK_MAX_NODES &&
+        package_service_repository_floor_read(&floor, &report) ==
+            PACKAGE_SERVICE_STATUS_OK && floor == 43U, 243);
+    fail_sync_ordinal = 0U;
+    CHECK(package_service_repository_floor_advance(43U, &report) ==
+            PACKAGE_SERVICE_STATUS_OK && report.repository_floor == 43U &&
+        find_node(PACKAGE_SERVICE_REPOSITORY_FLOOR_NEW_PATH) ==
+            MOCK_MAX_NODES &&
+        package_service_repository_floor_advance(42U, &report) ==
+            PACKAGE_SERVICE_STATUS_STATE, 244);
+
+    add_file(PACKAGE_SERVICE_REPOSITORY_FLOOR_NEW_PATH, version_42,
+        sizeof(version_42), UINT16_C(0444));
+    CHECK(package_service_repository_floor_read(&floor, &report) ==
+            PACKAGE_SERVICE_STATUS_OK && floor == 43U &&
+        package_service_repository_floor_advance(43U, &report) ==
+            PACKAGE_SERVICE_STATUS_OK &&
+        find_node(PACKAGE_SERVICE_REPOSITORY_FLOOR_NEW_PATH) ==
+            MOCK_MAX_NODES, 245);
+
+    sync_attempts = 0U;
+    fail_sync_ordinal = 2U;
+    CHECK(package_service_repository_floor_advance(44U, &report) ==
+            PACKAGE_SERVICE_STATUS_DURABILITY &&
+        package_service_repository_floor_read(&floor, &report) ==
+            PACKAGE_SERVICE_STATUS_OK && floor == 44U, 246);
+    fail_sync_ordinal = 0U;
+    CHECK(package_service_repository_floor_advance(44U, &report) ==
+            PACKAGE_SERVICE_STATUS_OK && report.repository_floor == 44U,
+        247);
+
+    add_file(PACKAGE_SERVICE_REPOSITORY_FLOOR_NEW_PATH, version_42,
+        sizeof(version_42), UINT16_C(0444));
+    candidate = find_node(PACKAGE_SERVICE_REPOSITORY_FLOOR_NEW_PATH);
+    CHECK(candidate != MOCK_MAX_NODES, 248);
+    nodes[candidate].bytes[32U] ^= UINT8_C(1);
+    CHECK(package_service_repository_floor_read(&floor, &report) ==
+            PACKAGE_SERVICE_STATUS_STATE && floor == 0U &&
+        report.state_status == PACKAGE_STATE_STATUS_MISMATCH &&
+        report.live_file_handles == 0U && report.live_allocations == 0U, 249);
+    return 0;
+}
+
 int main(void)
 {
     static uint8_t old_database[OLD_DATABASE_BYTES];
@@ -1770,6 +1842,9 @@ int main(void)
     if (result == 0) {
         result = test_recovery_accepts_persisted_commit_prefixes(old_database,
             new_database, old_authority, new_authority, journal);
+    }
+    if (result == 0) {
+        result = test_repository_floor_is_durable_and_monotonic();
     }
     if (result != 0) {
         (void)fprintf(stderr, "package service host test failed: %d\n", result);

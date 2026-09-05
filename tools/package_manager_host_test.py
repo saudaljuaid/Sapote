@@ -67,11 +67,12 @@ def repository_package(identifier: str, version: str, payload: bytes,
     }
 
 
-def repository_spec(packages: list[dict[str, Any]]) -> dict[str, Any]:
+def repository_spec(packages: list[dict[str, Any]], *,
+                    repository_version: int = 42) -> dict[str, Any]:
     return {
         "format": 1,
         "repository": "org.phipia.main",
-        "repository_version": 42,
+        "repository_version": repository_version,
         "generated_at": GENERATED,
         "expires_at": EXPIRES,
         "architecture": "x86_64",
@@ -150,7 +151,7 @@ def main() -> int:
                            dependencies=replacement_dependency),
         repository_package("org.phipia.newlib", "2.0.0", replacement_library,
                            publisher_key_id),
-    ]), ROOT_SEED)
+    ], repository_version=43), ROOT_SEED)
     trusted_root = {hashlib.sha256(root_public).hexdigest(): root_public}
     trusted_publisher = {publisher_key_id: publisher_public}
     REPOSITORY.parse_repository(
