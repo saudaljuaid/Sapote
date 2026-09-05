@@ -8904,14 +8904,6 @@ static enum ui_element_id active_hit(struct ui_point point)
             return UI_ELEMENT_MEDIA_EDITOR_TIMELINE;
         }
     } else if (state.active_panel == UI_PANEL_STORE) {
-        if (rect_contains_point(store_search_rect(), point)) {
-            return UI_ELEMENT_STORE_SEARCH;
-        }
-        for (size_t index = 0U; index < UI_STORE_NAV_COUNT; ++index) {
-            if (rect_contains_point(store_nav_rect(index), point)) {
-                return (enum ui_element_id)(UI_ELEMENT_STORE_NAV_0 + index);
-            }
-        }
         if (phipia_shell_ready) {
             struct ui_rect action;
 
@@ -8920,9 +8912,20 @@ static enum ui_element_id active_hit(struct ui_point point)
                     rect_contains_point(action, point)) {
                 return UI_ELEMENT_STORE_PACKAGE_ACTION;
             }
-        } else if (store_package_visible() &&
-                rect_contains_point(store_package_action_rect(), point)) {
-            return UI_ELEMENT_STORE_PACKAGE_ACTION;
+        } else {
+            if (rect_contains_point(store_search_rect(), point)) {
+                return UI_ELEMENT_STORE_SEARCH;
+            }
+            for (size_t index = 0U; index < UI_STORE_NAV_COUNT; ++index) {
+                if (rect_contains_point(store_nav_rect(index), point)) {
+                    return (enum ui_element_id)(UI_ELEMENT_STORE_NAV_0 +
+                        index);
+                }
+            }
+            if (store_package_visible() &&
+                    rect_contains_point(store_package_action_rect(), point)) {
+                return UI_ELEMENT_STORE_PACKAGE_ACTION;
+            }
         }
     } else if (state.active_panel == UI_PANEL_SETTINGS) {
         if (settings_page < 0) {
@@ -9143,7 +9146,8 @@ static enum ui_status activate_element(
         return UI_STATUS_OK;
     }
     if (element == UI_ELEMENT_STORE_PACKAGE_ACTION &&
-            state.active_panel == UI_PANEL_STORE && store_package_visible()) {
+            state.active_panel == UI_PANEL_STORE &&
+            (phipia_shell_ready || store_package_visible())) {
         if (application_launch_path[0] != '\0' ||
                 !copy_string(application_launch_path,
                     sizeof(application_launch_path), "PHIP.MAN")) {
