@@ -484,6 +484,7 @@ again, then refuses the signed version-1 downgrade while retaining generation
 2. The kernel launches SDL 2.32.10's upstream Chess Board application from the
 authority-selected generation and verifies its bounded render loop and exact
 persistent SDL preference output before the retained image is checked with
-`e2fsck`. Dynamic installed-library loading,
-end-user Store presentation, removal, and repair remain separate integration
-layers.
+`e2fsck`. Dynamic installed-library loading and authenticated repair remain
+separate integration layers. Removal is exposed by the Phip client, and the
+graphical Store's signed SDL Chess listing queues that same bounded client for
+its real Install / Update action.

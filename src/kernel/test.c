@@ -6389,6 +6389,28 @@ _Noreturn void kernel_test_complete_phipia_proof(void)
         }
         phipia_proof_settle_ui(
             "Phipia Store search animation did not settle");
+        {
+            const struct ui_rect client = ui_get_state()->layout.panel_client;
+            const uint32_t sidebar_width = client.width >= 700U ? 202U : 176U;
+            const uint32_t card_x = client.x + sidebar_width + 29U;
+            const uint32_t card_width = client.width - sidebar_width - 57U;
+            char manifest[13U];
+
+            phipia_proof_click_point(card_x + card_width - 80U,
+                client.y + 271U,
+                "Phipia Store package action did not activate");
+            if (!ui_application_launch_dequeue(manifest, sizeof(manifest)) ||
+                    manifest[0] != 'P' || manifest[1] != 'H' ||
+                    manifest[2] != 'I' || manifest[3] != 'P' ||
+                    manifest[4] != '.' || manifest[5] != 'M' ||
+                    manifest[6] != 'A' || manifest[7] != 'N' ||
+                    manifest[8] != '\0') {
+                kernel_test_fail(
+                    "Phipia Store did not queue its signed package client");
+            }
+            console_serial_write(
+                "ST PHIPIA STORE signed package action passed\n");
+        }
         phipia_proof_click_point(search_x, search_y,
             "Phipia taskbar search did not reopen");
         if (!taskbar_search_panel_open()) {

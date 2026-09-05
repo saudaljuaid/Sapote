@@ -72,10 +72,13 @@ presents bounded damage rectangles through the public graphics contract.
 
 ### Store
 
-Store is a white, Inter-based catalog shell with searchable navigation and
-pinned Lucide icons. No packages are published in the built-in catalog yet;
-the Home, Installed, Updates, category, Settings, and About surfaces report
-that state directly without synthetic application listings.
+Store is a white, Inter-based signed-catalog client with searchable navigation
+and pinned Lucide icons. The built-in lifecycle catalog publishes SDL 2.32.10's
+Chess Board proof as a real package. Its Install / Update action queues the
+privileged Phip client, which authenticates the repository and payload before
+the package service changes installed authority. Home, search, All
+Applications, and Games expose that entry; empty categories, Installed,
+Updates, Settings, and About report their bounded state directly.
 
 ### Terminal
 

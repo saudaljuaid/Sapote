@@ -218,6 +218,7 @@ static uint8_t store_section;
 static bool store_search_focused;
 static char store_query[UI_STORE_QUERY_BYTES];
 static size_t store_query_length;
+static bool store_installer_queued;
 static bool window_high_contrast;
 static bool keyboard_focus_wrap = true;
 static bool keyboard_focus_indicator = true;
@@ -293,6 +294,11 @@ static enum ui_status draw_button(
     struct ui_rect button,
     struct ui_rect damage,
     const char *label
+);
+static enum ui_status draw_store_ui_icon(
+    uint8_t index,
+    struct ui_rect bounds,
+    struct ui_rect damage
 );
 static enum ui_status draw_circle(
     uint32_t center_x,
@@ -5927,6 +5933,104 @@ static struct ui_rect store_nav_rect(size_t index)
     return (struct ui_rect){ client.x + 9U, y, width - 18U, 22U };
 }
 
+static struct ui_rect store_package_card_rect(void)
+{
+    const struct ui_rect client = state.layout.panel_client;
+    const uint32_t sidebar_width = store_sidebar_width();
+
+    return (struct ui_rect){ client.x + sidebar_width + 29U,
+        client.y + 198U, client.width - sidebar_width - 57U, 108U };
+}
+
+static struct ui_rect store_package_action_rect(void)
+{
+    const struct ui_rect card = store_package_card_rect();
+
+    return (struct ui_rect){ card.x + card.width - 142U, card.y + 59U,
+        124U, 28U };
+}
+
+static uint8_t store_ascii_lower(uint8_t value)
+{
+    return value >= (uint8_t)'A' && value <= (uint8_t)'Z' ?
+        (uint8_t)(value + ((uint8_t)'a' - (uint8_t)'A')) : value;
+}
+
+static bool store_query_matches(const char *candidate)
+{
+    if (store_query_length == 0U) {
+        return true;
+    }
+    size_t candidate_bytes = 0U;
+    while (candidate[candidate_bytes] != '\0') {
+        ++candidate_bytes;
+    }
+    if (store_query_length > candidate_bytes) {
+        return false;
+    }
+    for (size_t start = 0U;
+         start + store_query_length <= candidate_bytes; ++start) {
+        bool matches = true;
+
+        for (size_t index = 0U; index < store_query_length; ++index) {
+            matches = matches && store_ascii_lower(
+                (uint8_t)candidate[start + index]) == store_ascii_lower(
+                    (uint8_t)store_query[index]);
+        }
+        if (matches) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool store_package_visible(void)
+{
+    if (store_query_length != 0U) {
+        return store_query_matches("SDL Chess Board") ||
+            store_query_matches("Games");
+    }
+    return store_section == 0U || store_section == 3U ||
+        store_section == 7U;
+}
+
+static enum ui_status draw_store_package(
+    struct ui_rect damage
+)
+{
+    const struct ui_rect card = store_package_card_rect();
+    const struct ui_rect action = store_package_action_rect();
+    enum ui_status status = fill_clipped(card, damage,
+        framebuffer_pack(0xFAU, 0xFAU, 0xFBU));
+
+    if (status == UI_STATUS_OK) {
+        status = stroke_clipped(card, damage, 1U,
+            framebuffer_pack(0xD9U, 0xDDU, 0xE1U));
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_store_ui_icon(8U, (struct ui_rect){
+            card.x + 18U, card.y + 19U, 56U, 56U
+        }, damage);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(card, damage, card.x + 92U, card.y + 31U,
+            "SDL Chess Board", state.theme.ink);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(card, damage, card.x + 92U, card.y + 55U,
+            "Native SDL 2.32.10 game", framebuffer_pack(0x65U, 0x6CU, 0x73U));
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(card, damage, card.x + 92U, card.y + 80U,
+            "Signed package", framebuffer_pack(0x65U, 0x6CU, 0x73U));
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_button(action, damage,
+            store_installer_queued ? "Opening Phip" : "Install / Update");
+    }
+    return status;
+}
+
 static enum ui_status draw_store_ui_icon(
     uint8_t index,
     struct ui_rect bounds,
@@ -6107,10 +6211,10 @@ static enum ui_status draw_store_app(struct ui_rect damage)
     if (status != UI_STATUS_OK) {
         return status;
     }
-    if (store_query_length != 0U) {
+    if (store_query_length != 0U && !store_package_visible()) {
         return draw_store_empty(content, damage,
             "No applications found",
-            "No packages have been published to the catalog yet.");
+            "No signed application matches this search.");
     }
     if (store_section == 11U) {
         status = draw_store_info_row(content, damage, 0U,
@@ -6176,14 +6280,17 @@ static enum ui_status draw_store_app(struct ui_rect damage)
             "No updates available",
             "There are no published packages to check.");
     }
+    if (store_package_visible()) {
+        return draw_store_package(damage);
+    }
     if (store_section >= 3U && store_section <= 10U) {
         return draw_store_empty(content, damage,
             "No applications in this category",
-            "The catalog is ready for its first published package.");
+            "No signed application is published in this category.");
     }
     return draw_store_empty(content, damage,
-        "The catalog is ready",
-        "Applications will appear here after they are published.");
+        "No applications available",
+        "The signed catalog is currently empty.");
 }
 
 static void begin_dock_spring(void)
@@ -7911,6 +8018,7 @@ enum ui_status ui_construct(bool pointer_present)
     store_search_focused = false;
     store_query_length = 0U;
     store_query[0] = '\0';
+    store_installer_queued = false;
     desktop_wallpaper = 0U;
     camera_capture_count = 0U;
     camera_frame_available = false;
@@ -8780,6 +8888,10 @@ static enum ui_element_id active_hit(struct ui_point point)
                 return (enum ui_element_id)(UI_ELEMENT_STORE_NAV_0 + index);
             }
         }
+        if (store_package_visible() &&
+                rect_contains_point(store_package_action_rect(), point)) {
+            return UI_ELEMENT_STORE_PACKAGE_ACTION;
+        }
     } else if (state.active_panel == UI_PANEL_SETTINGS) {
         if (settings_page < 0) {
             for (size_t index = 0U; index < UI_SETTINGS_CATEGORY_COUNT;
@@ -8996,6 +9108,17 @@ static enum ui_status activate_element(
         store_section = (uint8_t)(element - UI_ELEMENT_STORE_NAV_0);
         store_search_focused = false;
         *damage = rect_union(*damage, state.layout.panel_client);
+        return UI_STATUS_OK;
+    }
+    if (element == UI_ELEMENT_STORE_PACKAGE_ACTION &&
+            state.active_panel == UI_PANEL_STORE && store_package_visible()) {
+        if (application_launch_path[0] != '\0' ||
+                !copy_string(application_launch_path,
+                    sizeof(application_launch_path), "PHIP.MAN")) {
+            return UI_STATUS_BAD_ELEMENT;
+        }
+        store_installer_queued = true;
+        *damage = rect_union(*damage, store_package_action_rect());
         return UI_STATUS_OK;
     }
     if (element == UI_ELEMENT_FILES_UP) {
@@ -10255,6 +10378,7 @@ bool ui_application_launch_dequeue(char *manifest_path, size_t capacity)
         manifest_path[index] = application_launch_path[index];
     }
     application_launch_path[0] = '\0';
+    store_installer_queued = false;
     if (enabled) {
         cpu_interrupt_enable();
     }
