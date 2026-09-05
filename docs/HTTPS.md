@@ -91,8 +91,9 @@ and a second HTTPS transfer directly into a kernel-owned package-upload handle.
 The upload is accepted only after its privileged caller-supplied length and
 SHA-256 match and the data-volume flush completes; closing the typed handle
 durably removes the private staging file. This proof uses a fixed expected
-digest. The unfinished package controller must still bind these values to an
-admitted signed repository record before installation.
+digest. The package controller binds those same upload bytes to an admitted
+signed repository record before installation; the `native-phip` proof carries
+that path through update, rollback refusal, damage quarantine, and repair.
 `tools/https_network_fixture.py` is its offline raw-Ethernet peer for QEMU's
 dgram backend: it supplies DHCP/ARP/DNS, a TCP peer on 10.0.2.20:443, a Python
 `ssl.MemoryBIO` TLS 1.2 server using the committed certificate, strict request

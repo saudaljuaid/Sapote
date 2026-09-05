@@ -10,9 +10,10 @@ dependency-first install plan and lock representation.
 
 The guest parser/planner in `package_manager.c` consumes the same canonical
 index and package-v3 metadata behind the fail-closed `package_trust.c` immutable-key
-and Ed25519 callbacks. Production key provisioning, HTTPS fetch, staging,
-transaction commits, client commands, and Store presentation sit outside this
-format layer. See
+and Ed25519 callbacks. The platform table provisions those keys, the Phip
+client fetches the index and payloads over HTTPS, and the package controller
+binds them to staged generation commits. Store actions queue that same client
+path. See
 [`PACKAGE_MANAGER.md`](PACKAGE_MANAGER.md) for the integration boundary.
 
 ## Repository index version 1

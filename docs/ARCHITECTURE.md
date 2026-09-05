@@ -110,7 +110,8 @@ engines are stopped and the controller is back in reset - before the memory is
 reclaimed, never after. See [`AUDIO.md`](AUDIO.md).
 
 This is a small kernel VFS, not a Unix compatibility layer. FAT32 is writable;
-ext4 is read-only and returns `EROFS` for mutations and sync. The storage
+the admitted ext4 profile is writable through the retained JBD2 coordinator
+for regular-file I/O and the bounded namespace operations documented below. The storage
 profiles are documented in [`FAT32.md`](FAT32.md) and [`EXT4.md`](EXT4.md).
 
 `package_manager.c` parses the canonical signed repository-index and package-v3
@@ -120,10 +121,10 @@ off the 16 KiB syscall stack, and every trust decision is delegated to explicit
 immutable-key and Ed25519 callbacks that fail closed when unavailable. The
 kernel's pinned, fail-closed `package_trust.c` provider supplies those callbacks;
 the privileged caller must provision its immutable key table. Authenticated
-package file/relation views feed the future generation builder. The VFS-backed
-`package_service.c` recovers already-staged package generations. Download,
-generation construction and commit, client commands, and Store presentation
-remain outside these cores. The boundary is documented in [`PACKAGE_MANAGER.md`](PACKAGE_MANAGER.md) and
+package file/relation views feed the generation builder. The VFS-backed
+`package_service.c` recovers, stages, verifies, and atomically selects complete
+package generations. The Ring 3 Phip client supplies signed HTTPS downloads;
+the Store queues that same client path. The boundary is documented in [`PACKAGE_MANAGER.md`](PACKAGE_MANAGER.md) and
 [`PACKAGE_TRANSACTIONS.md`](PACKAGE_TRANSACTIONS.md).
 
 `nvidia.c` contains fifteen bounded register and configuration probes based on
