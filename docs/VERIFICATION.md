@@ -53,15 +53,18 @@ pinned in-certificate RTC, and it requires the strong-hardware-entropy marker.
 
 The `native-phip` scenario serves a deterministic sequence of root-signed
 repositories and publisher-signed v3 packages over that same authenticated
-HTTPS path. Across three boots, the Ring 3 `phip` client installs version 1,
-reopens the persisted authority and updates it to version 2, then proves that a
-signed version-1 rollback is refused without changing generation 2. Each
+HTTPS path. Across four boots, the Ring 3 `phip` client installs version 1,
+reopens the persisted authority and updates it to version 2, proves that a
+signed version-1 rollback is refused without changing generation 2, then
+repairs deliberately damaged immutable bytes into generation 3. Each
 accepted transaction copies the repository into a sealed upload, asks the
 privileged controller for an authenticated plan, streams every exact package
 directly into a digest-bound upload, commits the generation, removes its staging
-file, synchronizes journaled ext4, and reboots. On the final boot the kernel
-independently parses the authority-selected database, launches SDL 2.32.10's
-byte-exact upstream Chess Board application from generation 2, runs its bounded
+file, synchronizes journaled ext4, and reboots. The damaged-generation boot
+proves an ordinary snapshot quarantines the application before repair. On the
+final boot the kernel independently parses the authority-selected database,
+launches SDL 2.32.10's byte-exact upstream Chess Board application from repaired
+generation 3, runs its bounded
 event/software-render loop, and verifies its exact SDL preference-file output.
 The scenario requires clean process, network, file, upload, controller,
 package-service, NVMe, heap, and VFS censuses. The retained Data image must also

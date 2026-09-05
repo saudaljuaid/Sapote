@@ -184,6 +184,22 @@ independently durable phase writes.
 The target field is empty for repair and multi-package plans. It is diagnostic;
 the complete target database is authoritative for state.
 
+## Repository rollback floor
+
+`pkgstate/repo.bin` is a checksummed 128-byte `PHIPREP1` record containing the
+greatest signed repository version accepted for an install, update, or repair.
+Repository admission reads the maximum valid version from `repo.bin` and a
+possible crash-leftover `repo.new`; any present malformed candidate fails
+closed. A lower signed repository can therefore never regain authority after a
+reboot.
+
+Advancement writes and syncs `repo.new`, then replaces `repo.bin` and syncs
+again before package-generation staging starts. Recovery treats a greater
+temporary candidate as accepted and promotes it, while a stale duplicate is
+discarded only when the current record remains present. Every injected failure
+at either durability boundary retains at least the previously accepted floor;
+retry is idempotent and lowering the value is refused.
+
 ## Recovery decision
 
 Recovery validates authority, journal, both database digests, database
@@ -458,13 +474,15 @@ post-authority completion, exact file digest tamper, an unowned extra file,
 authority repair ordering, recursive cleanup, no-complete-generation refusal,
 bootstrap/prepare/commit/repair refusal, every bootstrap/prepare/commit durability
 boundary, persisted bootstrap and authority-switch prefixes, journal-last
-cleanup ordering, durability failure with recoverable state, and zero live
+cleanup ordering, monotonic repository-floor advancement at every sync prefix,
+corrupt floor refusal, durability failure with recoverable state, and zero live
 handle/allocation census on every exit.
 
-`package_control.c` connects the internal install/update layers without
-exposing them prematurely as an application feature. It consumes only sealed
+`package_control.c` connects install, update, removal, and repair to the native
+client and Store without exposing private staging paths. It consumes only sealed
 kernel upload handles, authenticates repository bytes with platform trust and
-wall-clock freshness, recovers the authority-selected installed snapshot,
+wall-clock freshness, enforces the durable repository floor, recovers the
+authority-selected installed snapshot,
 binds each payload to the exact planned repository digest and length,
 re-authenticates packages, rebuilds the canonical generation, and enters this
 service's bootstrap or prepare/commit path. The controller retains a prepared
@@ -481,10 +499,11 @@ staging. The `native-phip` QEMU path exercises this endpoint as a real Ring 3
 client. It downloads a signed version-1 repository and payload over HTTPS,
 commits and reboots from writable ext4, updates to signed version 2 and reboots
 again, then refuses the signed version-1 downgrade while retaining generation
-2. The kernel launches SDL 2.32.10's upstream Chess Board application from the
-authority-selected generation and verifies its bounded render loop and exact
-persistent SDL preference output before the retained image is checked with
-`e2fsck`. Dynamic installed-library loading and authenticated repair remain
-separate integration layers. Removal is exposed by the Phip client, and the
+2. The kernel deliberately damages an immutable manifest, proves ordinary
+snapshot and launch quarantine it, and uses `phip repair` to authenticate and
+commit generation 3 from the signed repository. It then launches SDL 2.32.10's
+upstream Chess Board application from the repaired authority, verifies its
+bounded render loop and exact persistent SDL preference output, and checks the
+retained image with `e2fsck`. Removal is exposed by the Phip client, and the
 graphical Store's signed SDL Chess listing queues that same bounded client for
 its real Install / Update action.
