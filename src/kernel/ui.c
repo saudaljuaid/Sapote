@@ -8801,6 +8801,15 @@ static enum ui_element_id active_hit(struct ui_point point)
                 return ids[index];
             }
         }
+        if (state.active_panel == UI_PANEL_STORE) {
+            struct ui_rect action;
+
+            if (store_primary_action_bounds(&action) == STORE_STATUS_OK &&
+                    action.width != 0U && action.height != 0U &&
+                    rect_contains_point(action, point)) {
+                return UI_ELEMENT_STORE_PACKAGE_ACTION;
+            }
+        }
         return UI_ELEMENT_NONE;
     }
     /* The Windows-style taskbar is the Phipia shell's only launcher.  The
@@ -8904,28 +8913,17 @@ static enum ui_element_id active_hit(struct ui_point point)
             return UI_ELEMENT_MEDIA_EDITOR_TIMELINE;
         }
     } else if (state.active_panel == UI_PANEL_STORE) {
-        if (phipia_shell_ready) {
-            struct ui_rect action;
-
-            if (store_primary_action_bounds(&action) == STORE_STATUS_OK &&
-                    action.width != 0U && action.height != 0U &&
-                    rect_contains_point(action, point)) {
-                return UI_ELEMENT_STORE_PACKAGE_ACTION;
+        if (rect_contains_point(store_search_rect(), point)) {
+            return UI_ELEMENT_STORE_SEARCH;
+        }
+        for (size_t index = 0U; index < UI_STORE_NAV_COUNT; ++index) {
+            if (rect_contains_point(store_nav_rect(index), point)) {
+                return (enum ui_element_id)(UI_ELEMENT_STORE_NAV_0 + index);
             }
-        } else {
-            if (rect_contains_point(store_search_rect(), point)) {
-                return UI_ELEMENT_STORE_SEARCH;
-            }
-            for (size_t index = 0U; index < UI_STORE_NAV_COUNT; ++index) {
-                if (rect_contains_point(store_nav_rect(index), point)) {
-                    return (enum ui_element_id)(UI_ELEMENT_STORE_NAV_0 +
-                        index);
-                }
-            }
-            if (store_package_visible() &&
-                    rect_contains_point(store_package_action_rect(), point)) {
-                return UI_ELEMENT_STORE_PACKAGE_ACTION;
-            }
+        }
+        if (store_package_visible() &&
+                rect_contains_point(store_package_action_rect(), point)) {
+            return UI_ELEMENT_STORE_PACKAGE_ACTION;
         }
     } else if (state.active_panel == UI_PANEL_SETTINGS) {
         if (settings_page < 0) {
