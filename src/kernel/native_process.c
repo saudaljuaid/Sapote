@@ -193,6 +193,8 @@ struct native_process {
     size_t peak_pages;
     size_t peak_handles;
     uint32_t syscall_count;
+    uint32_t last_syscall;
+    uint32_t failure_stage;
     uint32_t thread_switches;
     uint32_t shared_code_reuses;
     uint64_t context_cycles_without_fpu;
@@ -5900,6 +5902,7 @@ uintptr_t native_process_on_syscall(struct native_syscall_frame *frame)
     }
     without_cycles += tsc_read() - without_started;
     record_context_transition(process, without_cycles, fpu_cycles);
+    process->last_syscall = (uint32_t)frame->rax;
     result = dispatch_syscall(process, thread, frame);
     thread->context.rax = (uint64_t)result;
     ++process->syscall_count;
@@ -6355,6 +6358,8 @@ static void capture_result(
     result->generation = process->generation;
     result->exit_status = process->exit_status;
     result->syscall_count = process->syscall_count;
+    result->last_syscall = process->last_syscall;
+    result->failure_stage = process->failure_stage;
     result->thread_switches = process->thread_switches;
     result->peak_pages = (uint32_t)process->peak_pages;
     result->peak_handles = (uint32_t)process->peak_handles;
@@ -6449,20 +6454,29 @@ enum native_process_status native_process_run(struct native_process_result *resu
             if (interrupt_process_gate_validate(&native_gate) !=
                     INTERRUPT_STATUS_OK) {
                 cleanup_ok = false;
+                process->failure_stage =
+                    NATIVE_PROCESS_FAILURE_GATE_VALIDATE;
                 terminate_process(process, -PHIPIA_EIO);
             } else if (native_gate.state == INTERRUPT_PROCESS_GATE_RETURNED &&
                 interrupt_process_gate_rearm(&native_gate) !=
                     INTERRUPT_STATUS_OK) {
                 cleanup_ok = false;
+                process->failure_stage = NATIVE_PROCESS_FAILURE_GATE_REARM;
                 terminate_process(process, -PHIPIA_EIO);
             } else {
                 without_started = tsc_read();
                 activation = paging_process_activate(&process->address_space);
                 without_cycles = tsc_read() - without_started;
                 fpu_started = tsc_read();
-                if (activation != PAGING_STATUS_OK ||
-                    !native_fpu_restore(&thread->fpu)) {
+                if (activation != PAGING_STATUS_OK) {
                     cleanup_ok = false;
+                    process->failure_stage =
+                        NATIVE_PROCESS_FAILURE_ADDRESS_SPACE_ACTIVATE;
+                    terminate_process(process, -PHIPIA_EIO);
+                } else if (!native_fpu_restore(&thread->fpu)) {
+                    cleanup_ok = false;
+                    process->failure_stage =
+                        NATIVE_PROCESS_FAILURE_FPU_RESTORE;
                     terminate_process(process, -PHIPIA_EIO);
                 } else {
                     fpu_cycles = tsc_read() - fpu_started;

@@ -5819,6 +5819,10 @@ _Noreturn void kernel_test_complete_native_phip(void)
             console_write_u64(proof.peak_handles);
             console_write(" syscalls ");
             console_write_u64(proof.syscall_count);
+            console_write(" last-syscall ");
+            console_write_hex(proof.last_syscall);
+            console_write(" failure-stage ");
+            console_write_u64(proof.failure_stage);
             console_write(" switches ");
             console_write_u64(proof.thread_switches);
             console_putc('\n');

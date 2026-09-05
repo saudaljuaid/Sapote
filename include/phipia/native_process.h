@@ -34,10 +34,20 @@ enum native_process_status {
     NATIVE_PROCESS_STATUS_COUNT
 };
 
+enum native_process_failure_stage {
+    NATIVE_PROCESS_FAILURE_NONE = 0,
+    NATIVE_PROCESS_FAILURE_GATE_VALIDATE,
+    NATIVE_PROCESS_FAILURE_GATE_REARM,
+    NATIVE_PROCESS_FAILURE_ADDRESS_SPACE_ACTIVATE,
+    NATIVE_PROCESS_FAILURE_FPU_RESTORE
+};
+
 struct native_process_result {
     uint64_t generation;
     int32_t exit_status;
     uint32_t syscall_count;
+    uint32_t last_syscall;
+    uint32_t failure_stage;
     uint32_t thread_switches;
     uint32_t peak_pages;
     uint32_t peak_handles;
