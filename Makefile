@@ -686,11 +686,13 @@ $(PHIPAPP_SYSTEM_IMAGE): $(PHIPAPP_PACKAGE) tools/phipia-package.py \
 $(PHIPAPP_DATA_IMAGE): $(EXT4_FIXTURE) | $(PHIPAPP_DIR)
 	cp $< $@
 
-$(PHIPAPP_REPOSITORY): $(PHIPAPP_APP) tools/package_lifecycle_fixture.py \
+$(PHIPAPP_REPOSITORY): $(RUST_APP) apps/native-rust/manifest.json \
+		tools/package_lifecycle_fixture.py \
 		tools/phipia-package.py tools/phipia-repository.py \
 		platform/package-trust.json
 	$(PYTHON) tools/package_lifecycle_fixture.py \
-		--output $(PHIPAPP_DIR)/repository --executable $(PHIPAPP_APP)
+		--output $(PHIPAPP_DIR)/repository --executable $(RUST_APP) \
+		--manifest-spec apps/native-rust/manifest.json
 
 $(AUDIO_APP_DIR)/main.o: apps/native-audio/main.c \
 		$(SDK_BUILD_DIR)/.installed | $(AUDIO_APP_DIR)

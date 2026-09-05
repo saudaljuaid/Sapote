@@ -2,10 +2,14 @@
 
 # Native application loader and security model
 
-`native_process_spawn()` accepts a manifest path on the read-only System FAT32
-volume. It reads the fixed binary manifest and named executable once, passes
-both byte slices to the safe Rust validator, and installs mappings only after
-validation succeeds.
+`native_process_spawn()` accepts a manifest path on the read-only System
+volume. The privileged `native_process_launch_installed()` path accepts only
+the canonical `pkgstate/gen/<high>/<low>/root/...` generation namespace on
+Data. In either case the executable must be a safe basename beside its
+manifest. The loader reads both files once, passes their byte slices to the safe
+Rust validator, and installs mappings only after validation succeeds. This
+allows a package-service-verified immutable generation to launch after reboot
+without copying its executable back to System.
 
 Version 1 admits x86_64 little-endian static `ET_EXEC` images. It permits at
 most 32 program headers and 16 `PT_LOAD` segments inside
@@ -42,6 +46,10 @@ admission. A root with dependencies must name an authenticated System-volume
 catalog. Each exact SONAME is resolved relative to that catalog's packaged
 resource directory, hashed before parsing, and loaded once in breadth-first
 `DT_NEEDED` order.
+
+Installed Data-volume images are currently restricted to static executables;
+dynamic dependency catalogs remain System-volume-only until package generation
+resolution binds every DSO to the same authenticated installed authority.
 
 Relocation occurs in private kernel heap buffers. The mapper then installs
 non-overlapping root/library mappings with final R, RX, RW, and RELRO

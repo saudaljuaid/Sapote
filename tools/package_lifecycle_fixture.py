@@ -36,8 +36,10 @@ GENERATED = 1_800_000_000
 EXPIRES = GENERATED + 86_400
 
 
-def build(output: Path, executable: Path) -> dict[str, object]:
+def build(output: Path, executable: Path, manifest_spec: Path) -> dict[str, object]:
     payload = executable.read_bytes()
+    manifest_value = json.loads(manifest_spec.read_text(encoding="utf-8"))
+    manifest = PACKAGE.encode_manifest(manifest_value, payload)
     package_spec = {
         "format": 3,
         "architecture": "x86_64",
@@ -54,11 +56,16 @@ def build(output: Path, executable: Path) -> dict[str, object]:
     package = PACKAGE.build_package_v3(
         package_spec,
         ({
-            "path": "bin/proof.app",
+            "path": "bin/RUST.APP",
             "kind": "executable",
             "mode": 0o555,
             "payload": payload,
-        },),
+        }, {
+            "path": "bin/RUSTAPP.MAN",
+            "kind": "resource",
+            "mode": 0o444,
+            "payload": manifest,
+        }),
         PUBLISHER_SEED,
     )
     publisher_public = PACKAGE._ed25519_public_bytes_from_private(
@@ -110,6 +117,7 @@ def build(output: Path, executable: Path) -> dict[str, object]:
         "package_bytes": len(package),
         "package_sha256": hashlib.sha256(package).hexdigest().upper(),
         "payload_sha256": hashlib.sha256(payload).hexdigest().upper(),
+        "manifest_sha256": hashlib.sha256(manifest).hexdigest().upper(),
     }
 
 
@@ -117,10 +125,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--executable", type=Path, required=True)
+    parser.add_argument("--manifest-spec", type=Path, required=True)
     args = parser.parse_args()
     if not PACKAGE.ed25519_available():
         raise RuntimeError("Python Ed25519 support is required")
-    print(json.dumps(build(args.output, args.executable), sort_keys=True))
+    print(json.dumps(
+        build(args.output, args.executable, args.manifest_spec), sort_keys=True
+    ))
     return 0
 
 

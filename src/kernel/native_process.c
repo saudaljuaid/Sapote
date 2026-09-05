@@ -1175,7 +1175,8 @@ static bool path_from_user(
     return true;
 }
 
-static bool read_system_file(
+static bool read_volume_file(
+    enum phipfs_volume volume,
     const char *path,
     uint8_t *destination,
     size_t capacity,
@@ -1186,7 +1187,8 @@ static bool read_system_file(
     size_t total = 0U;
 
     if (path == NULL || destination == NULL || read_bytes == NULL ||
-        phipfs_open(PHIPFS_VOLUME_SYSTEM, path, PHIPFS_ACCESS_READ, &handle) !=
+        (volume != PHIPFS_VOLUME_SYSTEM && volume != PHIPFS_VOLUME_DATA) ||
+        phipfs_open(volume, path, PHIPFS_ACCESS_READ, &handle) !=
             PHIPFS_STATUS_OK) {
         return false;
     }
@@ -1208,6 +1210,101 @@ static bool read_system_file(
         return false;
     }
     *read_bytes = total;
+    return true;
+}
+
+static bool read_system_file(
+    const char *path,
+    uint8_t *destination,
+    size_t capacity,
+    size_t *read_bytes
+)
+{
+    return read_volume_file(PHIPFS_VOLUME_SYSTEM, path, destination, capacity,
+        read_bytes);
+}
+
+static bool sibling_image_path(
+    const char *manifest_path,
+    const uint8_t *name,
+    size_t name_length,
+    char *output
+)
+{
+    size_t manifest_length;
+    size_t prefix_length = 0U;
+
+    if (manifest_path == NULL || name == NULL || output == NULL) {
+        return false;
+    }
+    manifest_length = bounded_length((const uint8_t *)manifest_path,
+        PHIPFS_MAX_PATH);
+    if (manifest_length == 0U || manifest_length >= PHIPFS_MAX_PATH ||
+        name_length == 0U || name_length >= 16U ||
+        (name_length == 1U && name[0] == '.') ||
+        (name_length == 2U && name[0] == '.' && name[1] == '.')) {
+        return false;
+    }
+    for (size_t index = 0U; index < name_length; ++index) {
+        if (name[index] < UINT8_C(0x21) || name[index] > UINT8_C(0x7e) ||
+            name[index] == '/' || name[index] == '\\') {
+            return false;
+        }
+    }
+    for (size_t index = 0U; index < manifest_length; ++index) {
+        if (manifest_path[index] == '/') {
+            prefix_length = index + 1U;
+        }
+    }
+    if (prefix_length + name_length >= PHIPFS_MAX_PATH) {
+        return false;
+    }
+    zero_bytes(output, PHIPFS_MAX_PATH);
+    copy_bytes(output, manifest_path, prefix_length);
+    copy_bytes(output + prefix_length, name, name_length);
+    return true;
+}
+
+static bool installed_manifest_path(const char *path)
+{
+    static const char prefix[] = "pkgstate/gen/";
+    static const char root[] = "/root/";
+    size_t length;
+    size_t offset = sizeof(prefix) - 1U;
+
+    if (path == NULL) {
+        return false;
+    }
+    length = bounded_length((const uint8_t *)path, PHIPFS_MAX_PATH);
+    if (length <= offset + 8U + 1U + 8U + sizeof(root) - 1U ||
+        length >= PHIPFS_MAX_PATH) {
+        return false;
+    }
+    for (size_t index = 0U; index < sizeof(prefix) - 1U; ++index) {
+        if (path[index] != prefix[index]) {
+            return false;
+        }
+    }
+    for (size_t component = 0U; component < 2U; ++component) {
+        for (size_t index = 0U; index < 8U; ++index) {
+            const char value = path[offset + index];
+
+            if (!((value >= '0' && value <= '9') ||
+                    (value >= 'a' && value <= 'f'))) {
+                return false;
+            }
+        }
+        offset += 8U;
+        if (path[offset++] != '/') {
+            return false;
+        }
+    }
+    --offset;
+    for (size_t index = 0U; index < sizeof(root) - 1U; ++index) {
+        if (path[offset + index] != root[index]) {
+            return false;
+        }
+    }
     return true;
 }
 
@@ -2572,7 +2669,8 @@ static bool process_cleanup(struct native_process *process)
 
 static enum native_process_status load_process(
     struct native_process *process,
-    const char *manifest_path
+    const char *manifest_path,
+    enum phipfs_volume image_volume
 )
 {
     uint8_t manifest_bytes[NATIVE_MANIFEST_BYTES];
@@ -2592,7 +2690,7 @@ static enum native_process_status load_process(
     uint64_t dynamic_start_entry = 0U;
     bool dynamic = false;
 
-    if (!read_system_file(manifest_path, manifest_bytes,
+    if (!read_volume_file(image_volume, manifest_path, manifest_bytes,
             sizeof(manifest_bytes), &manifest_read) ||
         manifest_read != sizeof(manifest_bytes)) {
         return NATIVE_PROCESS_MANIFEST_READ;
@@ -2613,9 +2711,9 @@ static enum native_process_status load_process(
     if (executable_length == 0U || executable_length >= 16U) {
         return NATIVE_PROCESS_IMAGE_REFUSED;
     }
-    zero_bytes(executable, sizeof(executable));
-    copy_bytes(executable, manifest_bytes + 112U, executable_length);
-    if (phipfs_stat_path(PHIPFS_VOLUME_SYSTEM, executable, &executable_stat) !=
+    if (!sibling_image_path(manifest_path, manifest_bytes + 112U,
+            executable_length, executable) ||
+        phipfs_stat_path(image_volume, executable, &executable_stat) !=
             PHIPFS_STATUS_OK || executable_stat.directory ||
         executable_stat.size == 0U ||
         executable_stat.size > NATIVE_ELF_MAX_FILE_BYTES) {
@@ -2627,7 +2725,8 @@ static enum native_process_status load_process(
         return NATIVE_PROCESS_MEMORY_LIMIT;
     }
     cpu_interrupt_enable();
-    if (!read_system_file(executable, elf, executable_stat.size, &elf_read) ||
+    if (!read_volume_file(image_volume, executable, elf, executable_stat.size,
+            &elf_read) ||
         elf_read != executable_stat.size) {
         result = NATIVE_PROCESS_EXECUTABLE_READ;
         goto finish;
@@ -2638,7 +2737,8 @@ static enum native_process_status load_process(
     if (admission_status != NATIVE_IMAGE_OK) {
         enum elf64_dynamic_status dynamic_status;
 
-        if (admission_status != NATIVE_IMAGE_ELF_TYPE ||
+        if (image_volume != PHIPFS_VOLUME_SYSTEM ||
+            admission_status != NATIVE_IMAGE_ELF_TYPE ||
             phipia_native_manifest_authenticate(manifest_bytes,
                 sizeof(manifest_bytes), elf, elf_read,
                 &process->manifest) != NATIVE_IMAGE_OK) {
@@ -2751,15 +2851,18 @@ finish:
     return result;
 }
 
-enum native_process_status native_process_spawn(
+static enum native_process_status native_process_spawn_from_volume(
     const char *manifest_path,
+    enum phipfs_volume image_volume,
     uint64_t *generation
 )
 {
     struct native_process *process = NULL;
     enum native_process_status status;
 
-    if (manifest_path == NULL || generation == NULL) {
+    if (manifest_path == NULL || generation == NULL ||
+        (image_volume != PHIPFS_VOLUME_SYSTEM &&
+         image_volume != PHIPFS_VOLUME_DATA)) {
         return NATIVE_PROCESS_NULL_ARGUMENT;
     }
     *generation = 0U;
@@ -2783,7 +2886,7 @@ enum native_process_status native_process_spawn(
     if (next_process_generation == 0U) {
         next_process_generation = 1U;
     }
-    status = load_process(process, manifest_path);
+    status = load_process(process, manifest_path, image_volume);
     if (status != NATIVE_PROCESS_OK) {
         if (!process_cleanup(process)) {
             return NATIVE_PROCESS_TEARDOWN;
@@ -2792,6 +2895,15 @@ enum native_process_status native_process_spawn(
     }
     *generation = process->generation;
     return NATIVE_PROCESS_OK;
+}
+
+enum native_process_status native_process_spawn(
+    const char *manifest_path,
+    uint64_t *generation
+)
+{
+    return native_process_spawn_from_volume(manifest_path,
+        PHIPFS_VOLUME_SYSTEM, generation);
 }
 
 static int64_t syscall_console_write(
@@ -6440,6 +6552,32 @@ enum native_process_status native_process_launch(
         return NATIVE_PROCESS_NULL_ARGUMENT;
     }
     status = native_process_spawn(manifest_path, &generation);
+    if (status != NATIVE_PROCESS_OK) {
+        return status;
+    }
+    status = native_process_run(result);
+    if (status == NATIVE_PROCESS_OK && result->generation != generation) {
+        return NATIVE_PROCESS_TEARDOWN;
+    }
+    return status;
+}
+
+enum native_process_status native_process_launch_installed(
+    const char *manifest_path,
+    struct native_process_result *result
+)
+{
+    uint64_t generation;
+    enum native_process_status status;
+
+    if (result == NULL) {
+        return NATIVE_PROCESS_NULL_ARGUMENT;
+    }
+    if (!installed_manifest_path(manifest_path)) {
+        return NATIVE_PROCESS_IMAGE_REFUSED;
+    }
+    status = native_process_spawn_from_volume(manifest_path,
+        PHIPFS_VOLUME_DATA, &generation);
     if (status != NATIVE_PROCESS_OK) {
         return status;
     }

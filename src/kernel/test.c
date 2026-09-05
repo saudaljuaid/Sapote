@@ -5729,7 +5729,8 @@ static bool native_phip_authority_is_canonical(
 {
     struct package_state_database_view view;
     struct package_state_package_view package;
-    struct package_state_file_view file;
+    struct package_state_file_view executable;
+    struct package_state_file_view manifest;
     size_t database_bytes = 0U;
 
     return package_service_snapshot(database, database_capacity,
@@ -5739,24 +5740,36 @@ static bool native_phip_authority_is_canonical(
         package_state_database_parse(database, database_bytes, &view) ==
             PACKAGE_STATE_STATUS_OK &&
         view.generation == 1U && view.package_count == 1U &&
-        view.edge_count == 0U && view.file_count == 1U &&
+        view.edge_count == 0U && view.file_count == 2U &&
         package_state_database_package(&view, 0U, &package) ==
             PACKAGE_STATE_STATUS_OK &&
-        package_state_database_file(&view, 0U, &file) ==
+        package_state_database_file(&view, 0U, &executable) ==
+            PACKAGE_STATE_STATUS_OK &&
+        package_state_database_file(&view, 1U, &manifest) ==
             PACKAGE_STATE_STATUS_OK &&
         package_text_equals(&package.identifier, "org.phipia.proof") &&
         package_text_equals(&package.version, "1.0.0") &&
-        package_text_equals(&file.path, "bin/proof.app") &&
-        file.owner_index == 0U && file.length != 0U;
+        package_text_equals(&executable.path, "bin/RUST.APP") &&
+        package_text_equals(&manifest.path, "bin/RUSTAPP.MAN") &&
+        executable.owner_index == 0U && executable.length != 0U &&
+        manifest.owner_index == 0U && manifest.length == UINT64_C(1024);
 }
 
 _Noreturn void kernel_test_complete_native_phip(void)
 {
+    static const uint8_t expected[] = "native Rust no_std ABI v1\n";
+    static const char installed_manifest[] =
+        "pkgstate/gen/00000000/00000001/root/bin/RUSTAPP.MAN";
     static uint8_t database[4096U];
     struct native_process_result proof = { 0 };
     struct package_service_report service;
     const struct phipfs_drive_info data = phipfs_drive(PHIPFS_VOLUME_DATA);
     struct phipfs_stat authority;
+    struct phipfs_stat output;
+    phipfs_handle file;
+    uint8_t bytes[sizeof(expected) - 1U];
+    size_t read_bytes = 0U;
+    bool matches = true;
     struct network_state network;
     enum phipfs_status authority_status;
 
@@ -5807,13 +5820,31 @@ _Noreturn void kernel_test_complete_native_phip(void)
     }
     if (!native_phip_authority_is_canonical(database, sizeof(database),
             &service) ||
+        native_process_launch_installed(installed_manifest, &proof) !=
+            NATIVE_PROCESS_OK ||
+        !proof.exited || proof.faulted || proof.exit_status != 0 ||
+        !proof.resources_released || proof.syscall_count < 12U ||
+        proof.thread_switches == 0U || !native_process_resources_released() ||
+        phipfs_stat_path(PHIPFS_VOLUME_DATA, "RUSTAPP/RUST.TXT", &output) !=
+            PHIPFS_STATUS_OK || output.directory ||
+        output.size != sizeof(bytes) ||
+        phipfs_open(PHIPFS_VOLUME_DATA, "RUSTAPP/RUST.TXT",
+            PHIPFS_ACCESS_READ, &file) != PHIPFS_STATUS_OK ||
+        phipfs_read(file, bytes, sizeof(bytes), &read_bytes) !=
+            PHIPFS_STATUS_OK || read_bytes != sizeof(bytes)) {
+        kernel_test_fail("native phip persisted application did not launch");
+    }
+    for (size_t index = 0U; index < sizeof(bytes); ++index) {
+        matches = matches && bytes[index] == expected[index];
+    }
+    if (phipfs_close(file) != PHIPFS_STATUS_OK || !matches ||
         phipfs_sync(PHIPFS_VOLUME_DATA) != PHIPFS_STATUS_OK ||
         phipfs_unmount(PHIPFS_VOLUME_DATA) != PHIPFS_STATUS_OK ||
         !nvme_filesystem_session_resources_released()) {
-        kernel_test_fail("native phip persisted authority is not canonical");
+        kernel_test_fail("native phip persisted launch did not cleanly sync");
     }
     console_write(
-        "Phipia: signed HTTPS package persisted on writable ext4 passed\n");
+        "Phipia: signed HTTPS package persisted and launched from writable ext4 passed\n");
     console_write("ST NETWORK production path bounded and recoverable\n");
     kernel_test_pass();
 }

@@ -339,7 +339,8 @@ def run(args: argparse.Namespace) -> int:
             "PHIPIA PHIP PHASE committed generation=1 PASS\n",
             "PHIPIA PHIP PASS https trust plan payload transaction cleanup\n",
             "Phipia: signed HTTPS package install synchronized reboot phase\n",
-            "Phipia: signed HTTPS package persisted on writable ext4 passed\n",
+            "Phipia: signed HTTPS package persisted and launched from "
+            "writable ext4 passed\n",
         )
         healthy = all(transcript.count(marker) == 1 for marker in required)
         if healthy:

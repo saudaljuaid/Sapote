@@ -61,6 +61,10 @@ enum native_process_status native_process_launch(
     const char *manifest_path,
     struct native_process_result *result
 );
+enum native_process_status native_process_launch_installed(
+    const char *manifest_path,
+    struct native_process_result *result
+);
 bool native_process_resources_released(void);
 bool native_process_self_test(size_t *completed_tests);
 const char *native_process_status_string(enum native_process_status status);
